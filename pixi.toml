@@ -15,3 +15,7 @@ numpy = ">=2.0.2,<3"
 python-sounddevice = "*"
 pyqtgraph = ">=0.13.7,<0.14"
 pyqt = "*"
+
+
+[pypi-dependencies]
+audioviz = { path = ".", editable = true }
