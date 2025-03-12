@@ -1,5 +1,7 @@
+from typing import Optional
 from pathlib import Path
 
+from loguru import logger
 
 from PyQt5 import QtCore, QtWidgets
 import pyqtgraph as pg
@@ -18,12 +20,13 @@ class AudioVisualizer(QtWidgets.QMainWindow):
             n_mels: int,
             mel_filters: np.ndarray,
             window_samples: int,
-            audio_len: int,
             mel_spec_max: float,
             cmap: cm.colors.Colormap,
             norm: Normalize,
             plot_update_interval: int,
-            data: np.ndarray,
+            data: Optional[np.ndarray] = None,
+            is_streaming: bool = False,
+            device_index: Optional[int] = None,
         ):
 
         super().__init__()
@@ -33,11 +36,14 @@ class AudioVisualizer(QtWidgets.QMainWindow):
         self.n_mels: int = n_mels
         self.mel_filters: np.ndarray = mel_filters
         self.window_samples: int = window_samples
-        self.audio_len: int = audio_len
-        self.mel_spec_max: float = mel_spec_max
+        self.mel_spec_max: Optional[float] = mel_spec_max
         self.cmap: cm.colors.Colormap = cmap
         self.norm: Normalize = norm
         self.data: np.ndarray = data
+
+        self.is_streaming: bool = is_streaming
+        self.device_index: Optional[int] = device_index
+        self.audio_buffer: np.ndarray = np.zeros(10*window_samples)
 
         self.setWindowTitle("Real-Time Audio Visualization")
 
@@ -76,27 +82,36 @@ class AudioVisualizer(QtWidgets.QMainWindow):
         self.current_time = 0
         self.stream = sd.OutputStream(
             samplerate=sr, channels=1,
-            callback=self.audio_callback, blocksize=hop_length,
+            callback=self.audio_callback, blocksize=self.hop_length,
             # device=0,
         )
+        if self.is_streaming:
+            self.input_stream = sd.InputStream(
+                device=self.device_index, channels=1, samplerate=self.sr,
+                blocksize=self.hop_length, callback=self.audio_input_callback
+            )
 
     def start(self):
         """Start the audio playback and visualization."""
         self.stream.start()
         self.timer.start()
 
+        if self.is_streaming:
+            self.input_stream.start()
+
     def stop(self):
         """Stop the audio playback and visualization."""
         self.stream.stop()
         self.timer.stop()
 
+        if self.is_streaming:
+            self.input_stream.stop()
+
     def update_plot(self):
         """Update the mel spectrogram and waveform."""
-        start_idx = int(self.current_time * self.sr)
-        end_idx = min(start_idx + self.window_samples, self.audio_len)
 
         # Compute mel spectrogram segment
-        segment = self.data[start_idx:end_idx]
+        segment = self.audio_buffer
         mel_spectrogram = lr.feature.melspectrogram(
             y=segment, sr=self.sr, n_fft=self.n_fft, hop_length=self.hop_length, n_mels=self.n_mels
         )
@@ -118,73 +133,44 @@ class AudioVisualizer(QtWidgets.QMainWindow):
         self.waveform_plot.setXRange(0, 0.0125*self.sr)
 
         # Advance current time
-        self.current_time += hop_length / sr
+        self.current_time += self.hop_length / self.sr
+        print(segment)
+
+    def audio_input_callback(self, indata, frames, time, status):
+        """Handles real-time audio input from the microphone."""
+        if status:
+            print(f"Input Stream Error: {status}")
+    
+        # Shift the buffer and store new mic data
+        self.audio_buffer[:] = np.roll(self.audio_buffer, -frames)
+        self.audio_buffer[-frames:] = indata.flatten()
+        logger.debug(f"indata: {indata}")
 
     def audio_callback(self, outdata, frames, time, status):
-        """Stream audio data to the playback device."""
-        start_idx = int(self.current_time * self.sr)
-        end_idx = start_idx + frames
-        if end_idx > len(self.data):
-            outdata[: len(data[start_idx:]), 0] = self.data[start_idx:]
-            raise sd.CallbackStop()
-        else:
-            outdata[:, 0] = self.data[start_idx:end_idx]
+        """
+        Handles real-time audio processing,
+        whether from a device or a preloaded array.
+        """
+        
+        # Shift the buffer to remove old data
+        self.audio_buffer[:] = np.roll(self.audio_buffer, -frames)
+    
+        if not self.is_streaming:
+            # If playing back preloaded audio
+            start_idx = int(self.current_time * self.sr)
+            end_idx = start_idx + frames
+            if end_idx > len(self.data):
+                indata = np.zeros(frames)  # Pad with silence if the audio is finished
+                indata[: len(self.data[start_idx:])] = self.data[start_idx:]
+                raise sd.CallbackStop()
+            else:
+                indata = self.data[start_idx:end_idx]
+    
+            # Store new audio data in the buffer
+            self.audio_buffer[-frames:] = indata
+    
+        # Output the latest audio buffer segment
+        outdata[:, 0] = self.audio_buffer[-frames:]
+    
+        # Advance playback time
         self.current_time += frames / self.sr
-
-
-if __name__ == "__main__":
-    # Load audio file
-    data_path: Path = Path("/home/nicklas/Projects/AudioViz/data")
-    # audio_file = "estas_tonte.wav"
-    # audio_file = "aaaa.wav"
-    # audio_file = "savu.wav"
-    # audio_file = "drums.wav"
-    audio_file = data_path/"ex1.wav"
-    data, sr = lr.load(audio_file, sr=None)
-    
-    # Spectrogram parameters
-    stft_window = 20  # ms 
-    # stft_window = 80  # ms 
-    # stft_window = 40  # ms 
-    # n_fft = int(0.140 * sr)  # x ms window
-    n_fft = int(stft_window * sr / 1000)
-    hop_length = n_fft // 2
-    n_mels = 140
-    mel_filters = lr.filters.mel(sr=sr, n_fft=n_fft, n_mels=n_mels)
-    
-    # Windowing parameters
-    window_duration = 2.0  # Duration of spectrogram view in seconds
-    window_samples = int(window_duration * sr)
-    audio_len = len(data)
-    
-    
-    mel_spectrogram = lr.feature.melspectrogram(
-        y=data, sr=sr, n_fft=n_fft, hop_length=hop_length, n_mels=n_mels
-        )
-    mel_spec_max = np.max(mel_spectrogram)
-    
-    # Load colormap
-    cmap = cm.get_cmap('viridis')  # Replace 'viridis' with your choice
-    norm = Normalize(vmin=-80, vmax=0)  # Typical decibel range for spectrogram
-    
-    plot_update_interval = 50  # Update plot every 50 ms
-    
-    # Run the application
-    app = QtWidgets.QApplication([])
-    window = AudioVisualizer(
-        sr=int(sr),
-        n_fft=n_fft,
-        hop_length=hop_length,
-        n_mels=n_mels,
-        mel_filters=mel_filters,
-        window_samples=window_samples,
-        audio_len=audio_len,
-        mel_spec_max=mel_spec_max,
-        cmap=cmap,
-        norm=norm,
-        plot_update_interval=plot_update_interval,
-        data=data,
-    )
-    window.show()
-    window.start()
-    app.exec()
