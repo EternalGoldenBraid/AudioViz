@@ -2,5 +2,5 @@
 # pixi environments
 .pixi
 *.egg-info
-data/aaaa.wav
-src/audioviz/__pycache__
+data/*
+__pycache__/
