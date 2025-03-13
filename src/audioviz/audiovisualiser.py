@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 from pathlib import Path
 
 from loguru import logger
@@ -21,12 +21,15 @@ class AudioVisualizer(QtWidgets.QMainWindow):
             mel_filters: np.ndarray,
             window_samples: int,
             mel_spec_max: float,
+            stft_window: Union[str, tuple, np.ndarray],
             cmap: cm.colors.Colormap,
             norm: Normalize,
             plot_update_interval: int,
             data: Optional[np.ndarray] = None,
             is_streaming: bool = False,
-            device_index: Optional[int] = None,
+            input_device_index: Optional[int] = None,
+            output_device_index: Optional[int] = None,
+            io_blocksize: int = 512,
         ):
 
         super().__init__()
@@ -40,10 +43,13 @@ class AudioVisualizer(QtWidgets.QMainWindow):
         self.cmap: cm.colors.Colormap = cmap
         self.norm: Normalize = norm
         self.data: np.ndarray = data
+        self.stft_window: Union[str, tuple, np.ndarray] = stft_window
 
         self.is_streaming: bool = is_streaming
-        self.device_index: Optional[int] = device_index
-        self.audio_buffer: np.ndarray = np.zeros(10*window_samples)
+        self.io_blocksize: int = io_blocksize
+
+        self.channels = 2
+        self.audio_buffer: np.ndarray = np.zeros((window_samples, self.channels))
 
         self.setWindowTitle("Real-Time Audio Visualization")
 
@@ -81,14 +87,18 @@ class AudioVisualizer(QtWidgets.QMainWindow):
         # Audio playback variables
         self.current_time = 0
         self.stream = sd.OutputStream(
-            samplerate=sr, channels=1,
-            callback=self.audio_callback, blocksize=self.hop_length,
-            # device=0,
+            samplerate=sr, channels=2,
+            callback=self.audio_callback, blocksize=self.io_blocksize,
+            device=8,
         )
         if self.is_streaming:
+            assert input_device_index is not None,\
+                    f"Input device index is {input_device_index}"
             self.input_stream = sd.InputStream(
-                device=self.device_index, channels=1, samplerate=self.sr,
-                blocksize=self.hop_length, callback=self.audio_input_callback
+                # device=input_device_index, channels=2, samplerate=self.sr,
+                device=8, channels=2, samplerate=self.sr,
+                blocksize=self.io_blocksize, callback=self.audio_input_callback,
+                dtype='float32'
             )
 
     def start(self):
@@ -111,10 +121,12 @@ class AudioVisualizer(QtWidgets.QMainWindow):
         """Update the mel spectrogram and waveform."""
 
         # Compute mel spectrogram segment
-        segment = self.audio_buffer
+        segment = np.mean(self.audio_buffer, axis=1)
         mel_spectrogram = lr.feature.melspectrogram(
-            y=segment, sr=self.sr, n_fft=self.n_fft, hop_length=self.hop_length, n_mels=self.n_mels
+            y=segment, sr=self.sr, window=self.stft_window,
+            n_fft=self.n_fft, hop_length=self.hop_length, n_mels=self.n_mels
         )
+
         # mel_spectrogram = lr.power_to_db(mel_spectrogram, ref=np.max)
         mel_spectrogram = lr.power_to_db(mel_spectrogram, ref=self.mel_spec_max)
 
@@ -128,23 +140,20 @@ class AudioVisualizer(QtWidgets.QMainWindow):
         )
 
         # Update waveform plot
-        self.waveform_curve.setData(segment)
-        # self.waveform_plot.setXRange(0, len(segment))
-        self.waveform_plot.setXRange(0, 0.0125*self.sr)
+        self.waveform_curve.setData(np.mean(self.audio_buffer, axis=1)[-self.hop_length:])
 
         # Advance current time
         self.current_time += self.hop_length / self.sr
-        print(segment)
 
-    def audio_input_callback(self, indata, frames, time, status):
+    def audio_input_callback(self, indata: np.ndarray, frames: int, time, status):
         """Handles real-time audio input from the microphone."""
         if status:
             print(f"Input Stream Error: {status}")
-    
+
         # Shift the buffer and store new mic data
         self.audio_buffer[:] = np.roll(self.audio_buffer, -frames)
-        self.audio_buffer[-frames:] = indata.flatten()
-        logger.debug(f"indata: {indata}")
+        self.audio_buffer[-frames:] = indata
+        logger.debug(f"indata {indata.shape}: {indata}")
 
     def audio_callback(self, outdata, frames, time, status):
         """
@@ -152,9 +161,6 @@ class AudioVisualizer(QtWidgets.QMainWindow):
         whether from a device or a preloaded array.
         """
         
-        # Shift the buffer to remove old data
-        self.audio_buffer[:] = np.roll(self.audio_buffer, -frames)
-    
         if not self.is_streaming:
             # If playing back preloaded audio
             start_idx = int(self.current_time * self.sr)
@@ -170,7 +176,7 @@ class AudioVisualizer(QtWidgets.QMainWindow):
             self.audio_buffer[-frames:] = indata
     
         # Output the latest audio buffer segment
-        outdata[:, 0] = self.audio_buffer[-frames:]
+        outdata[:] = self.audio_buffer[-frames:]
     
         # Advance playback time
         self.current_time += frames / self.sr
