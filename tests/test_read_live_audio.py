@@ -1,29 +1,39 @@
+from pathlib import Path
+from typing import Dict, Union
+from json import dumps, loads
+
 import sounddevice as sd
 
 from audioviz.utils.audio_devices import (
     AudioDeviceMSI,
     AudioDeviceDesktop,
 )
+from audioviz.utils.audio_devices import select_devices
 
-# Set the device index (Scarlett Solo is now index 0)
-# device_enum = AudioDeviceMSI
-device_enum = AudioDeviceDesktop
+class TestAudioDeviceSetup:
 
-device_index: int = device_enum.SCARLETT_SOLO_USB.value
-channels: int = 2  # Assuming stereo input (you can change it depending on your setup)
+    def test_read_live_audio(self):
+        # Set the device index (Scarlett Solo is now index 0)
+        # device_enum = AudioDeviceMSI
+        device_enum = AudioDeviceDesktop
+        
+        device_index: int = device_enum.SCARLETT_SOLO_USB.value
+        channels: int = 2  # Assuming stereo input (you can change it depending on your setup)
+        
+        # Set the sample rate
+        samplerate = 44100
+        
+        print(sd.query_devices())
 
-# Set the sample rate
-samplerate = 44100
+    def test_select_devices_prompt(self):
+        config = select_devices(config_file=Path("outputs/audio_devices.json"))
+        print("\n🎧 Selected Configuration:")
+        print(config)
+        
 
-print(sd.query_devices())
+if __name__ == "__main__":
+    test = TestAudioDeviceSetup()
 
-# Function to process the audio stream
-def callback(indata, frames, time, status):
-    if status:
-        print(f"{time} s: {status}")
-    print(indata)
+    # test.test_read_live_audio()
 
-# Open the audio stream
-# with sd.InputStream(device=device_index, channels=channels, samplerate=samplerate, callback=callback):
-#     print("Recording... Press Ctrl+C to stop.")
-#     sd.sleep(1)  # Record for 10 seconds
+    test.test_select_devices_prompt()

@@ -1,5 +1,9 @@
-from typing import Dict, Any
+from typing import Dict, Any, Union
 from enum import Enum
+from json import dumps, loads
+from pathlib import Path
+
+import sounddevice as sd
 
 class AudioDeviceMSI(Enum):
     SCARLETT_SOLO_USB = 0
@@ -28,3 +32,62 @@ DesktopDevicesConfigs: Dict[str, Dict[str, Any]] = {
         "channel_metadata": {"in": "1: Mic, 2: Guitar"},
     }
 }
+
+
+def list_devices():
+    devices = sd.query_devices()
+    for idx, dev in enumerate(devices):
+        io_flag = []
+        if dev['max_input_channels'] > 0:
+            io_flag.append("IN")
+        if dev['max_output_channels'] > 0:
+            io_flag.append("OUT")
+        print(f"[{idx}] {dev['name']} ({', '.join(io_flag)})")
+    return devices
+
+def prompt_for_device(devices, kind: str = "input"):
+    while True:
+        try:
+            index = int(input(f"Select {kind} device index: "))
+            device = devices[index]
+            if kind == "input" and device['max_input_channels'] == 0:
+                print("Selected device has no input channels.")
+                continue
+            if kind == "output" and device['max_output_channels'] == 0:
+                print("Selected device has no output channels.")
+                continue
+            return index, device
+        except (ValueError, IndexError):
+            print("Invalid index. Try again.")
+
+def select_devices(config_file: Path = Path("config.json")):
+    if config_file.exists():
+        print(f"Reading configuration from {config_file}")
+        with open(config_file, "r") as f:
+            return loads(f.read())
+    else:
+        print(f"Configuration file not found. Creating new configuration at {config_file}")
+        if not config_file.parent.exists():
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+
+    print("=== Available Audio Devices ===")
+    devices = list_devices()
+    
+    print("\n--- Select Input Device ---")
+    input_index, input_dev = prompt_for_device(devices, kind="input")
+    
+    print("\n--- Select Output Device ---")
+    output_index, output_dev = prompt_for_device(devices, kind="output")
+    
+    config: Dict[str, Union[int, str]] = {
+        "input_device_index": input_index,
+        "output_device_index": output_index,
+        "input_channels": input_dev['max_input_channels'],
+        "output_channels": output_dev['max_output_channels'],
+        "samplerate": int(input_dev['default_samplerate'])  # assume same SR
+    }
+
+    with open(config_file, "w") as f:
+        f.write(dumps(config, indent=4))
+
+    return config
