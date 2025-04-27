@@ -1,4 +1,5 @@
-from typing import Optional, Union
+from collections import deque
+from typing import Optional, Union, Tuple
 import numpy as np
 import sounddevice as sd
 from functools import partial
@@ -29,14 +30,16 @@ class AudioProcessor:
                  hop_length: int,
                  num_samples_in_buffer: int,
                  stft_window: np.ndarray,
+                 io_blocksize: int,
                  n_mels: Optional[int] = None,
                  is_streaming: bool = False,
                  input_device_index: Optional[int] = None,
                  input_channels: int = 1,
                  output_device_index: Optional[int] = None,
                  output_channels: int = 1,
-                 io_blocksize: int = 512,
                  data: Optional[np.ndarray] = None):
+
+        self.snapshot_queue: deque[Tuple[np.ndarray, np.ndarray]] = deque(maxlen=5)
 
         self.sr: float = sr
         self.n_fft: int = n_fft
@@ -54,10 +57,10 @@ class AudioProcessor:
         self.audio_buffer: np.ndarray = np.zeros(
             (num_samples_in_buffer, input_channels), dtype=np.float32
         )
-        n_spec_bins: int = n_mels if n_mels is not None else n_fft // 2 + 1
+        self.n_spec_bins: int = n_mels if n_mels is not None else n_fft // 2 + 1
         n_spec_frames: int = num_samples_in_buffer // hop_length
         self.spectrogram_buffer: np.ndarray = np.zeros(
-            (n_spec_bins, n_spec_frames), dtype=np.float32
+            (self.n_spec_bins, n_spec_frames), dtype=np.float32
         )
 
         if n_mels is None:
@@ -125,6 +128,8 @@ class AudioProcessor:
         self.spectrogram_buffer = np.roll(self.spectrogram_buffer, -frames_spec, axis=1)
         self.spectrogram_buffer[:, -frames_spec:] = spectrogram
 
+        self.snapshot_queue.append((self.audio_buffer.copy(), self.spectrogram_buffer.copy()))
+
     def audio_output_callback(self, outdata, frames, time, status):
         if status:
             logger.warning(f"Output stream error: {status}")
@@ -152,3 +157,10 @@ class AudioProcessor:
 
     def get_spectrogram_buffer(self) -> np.ndarray:
         return self.spectrogram_buffer.copy()
+
+    def get_latest_snapshot(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """Return the latest buffered (audio, spectrogram) snapshot."""
+        if self.snapshot_queue:
+            return self.snapshot_queue.pop()
+        else:
+            return None
