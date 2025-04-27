@@ -130,30 +130,13 @@ class PitchHelixVisualizer(VisualizerBase):
     
         return np.array([x, y, z])
 
-    def detect_frequencies(self, audio: np.ndarray, sr: int) -> list:
-        """Simple dominant frequency detection."""
-        spectrum = np.abs(np.fft.rfft(audio))
-        freqs = np.fft.rfftfreq(len(audio), d=1/sr)
-
-        top_idx = np.argmax(spectrum)
-        dominant_freq = freqs[top_idx]
-
-        return [dominant_freq]
-
     def update_visualization(self) -> None:
-        snapshot = self.processor.get_latest_snapshot()
-        if snapshot is None:
+        dominant_freq = self.processor.current_top_k_frequencies[0]
+        if dominant_freq is None:
+            print("No dominant frequency detected.")
             return
-    
-        audio, spectrogram = snapshot
-    
-        # Instead of FFT on audio, just find the max across the latest spectrogram frame
-        latest_frame = spectrogram[:, -1]  # Last time slice
-        freq_bins = np.fft.rfftfreq(self.processor.n_fft, d=1/self.processor.sr)
-    
-        # Find dominant frequency
-        top_idx = np.argmax(latest_frame)
-        dominant_freq = freq_bins[top_idx]
+        else:
+            print(f"Dominant frequency: {dominant_freq:.2f} Hz")
     
         points = []
         colors = []
