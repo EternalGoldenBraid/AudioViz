@@ -161,6 +161,6 @@ class AudioProcessor:
     def get_latest_snapshot(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """Return the latest buffered (audio, spectrogram) snapshot."""
         if self.snapshot_queue:
-            return self.snapshot_queue.pop()
+            return self.snapshot_queue[-1]
         else:
             return None
