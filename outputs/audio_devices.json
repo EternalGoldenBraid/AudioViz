@@ -1,6 +1,6 @@
 {
-    "input_device_index": 8,
-    "output_device_index": 4,
+    "input_device_index": 7,
+    "output_device_index": 7,
     "input_channels": 2,
     "output_channels": 2,
     "samplerate": 44100
