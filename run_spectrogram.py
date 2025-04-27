@@ -9,8 +9,10 @@ from matplotlib.colors import Normalize
 
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.spectrogram_visualizer import SpectrogramVisualizer
-from audioviz.utils.audio_devices import select_devices  # Assuming you keep this
-from audioviz.utils.audio_devices import AudioDeviceDesktop  # Assuming you keep this
+from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
+from audioviz.utils.audio_devices import select_devices
+from audioviz.utils.audio_devices import AudioDeviceDesktop 
+from audioviz.utils.guitar_profiles import GuitarProfile  
 
 # --- Config Phase ---
 
@@ -78,7 +80,7 @@ plotting_config = {
     "cmap": cmap,
     "norm": norm,
     "plot_update_interval": plot_update_interval,
-    "num_samples_in_plot_window": int(10.5 * sr),
+    "num_samples_in_plot_window": int(5.0 * sr),
     "waveform_plot_duration": 0.5,
 }
 
@@ -104,15 +106,34 @@ processor = AudioProcessor(
 )
 
 # Visualizer
-visualizer = SpectrogramVisualizer(
-    processor=processor,
-    cmap=plotting_config["cmap"],
-    norm=plotting_config["norm"],
-    waveform_plot_duration=plotting_config["waveform_plot_duration"],
+# visualizer = SpectrogramVisualizer(
+#     processor=processor,
+#     cmap=plotting_config["cmap"],
+#     norm=plotting_config["norm"],
+#     waveform_plot_duration=plotting_config["waveform_plot_duration"],
+# )
+# visualizer.setWindowTitle("Audio Visualizer")
+# visualizer.resize(800, 600)
+# visualizer.show()
+
+# Create Pitch Helix Visualizer
+standard_guitar = GuitarProfile(
+    open_strings=[82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
+    num_frets=22
 )
-visualizer.setWindowTitle("Audio Visualizer")
-visualizer.resize(800, 600)
-visualizer.show()
+
+dadgad_guitar = GuitarProfile(
+    open_strings=[73.42, 110.00, 146.83, 196.00, 220.00, 293.66],
+    num_frets=22
+)
+
+helix_window = PitchHelixVisualizer(
+    processor=processor,
+    guitar_profile=standard_guitar,
+)
+helix_window.setWindowTitle("Pitch Helix Visualizer")
+helix_window.resize(800, 600)
+helix_window.show()
 
 # Start audio
 processor.start()
