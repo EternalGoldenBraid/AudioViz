@@ -54,6 +54,7 @@ io_config: Dict = {
 # Spectrogram parameters
 n_fft = 256
 window_duration = 20  # ms
+# window_duration = 500  # ms
 window_length = int((window_duration / 1000) * sr)
 window_length = 2**int(np.log2(window_length))
 
@@ -109,6 +110,7 @@ processor = AudioProcessor(
     output_device_index=io_config["output_device_index"],
     output_channels=io_config["output_channels"] or 1,
     io_blocksize=io_config["io_blocksize"],
+    number_top_k_frequencies=n_fft//2,
 )
 
 # Create a processing timer
@@ -156,16 +158,20 @@ if show_helix:
 # Create Ripple Wave Visualizer
 show_ripples = True
 ripple_config = {
-    "use_synthetic": True,  # Set to True for synthetic data
+    # "use_synthetic": True,  # Set to True for synthetic data
+    "use_synthetic": False,  # Set to True for synthetic data
     "n_sources": 1,
-    "plane_size": (600, 600),
+    "plane_size_m": (0.20, 0.20),  # meters
+    "resolution":  (800, 800),  # pixels (H, W)
     "frequency": 1.0,  # Hz
     "amplitude": 1.0,
-    "speed": 1.0,  # m/s
+    "speed": 1e-2,  # m/s
+    "damping": 0.8,  # damping factor
 }
+
 if show_ripples:
     ripple_window = RippleWaveVisualizer(
-        # processor=processor,
+        processor=processor,
         **ripple_config
     )
     ripple_window.setWindowTitle("Ripple Wave Visualizer (Synthetic)")

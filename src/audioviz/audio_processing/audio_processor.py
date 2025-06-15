@@ -32,6 +32,7 @@ class AudioProcessor:
                  num_samples_in_buffer: int,
                  stft_window: np.ndarray,
                  io_blocksize: int,
+                 number_top_k_frequencies: int,
                  n_mels: Optional[int] = None,
                  is_streaming: bool = False,
                  input_device_index: Optional[int] = None,
@@ -145,7 +146,10 @@ class AudioProcessor:
             segment = indata[:, channel_idx]
             # Discard the symmetric half
             spectrogram = self.compute_spectrogram(segment=segment)
-        
+
+            # Filter out low-energy frames
+            spectrogram[spectrogram < 0.5] = 0.0
+
             frames_spec = spectrogram.shape[1]
             self.spectrogram_buffers[channel_idx] = np.roll(
                 self.spectrogram_buffers[channel_idx], -frames_spec, axis=1
