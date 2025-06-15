@@ -55,5 +55,49 @@ def inspect_frequency_mapping():
     plt.tight_layout()
     plt.show()
 
+def perceptual_soft_threshold(S, alpha=15.0, beta=0.2):
+    """
+    Apply a smooth sigmoid-like thresholding.
+    alpha: steepness
+    beta: threshold location
+    """
+    weight = 1 / (1 + np.exp(-alpha * (S - beta)))
+    return S * weight, weight
+
+def inspect_perceptual_threshold():
+    """
+    Visual inspection utility for the perceptual soft thresholding function.
+    """
+    S = np.linspace(0, 100, 1000)
+    thresholded_S, weights = perceptual_soft_threshold(
+        S, alpha=1.0, beta=0.2
+    )
+
+    plt.figure(figsize=(8, 4))
+    # plt.plot(S, thresholded_S)
+    plt.plot(weights)
+    plt.title("Perceptual Soft Thresholding")
+    plt.xlabel("Input Signal (S)")
+    plt.ylabel("Thresholded Signal")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+def linear_soft_threshold(S: np.ndarray, thresh: float = 0.5, fade_width: float = 0.1) -> np.ndarray:
+    """
+    Linearly fade in values from (thresh - fade_width) to thresh.
+    Anything below (thresh - fade_width) is zeroed.
+    """
+    fade_start = thresh - fade_width
+    mask_low = S < fade_start
+    mask_fade = (S >= fade_start) & (S < thresh)
+    mask_high = S >= thresh
+
+    result = np.zeros_like(S)
+    result[mask_fade] = ((S[mask_fade] - fade_start) / fade_width) * S[mask_fade]
+    result[mask_high] = S[mask_high]
+    return result
+
 if __name__ == "__main__":
-    inspect_frequency_mapping()
+    # inspect_frequency_mapping()
+    inspect_perceptual_threshold()

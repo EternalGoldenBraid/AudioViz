@@ -7,6 +7,8 @@ from functools import partial
 import librosa as lr
 from loguru import logger
 
+from audioviz.utils.signal_processing import perceptual_soft_threshold
+
 def get_stft_spectrogram(segment: np.ndarray, hop_length: int,
                          stft_window: np.ndarray, n_fft: int) -> np.ndarray:
     spectrogram = np.abs(
@@ -147,8 +149,14 @@ class AudioProcessor:
             # Discard the symmetric half
             spectrogram = self.compute_spectrogram(segment=segment)
 
-            # Filter out low-energy frames
-            spectrogram[spectrogram < 0.5] = 0.0
+            # # Filter out low-energy frames
+            # spectrogram[spectrogram < 0.5] = 0.0
+            from audioviz.utils.signal_processing import linear_soft_threshold
+            spectrogram = linear_soft_threshold(spectrogram, thresh=0.1, fade_width=0.1)
+
+            # spectrogram, _ = perceptual_soft_threshold(
+            #     indata, alpha=1.0, beta=0.2
+            # )
 
             frames_spec = spectrogram.shape[1]
             self.spectrogram_buffers[channel_idx] = np.roll(
@@ -166,10 +174,6 @@ class AudioProcessor:
 
         idxs_, self.current_top_k_frequencies[:] = self.get_smoothed_top_k_peak_frequency(
             window_frames=10, k=self.num_top_frequencies, channel_idx=0)
-
-        # # Set non -peak frequencies to 0
-        # zero_idxs = np.setdiff1d(np.arange(self.n_spec_bins), idxs_)
-        # self.spectrogram_buffers[1][zero_idxs, -frames:] = 0.0
 
         self.snapshot_queue.append((
             self.audio_buffer.copy(),
@@ -197,10 +201,6 @@ class AudioProcessor:
             if self.input_overflow_count % 10 == 0:
                 logger.warning(f"Input overflows: {self.input_overflow_count}, {status}")
 
-        # # Optional: fast hard thresholding directly (optional)
-        threshold = 0.001
-        mask = np.abs(indata) < threshold
-        indata[mask] = 0.0
 
         # Push a copy into a fast queue
         self.raw_input_queue.append(indata.copy())

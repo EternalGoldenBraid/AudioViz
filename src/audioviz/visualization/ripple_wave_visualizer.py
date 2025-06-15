@@ -22,6 +22,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  speed: float = 340.0,  # speed of wave propagation (m/s)
                  damping: float = 0.999,  # damping factor
                  use_synthetic: bool = True,
+                 apply_gaussian_smoothing: bool = False,
                  **kwargs):
 
         super().__init__(processor, **kwargs)
@@ -33,14 +34,18 @@ class RippleWaveVisualizer(VisualizerBase):
         self.plane_size_m: Tuple[float, float] = plane_size_m
         self.resolution: Tuple[int, int] = resolution
         self.frequency: float = frequency
+        self.apply_gaussian_smoothing = apply_gaussian_smoothing
         self.amplitude: float = amplitude
         self.speed: float = speed
         self.time: float = 0.0
-        self.dt: float = 1 / 90.0  # 60 FPS update
+
         self.Z = np.zeros(self.resolution, dtype=np.float32)
 
         self.dx = self.plane_size_m[0] / self.resolution[0]  # meters per pixel (x)
         self.dy = self.plane_size_m[1] / self.resolution[1]  # meters per pixel (y)
+
+        # self.dt = (max(self.dx, self.dy) / speed) * 1/np.sqrt(2)
+        self.dt: float = 1 / 30.0  # 60 FPS update
 
         self.propagator: WavePropagator = WavePropagator(
             shape=self.resolution, dx=self.dx, dt=self.dt, 
@@ -48,11 +53,13 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.max_frequency = self.speed / (2 * max(self.dx, self.dy))
 
-        self.source_positions = [
-            (resolution[0] // 2**n_sources, resolution[1] // 2**n_sources) for _ in range(n_sources)
-        ]
+        self.source_positions = []
+        np.random.seed(42)  # for reproducibility
+        for i in range(n_sources):
+            x = np.random.randint(0, resolution[0])
+            y = np.random.randint(0, resolution[1])
+            self.source_positions.append((x, y))
 
-        # Meshgrid in pixel coordinates
         self.xs, self.ys = np.meshgrid(np.arange(self.resolution[1]), np.arange(self.resolution[0]))
 
         self.image_item = pg.ImageItem()
@@ -60,8 +67,6 @@ class RippleWaveVisualizer(VisualizerBase):
         cmap = cm.get_cmap("seismic")
         lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
         self.image_item.setLookupTable(lut)
-        # self.image_item.setLookupTable(pg.colormap.get("seismic").getLookupTable())
-        self.image_item.setLevels([-1, 1])
 
         self.plot = pg.PlotItem()
         self.plot.setTitle("Ripple Simulation")
@@ -74,44 +79,37 @@ class RippleWaveVisualizer(VisualizerBase):
         layout.addWidget(self.plot_widget)
 
     def compute_ripple(self, t: float, frequencies: np.ndarray):
-        """
-        Fully vectorized ripple computation over N sources and k frequencies per source.
-
-        frequencies: ndarray of shape (N, k)
-        """
         N, k = frequencies.shape
         H, W = self.resolution
-        decay_alpha = 20.0
+        decay_alpha = 0.0
 
-        # (N, 1, 1): source coordinates
         x0 = np.array([p[0] for p in self.source_positions]).reshape(N, 1, 1)
         y0 = np.array([p[1] for p in self.source_positions]).reshape(N, 1, 1)
 
-        # (1, H, W): coordinate grid
         xs = self.xs[None, :, :]
         ys = self.ys[None, :, :]
 
-        # (N, H, W): distance from each source in pixels
         r_pixels = np.sqrt((xs - x0)**2 + (ys - y0)**2)
-        r_meters = r_pixels * self.dx  # assume square pixels for simplicity
+        r_meters = r_pixels * self.dx
 
-        # (N, 1, 1): decay per source
         decay = np.exp(-decay_alpha * r_meters)
 
-        # (N, k): per-source frequency matrix
-        freqs = np.clip(frequencies, 1e-3, self.max_frequency)  # enforce Nyquist limit
-        wavelengths = self.speed / freqs  # (N, k)
-        phases = 2 * np.pi * freqs * t    # (N, k)
+        freqs = np.clip(frequencies, 1e-3, self.max_frequency)
+        wavelengths = self.speed / freqs
+        phases = 2 * np.pi * freqs * t
 
-        # Reshape for broadcasting:
-        # (N, k, H, W)
         r = r_meters[:, None, :, :]
         decay = decay[:, None, :, :]
         wavelengths = wavelengths[:, :, None, None]
         phases = phases[:, :, None, None]
 
-        # (N, k, H, W): ripple contributions
+        # Zero out ripple far from the source (simulate realistic support)
+        propagation_limit = self.speed * self.time  # max distance wave can travel
+        mask = r <= propagation_limit
+
         ripple = self.amplitude * decay * np.sin(phases - 2 * np.pi * r / wavelengths)
+        # ripple *= mask  # suppress non-physical early propagation
+
         self.propagator.add_excitation(ripple.sum(axis=(0,1)))
         self.propagator.step()
         self.Z[:] = self.propagator.get_state()
@@ -120,71 +118,50 @@ class RippleWaveVisualizer(VisualizerBase):
         self.time += self.dt
 
         if self.use_synthetic or self.processor is None:
-            # Synthetic: use same frequency for all sources, with k=1
             freqs = np.full((self.n_sources, 1), self.frequency, dtype=np.float32)
         else:
-            # Real input: fetch top-k freqs for each source (currently using same for all)
-            # Placeholder: replicate global top-k for all sources
             top_k = self.processor.current_top_k_frequencies
             top_k = [f for f in top_k if f is not None and np.isfinite(f)]
             if len(top_k) == 0:
-                return  # skip frame if no valid frequencies
+                return
             k = len(top_k)
-            freqs = np.tile(top_k, (self.n_sources, 1))  # shape: (N, k)
+            freqs = np.tile(top_k, (self.n_sources, 1))
             freqs = map_audio_freq_to_visual_freq(freqs, self.max_frequency)
 
         self.compute_ripple(self.time, freqs)
 
         Z_vis = self.Z
-        Z_min, Z_max = np.min(Z_vis), np.max(Z_vis)
-        Z_range = Z_max - Z_min if Z_max > Z_min else 1.0
-        Z_norm = (Z_vis - Z_min) / Z_range  # normalize to [0, 1]
+        max_abs = np.max(np.abs(Z_vis))
+        self.image_item.setLevels([-max_abs, max_abs])
         self.image_item.setImage(Z_vis, autoLevels=False)
 
-
 class WavePropagator:
-    """
-    Discrete 2D wave propagator using the finite difference wave equation.
-    Maintains internal state over time and updates wavefield with propagation.
-    """
     def __init__(self, shape, dx=0.001, dt=0.0001, speed=1.0, damping=0.999):
         self.shape = shape
-        self.dx: float = dx
-        self.dt: float = dt
-        self.c: float = speed
-        self.damping: float = damping
+        self.dx = dx
+        self.dt = dt
+        self.c = speed
+        self.damping = damping
 
-        self.Z: np.ndarray = np.zeros(shape, dtype=np.float32)
-        self.Z_old: np.ndarray = np.zeros_like(self.Z)
-        self.Z_new: np.ndarray = np.zeros_like(self.Z)
+        self.Z = np.zeros(shape, dtype=np.float32)
+        self.Z_old = np.zeros_like(self.Z)
+        self.Z_new = np.zeros_like(self.Z)
 
-        self.c2_dt2: float = (self.c * self.dt / self.dx)**2
+        self.c2_dt2 = (self.c * self.dt / self.dx)**2
 
     def add_excitation(self, excitation: np.ndarray):
-        """
-        Add a new excitation to the current wavefield (e.g., from ripple source).
-        Must match shape.
-        """
-        assert excitation.shape == self.Z.shape, \
-            f"Excitation shape {excitation.shape} does not match wavefield shape {self.Z.shape}"
+        assert excitation.shape == self.Z.shape
         self.Z += excitation
 
     def step(self):
-        """
-        Advance the wavefield one timestep using the 2D wave equation.
-        """
         Z = self.Z
-
         laplacian = (
             -4 * Z +
             np.roll(Z, 1, axis=0) + np.roll(Z, -1, axis=0) +
             np.roll(Z, 1, axis=1) + np.roll(Z, -1, axis=1)
         )
-
         self.Z_new = (2 * Z - self.Z_old + self.c2_dt2 * laplacian)
         self.Z_new *= self.damping
-
-        # Rotate states
         self.Z_old = Z.copy()
         self.Z = self.Z_new.copy()
 

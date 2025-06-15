@@ -160,13 +160,17 @@ show_ripples = True
 ripple_config = {
     # "use_synthetic": True,  # Set to True for synthetic data
     "use_synthetic": False,  # Set to True for synthetic data
-    "n_sources": 1,
+    "n_sources": 2,
     "plane_size_m": (0.20, 0.20),  # meters
-    "resolution":  (800, 800),  # pixels (H, W)
+    "resolution":  (2**8, 2**8),  # pixels (H, W)
     "frequency": 1.0,  # Hz
-    "amplitude": 1.0,
+    # "amplitude": 1.0,
+    "amplitude": 0.5,
     "speed": 1e-2,  # m/s
+    # "speed": 340.0,  # m/s
+    # "speed": 34.0,  # m/s
     "damping": 0.8,  # damping factor
+    # "damping": 0.1,  # damping factor
 }
 
 if show_ripples:
