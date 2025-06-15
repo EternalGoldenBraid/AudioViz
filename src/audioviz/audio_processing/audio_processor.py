@@ -122,11 +122,6 @@ class AudioProcessor:
         if self.is_streaming:
             self.input_stream.start()
 
-    def stop(self):
-        self.stream.stop()
-        if self.is_streaming:
-            self.input_stream.stop()
-
     def get_smoothed_top_k_peak_frequency(self, 
             channel_idx: int = 1,
             k:int = 3, window_frames: int = 3) -> Optional[Tuple[List[int], List[float]]]:
@@ -166,7 +161,7 @@ class AudioProcessor:
         self.update_spectrogram_buffer(indata)
 
         idxs_, self.current_top_k_frequencies[:] = self.get_smoothed_top_k_peak_frequency(
-            window_frames=10, k=self.num_top_frequencies, channel_idx=1)
+            window_frames=10, k=self.num_top_frequencies, channel_idx=0)
 
         # # Set non -peak frequencies to 0
         # zero_idxs = np.setdiff1d(np.arange(self.n_spec_bins), idxs_)

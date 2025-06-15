@@ -1,11 +1,11 @@
-# visualizer_base.py
+from typing import Optional
 
 from abc import abstractmethod
 from PyQt5 import QtCore, QtWidgets
 from audioviz.audio_processing.audio_processor import AudioProcessor
 
 class VisualizerBase(QtWidgets.QWidget):
-    def __init__(self, processor: AudioProcessor, update_interval_ms: int = 50, parent=None):
+    def __init__(self, processor: Optional[AudioProcessor], update_interval_ms: int = 50, parent=None):
         super().__init__(parent)
         self.processor = processor
 
