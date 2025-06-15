@@ -1,7 +1,9 @@
+import sys
+import signal
 from pathlib import Path
 from typing import Union, Optional, Dict
 
-from PyQt5 import QtWidgets
+from PyQt5 import QtWidgets, QtCore
 import numpy as np
 import librosa as lr
 from matplotlib import cm
@@ -43,10 +45,13 @@ io_config: Dict = {
     "output_device_index": config["output_device_index"],
     "output_channels": config["output_channels"],
     "io_blocksize": 4096,
+    # "io_blocksize": 2048,
+    # "io_blocksize": 1024,
+    # "io_blocksize": 512,
 }
 
 # Spectrogram parameters
-n_fft = 512
+n_fft = 256
 window_duration = 20  # ms
 window_length = int((window_duration / 1000) * sr)
 window_length = 2**int(np.log2(window_length))
@@ -105,37 +110,57 @@ processor = AudioProcessor(
     io_blocksize=io_config["io_blocksize"],
 )
 
+# Create a processing timer
+block_duration_ms = (io_config["io_blocksize"] / sr) * 1000
+processing_timer = QtCore.QTimer()
+# processing_timer.setInterval(20)  # e.g., 50 Hz
+processing_timer.setInterval(int(block_duration_ms*(1 - 1e-3))) 
+processing_timer.timeout.connect(processor.process_pending_audio)
+processing_timer.start()
+
 # Visualizer
-# visualizer = SpectrogramVisualizer(
-#     processor=processor,
-#     cmap=plotting_config["cmap"],
-#     norm=plotting_config["norm"],
-#     waveform_plot_duration=plotting_config["waveform_plot_duration"],
-# )
-# visualizer.setWindowTitle("Audio Visualizer")
-# visualizer.resize(800, 600)
-# visualizer.show()
+show_spectrogram = True 
+if show_spectrogram == True:
+    visualizer = SpectrogramVisualizer(
+        processor=processor,
+        cmap=plotting_config["cmap"],
+        norm=plotting_config["norm"],
+        waveform_plot_duration=plotting_config["waveform_plot_duration"],
+    )
+    visualizer.setWindowTitle("Audio Visualizer")
+    visualizer.resize(800, 600)
+    visualizer.show()
 
 # Create Pitch Helix Visualizer
-standard_guitar = GuitarProfile(
-    open_strings=[82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
-    num_frets=22
-)
-
-dadgad_guitar = GuitarProfile(
-    open_strings=[73.42, 110.00, 146.83, 196.00, 220.00, 293.66],
-    num_frets=22
-)
-
-helix_window = PitchHelixVisualizer(
-    processor=processor,
-    guitar_profile=standard_guitar,
-)
-helix_window.setWindowTitle("Pitch Helix Visualizer")
-helix_window.resize(800, 600)
-helix_window.show()
+show_helix = False
+if show_helix:
+    standard_guitar = GuitarProfile(
+        open_strings=[82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
+        num_frets=22
+    )
+    
+    dadgad_guitar = GuitarProfile(
+        open_strings=[73.42, 110.00, 146.83, 196.00, 220.00, 293.66],
+        num_frets=22
+    )
+    
+    helix_window = PitchHelixVisualizer(
+        processor=processor,
+        guitar_profile=standard_guitar,
+    )
+    helix_window.setWindowTitle("Pitch Helix Visualizer")
+    helix_window.resize(800, 600)
+    helix_window.show()
 
 # Start audio
 processor.start()
 
-app.exec()
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+app.aboutToQuit.connect(processor.stop)
+
+try:
+    sys.exit(app.exec())
+except KeyboardInterrupt:
+    print("Exiting...")
+    processor.stop()
+    app.quit()

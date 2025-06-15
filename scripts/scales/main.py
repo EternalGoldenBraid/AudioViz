@@ -99,7 +99,18 @@ def plot_structure(tuning: List[Note], scales: List[Scale]) -> None:
 if __name__ == "__main__":
     D = Note('D')
     tuning = [D + i * 5 for i in range(5)]
-    scale1 = Scale(D, [2, 2, 2, 2, 2, 2, 2])
-    scale2 = Scale(D + 3, [2, 2, 2, 2, 2, 2, 2])
+    # scale1 = Scale(D, [2, 2, 2, 2, 2, 2, 2])
+    # scale2 = Scale(D + 3, [2, 2, 2, 2, 2, 2, 2])
 
-    plot_structure(tuning, [scale1, scale2])
+
+    scales = [
+                Scale(D, [2, 2, 2, 2, 2, 2, 2])
+
+                # Scale(D, [2, 1, 3, 2, 3, 1, 2]),
+                # Scale(D, [3, 2, 1, 1, 2, 1, 2, 2]),
+
+                # Scale(D, [2, 1, 3, 2, 2, 2, 2]),
+                # Scale(D, [2, 2, 2, 2, 3, 1, 2]),
+        ]
+
+    plot_structure(tuning, scales)

@@ -6,7 +6,7 @@ plt.style.use("dark_background")
 
 from matplotlib.animation import FuncAnimation
 
-from audioviz.utils import compute_mel_segment
+from audioviz.utils.signal_processing import compute_mel_segment
 
 # Load the audio file
 audio_file = "aaaa.wav"
