@@ -152,8 +152,6 @@ class AudioProcessor:
         averaged_frame = np.mean(self.spectrogram_buffers[channel_idx][:, -window_frames:], axis=1)
 
         freq_bins = np.fft.rfftfreq(self.n_fft, d=1/self.sr)
-        # top_idx = np.argmax(averaged_frame)
-        # return freq_bins[top_idx]
         top_k_idxs = np.argsort(averaged_frame)[-k:]
         return top_k_idxs.tolist(), freq_bins[top_k_idxs].tolist()
 
@@ -164,9 +162,9 @@ class AudioProcessor:
             spectrogram = self.compute_spectrogram(segment=segment)
 
             # # Filter out low-energy frames
-            # spectrogram[spectrogram < 0.5] = 0.0
-            from audioviz.utils.signal_processing import linear_soft_threshold
-            spectrogram = linear_soft_threshold(spectrogram, thresh=0.1, fade_width=0.1)
+            # spectrogram[spectrogram < 0.3] = 0.0
+            # from audioviz.utils.signal_processing import linear_soft_threshold
+            # spectrogram = linear_soft_threshold(spectrogram, thresh=0.1, fade_width=0.1)
 
             # spectrogram, _ = perceptual_soft_threshold(
             #     indata, alpha=1.0, beta=0.2

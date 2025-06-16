@@ -162,17 +162,17 @@ def main():
     ripple_config = {
         # "use_synthetic": True,  # Set to True for synthetic data
         "use_synthetic": False,  # Set to True for synthetic data
-        "n_sources": 1,
+        "n_sources": 4,
         # "plane_size_m": (10.20, 10.20),  # meters
-        "plane_size_m": (.20, .20),  # meters
-        "resolution":  (2**6, 2**6),  # pixels (H, W)
+        "plane_size_m": (0.30, 0.30),  # meters
+        "resolution":  (1440, 2560),  # pixels (H, W)
         "frequency": 1.0,  # Hz
         # "amplitude": 1.0,
-        "amplitude": 0.5,
-        "speed": 1e-2,  # m/s
-        # "speed": 340.0,  # m/s
+        "amplitude": 10.0,
+        # "speed": 1e-4,  # m/s
+        "speed": 340.0,  # m/s
         # "speed": 34.0,  # m/s
-        "damping": 0.8,  # damping factor
+        "damping": 0.90,  # damping factor
         # "damping": 0.1,  # damping factor
     }
     

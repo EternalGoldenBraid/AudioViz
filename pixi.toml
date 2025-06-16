@@ -17,6 +17,8 @@ pyqtgraph = ">=0.13.7,<0.14"
 pyqt = "*"
 loguru = ">=0.7.2,<0.8"
 pyopengl = ">=3.1.9,<4"
+snakeviz = ">=2.2.2,<3"
+cupy = ">=13.4.1,<14"
 
 
 [pypi-dependencies]
