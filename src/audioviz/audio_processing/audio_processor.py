@@ -102,28 +102,42 @@ class AudioProcessor:
         self.frame_counter: int = 0
         self.input_overflow_count: int = 0
 
-        self.stream = sd.OutputStream(
-            samplerate=sr,
-            device=output_device_index,
-            channels=output_channels,
-            callback=self.audio_output_callback,
-            blocksize=io_blocksize
-        )
-
-        if self.is_streaming:
-            self.input_stream = sd.InputStream(
-                device=input_device_index,
-                channels=input_channels,
+        if output_device_index != -1:
+            logger.info(f"Using output device index: {output_device_index}")
+            self.stream = sd.OutputStream(
                 samplerate=sr,
-                callback=self.audio_input_callback,
-                blocksize=io_blocksize,
-                dtype='float32', latency='low',
+                device=output_device_index,
+                channels=output_channels,
+                callback=self.audio_output_callback,
+                blocksize=io_blocksize
             )
 
-    def start(self):
-        self.stream.start()
         if self.is_streaming:
+            if input_device_index != -1:
+                logger.info(f"Using input device index: {input_device_index}")
+                self.input_stream = sd.InputStream(
+                    device=input_device_index,
+                    channels=input_channels,
+                    samplerate=sr,
+                    callback=self.audio_input_callback,
+                    blocksize=io_blocksize,
+                    dtype='float32', latency='low',
+                )
+
+    def start(self):
+
+        if not hasattr(self, 'stream') and not hasattr(self, 'input_stream'):
+            logger.error("No input nor output audio streams initialized. Please check your configuration.")
+            return False
+
+        if not hasattr(self, 'stream') or self.stream is None:
+            logger.error("Output stream is not initialized.")
+        else:
+            self.stream.start()
+        if self.is_streaming and hasattr(self, 'input_stream'):
             self.input_stream.start()
+
+        return True
 
     def get_smoothed_top_k_peak_frequency(self, 
             channel_idx: int = 1,

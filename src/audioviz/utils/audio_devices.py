@@ -43,12 +43,25 @@ def list_devices():
         if dev['max_output_channels'] > 0:
             io_flag.append("OUT")
         print(f"[{idx}] {dev['name']} ({', '.join(io_flag)})")
+
+    # Null device is always available
+    print(f"[{idx+1}] Null Device (no audio input/output)")
     return devices
 
 def prompt_for_device(devices, kind: str = "input"):
     while True:
         try:
             index = int(input(f"Select {kind} device index: "))
+
+            if index == len(devices):
+                print("Using Null Device (no audio input/output)")
+                index = -1
+                return index, {
+                    "name": "Null Device",
+                    "max_input_channels": 0, "max_output_channels": 0,
+                    "default_samplerate": 44100,
+                }
+
             device = devices[index]
             if kind == "input" and device['max_input_channels'] == 0:
                 print("Selected device has no input channels.")
