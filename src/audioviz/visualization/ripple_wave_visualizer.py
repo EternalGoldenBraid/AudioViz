@@ -7,41 +7,71 @@ from PyQt5 import QtWidgets
 import pyqtgraph as pg
 from PyQt5.QtWidgets import QSlider, QLabel
 from PyQt5.QtCore import Qt
+from loguru import logger as log
+
+
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
-from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
+from audioviz.sources.base import ExcitationSourceBase
 
 class RippleWaveVisualizer(VisualizerBase):
+    """
+    Simulates 2D ripple propagation in response to multiple excitation sources.
+
+    Parameters:
+        plane_size_m (Tuple[float, float]): Size of the wave simulation surface in meters.
+        resolution (Tuple[int, int]): Pixel resolution of the field (H, W).
+        speed (float): Wave propagation speed (m/s).
+        damping (float): Wave energy loss factor per frame.
+        use_synthetic (bool): Whether to inject synthetic excitation (deprecated).
+        use_gpu (bool): Use CuPy for GPU acceleration.
+
+    Attributes:
+        excitation_sources (Dict[str, ExcitationSourceBase]): Registered sources.
+        propagator (WavePropagatorCPU | WavePropagatorGPU): Wave simulation engine.
+        Z (array): Current wave state.
+        dt (float): Time step.
+        dx, dy (float): Spatial resolution in meters.
+        image_item (ImageItem): Render target.
+
+    Methods:
+        update_visualization(): Apply all sources, simulate wave propagation, update view.
+        add_excitation_source(): Register new external source.
+        _init_wave_controls(): UI controls for wave physics (damping, speed).
+        get_controls(): Returns UI sliders for external source parameters.
+
+    TODO:
+        - Support field-of-view scaling separate from physical simulation size.
+        - Decouple resolution from simulation domain (support zoom and crop).
+        - Add source grouping or toggling in UI.
+
+    Caveats:
+        - Source coordinates are still in pixel space.
+        - UI assumes single main plot; no support for 3D or overlays.
+    """
     def __init__(self,
-                 processor: Optional[AudioProcessor] = None,
-                 n_sources: int = 1,
-                 plane_size_m: Tuple[float, float] = (0.36, 0.62),
-                 resolution: Tuple[int, int] = (400, 400),
-                 frequency: float = 440.0,
-                 amplitude: float = 1.0,
-                 speed: float = 340.0,
-                 damping: float = 0.999,
+                 plane_size_m: Tuple[float, float],
+                 resolution: Tuple[int, int],
+                 speed: float,
+                 damping: float,
+
                  use_synthetic: bool = True,
-                 apply_gaussian_smoothing: bool = False,
-                 use_gpu: bool = True,
+
+                 use_gpu: bool = False,
                  **kwargs):
 
-        super().__init__(processor, **kwargs)
+        super().__init__(**kwargs)
 
-        self.processor = processor
-        self.use_synthetic = processor is None or use_synthetic
+        self.excitation_sources: Dict[str, ExcitationSourceBase] = {}
         self.use_gpu = use_gpu
+        self.xp = cp if use_gpu else np
 
-        self.n_sources = n_sources
         self.plane_size_m = plane_size_m
         self.resolution = resolution
-        self.frequency = frequency
-        self.apply_gaussian_smoothing = apply_gaussian_smoothing
-        self.amplitude = amplitude
+        self.excitation = self.xp.zeros(self.resolution, dtype=np.float32)
         self.speed = speed
         self.time = 0.0
 
-        self.backend = cp if use_gpu else np
 
         self.dx = self.plane_size_m[0] / self.resolution[0]
         self.dy = self.plane_size_m[1] / self.resolution[1]
@@ -59,21 +89,26 @@ class RippleWaveVisualizer(VisualizerBase):
         else:
             self.propagator = WavePropagatorCPU(**propagator_kwargs)
 
-        self.Z = self.backend.zeros(self.resolution, dtype=self.backend.float32)
+        self.Z = self.xp.zeros(self.resolution, dtype=self.xp.float32)
 
         self.max_frequency = self.speed / (2 * max(self.dx, self.dy))
 
+        # Grid for ripple
         self.source_positions = []
         np.random.seed(42)
-        for _ in range(n_sources):
-            x = np.random.randint(0, resolution[0])
-            y = np.random.randint(0, resolution[1])
-            self.source_positions.append((x, y))
+        x = np.random.randint(0, resolution[0])
+        y = np.random.randint(0, resolution[1])
+        self.source_position: Tuple[int, int] = (x, y)
 
-        self.xs, self.ys = self.backend.meshgrid(
-            self.backend.arange(self.resolution[1]),
-            self.backend.arange(self.resolution[0])
+        self.xs, self.ys = self.xp.meshgrid(
+            self.xp.arange(self.resolution[1]),
+            self.xp.arange(self.resolution[0])
         )
+
+
+        ## Create the plot widget and image item ##
+
+        layout = QtWidgets.QVBoxLayout(self)
 
         self.image_item = pg.ImageItem()
         # cmap = cm.get_cmap("seismic")
@@ -87,161 +122,113 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.plot_widget = pg.GraphicsLayoutWidget()
         self.plot_widget.addItem(self.plot)
-
-        layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.plot_widget)
 
-        # Decay Alpha Slider
-        self.decay_alpha = 0.0
-        self.decay_label = QLabel("Decay α: 0.0")
-        self.decay_title = QLabel("Excitation Falloff (α)")
-        self.decay_title.setToolTip(
-            "Controls how quickly the excitation decays away from the source point. " 
-            "Higher α = more localized excitation. Lower α = more spread out excitation e.g. larger object causing the ripple)."
-        )
-        self.decay_slider = QSlider(Qt.Horizontal)
-        self.decay_slider.setMinimum(0)
-        self.decay_slider.setMaximum(1000)  # maps to 0.0 - 20.0
-        self.decay_slider.valueChanged.connect(
-            lambda val: self._update_decay_alpha(val / 10.0)
-        )
-        
-        # Damping Slider
+        ## Controls ##
+        self._init_wave_controls(layout)  # Add damping/speed sliders here
+        self.control_layout = layout  # So other sources can append here
+
+    def _init_wave_controls(self, layout: QtWidgets.QVBoxLayout):
+
+        def _update_speed(val: float):
+            self.speed = val
+            self.speed_label.setText(f"Speed: {val:.1f}")
+            self.dt = (max(self.dx, self.dy) / self.speed) * 1 / np.sqrt(2)
+            self.propagator.dt = self.dt
+            self.propagator.c = self.speed
+            self.propagator.c2_dt2 = (self.speed * self.dt / self.dx)**2
+
+        def _update_damping(val: float):
+            self.propagator.damping = val
+            self.damping_label.setText(f"Damping: {val:.3f}")
+
+        # Damping
         self.damping_label = QLabel("Damping: 0.999")
-        self.damping_title = QLabel("Wave Damping")
-        self.damping_title.setToolTip("Controls how quickly the wave loses energy as it propagates. 1.0 = no damping.")
-        self.damping_slider = QSlider(Qt.Horizontal)
-        self.damping_slider.setMinimum(0)
-        self.damping_slider.setMaximum(1000) # maps to 0.0 - 1.0
-        self.damping_slider.valueChanged.connect(
-            lambda val: self._update_damping(val / 1000) # step size of 0.01
+        damping_slider = QSlider(Qt.Horizontal)
+        damping_slider.setMinimum(0)
+        damping_slider.setMaximum(1000)
+        damping_slider.setValue(999)
+        damping_slider.valueChanged.connect(
+            lambda val: _update_damping(val / 1000)
         )
-
-        # Speed Slider
-        self.speed_label = QLabel(f"Speed: {self.speed:.1f}")
-        self.speed_title = QLabel("Wave Speed (m/s)")
-        self.speed_title.setToolTip("Controls how fast the wave propagates across the surface.")
-        self.speed_slider = QSlider(Qt.Horizontal)
-        self.speed_slider.setMinimum(1)
-        self.speed_slider.setMaximum(1000)  # Maps to 1–1000 m/s
-        self.speed_slider.setValue(int(self.speed))
-        self.speed_slider.valueChanged.connect(
-            lambda val: self._update_speed(val)
-        )
-
-        # Amplitude Slider
-        self.amplitude_label = QLabel(f"Amplitude: {self.amplitude:.2f}")
-        self.amplitude_title = QLabel("Excitation Amplitude")
-        self.amplitude_title.setToolTip("Controls the strength of the input excitation added to the wave field.")
-        self.amplitude_slider = QSlider(Qt.Horizontal)
-        self.amplitude_slider.setMinimum(0)
-        self.amplitude_slider.setMaximum(500)  # Maps to 0.00–5.00
-        self.amplitude_slider.setValue(int(self.amplitude * 100))
-        self.amplitude_slider.valueChanged.connect(
-            lambda val: self._update_amplitude(val / 100.0)
-        )
-
-        # Add to layout
-        layout.addWidget(self.decay_title)
-        layout.addWidget(self.decay_label)
-        layout.addWidget(self.decay_slider)
-
-        layout.addWidget(self.damping_title)
+        layout.addWidget(QLabel("Wave Damping"))
         layout.addWidget(self.damping_label)
-        layout.addWidget(self.damping_slider)
+        layout.addWidget(damping_slider)
 
-        layout.addWidget(self.speed_title)
+        # Speed
+        self.speed_label = QLabel(f"Speed: {self.speed:.1f}")
+        speed_slider = QSlider(Qt.Horizontal)
+        speed_slider.setMinimum(1)
+        speed_slider.setMaximum(1000)
+        speed_slider.setValue(int(self.speed))
+        speed_slider.valueChanged.connect(
+            lambda val: _update_speed(val)
+        )
+        layout.addWidget(QLabel("Wave Speed (m/s)"))
         layout.addWidget(self.speed_label)
-        layout.addWidget(self.speed_slider)
+        layout.addWidget(speed_slider)
 
-        layout.addWidget(self.amplitude_title)
-        layout.addWidget(self.amplitude_label)
-        layout.addWidget(self.amplitude_slider)
 
-        self.compute_ripple = self.compute_ripple_cupy if use_gpu else self.compute_ripple_numpy
-
-    def _update_speed(self, val: float):
-        self.speed = val
-        self.speed_label.setText(f"Speed: {val:.1f}")
-        self.dt = (max(self.dx, self.dy) / self.speed) * 1 / np.sqrt(2)
-        self.propagator.dt = self.dt
-        self.propagator.c = self.speed
-        self.propagator.c2_dt2 = (self.speed * self.dt / self.dx)**2
-
-    def _update_amplitude(self, val: float):
-        self.amplitude = val
-        self.amplitude_label.setText(f"Amplitude: {val:.2f}")
-
-    def _update_decay_alpha(self, val: float):
-        self.decay_alpha = val
-        self.decay_label.setText(f"Decay α: {val:.1f}")
+    def add_source_controls(self, source: ExcitationSourceBase):
+        group = QtWidgets.QGroupBox(source.name)
+        group_layout = QtWidgets.QVBoxLayout(group)
     
-    def _update_damping(self, val: float):
-        self.propagator.damping = val
-        self.damping_label.setText(f"Damping: {val:.3f}")
+        for param_name, config in source.get_controls():
+            slider = QSlider(Qt.Horizontal)
+            slider.setMinimum(config["min"])
+            slider.setMaximum(config["max"])
+            slider.setValue(config["init"])
+            slider.valueChanged.connect(config["on_change"])
+    
+            label = QLabel(config["label"])
+            label.setToolTip(config.get("tooltip", ""))
+            value_label = QLabel(str(config["init"]))
+    
+            def update_label(val, lbl=value_label, pname=param_name):
+                fmt = "{:.2f}" if "amplitude" in pname or "alpha" in pname else "{}"
+                lbl.setText(fmt.format(val / 100 if "amplitude" in pname or "alpha" in pname else val))
+    
+            slider.valueChanged.connect(update_label)
+    
+            group_layout.addWidget(label)
+            group_layout.addWidget(value_label)
+            group_layout.addWidget(slider)
+    
+        group.setLayout(group_layout)
+        self.control_layout.addWidget(group)
 
-    def compute_ripple_numpy(self, t: float, frequencies: np.ndarray):
-        self._compute_ripple(np, t, frequencies)
 
-    def compute_ripple_cupy(self, t: float, frequencies: np.ndarray):
-        frequencies = cp.asarray(frequencies)
-        self._compute_ripple(cp, t, frequencies)
+    def add_excitation_source(self, source: ExcitationSourceBase):
+        """Add an excitation source to the visualizer."""
 
-    def _compute_ripple(self, xp, t: float, frequencies):
-        N, k = frequencies.shape
+        if source.name in self.excitation_sources:
+            err = f"Excitation source '{source.name}' already exists."
+            log.error(err)
+            raise ValueError(err)
 
-        x0 = xp.array([p[0] for p in self.source_positions]).reshape(N, 1, 1)
-        y0 = xp.array([p[1] for p in self.source_positions]).reshape(N, 1, 1)
+        self.excitation_sources[source.name] = source
+        log.info(f"Added excitation source '{source.name}'.")
 
-        xs = self.xs[None, :, :]
-        ys = self.ys[None, :, :]
-
-        r_pixels = xp.sqrt((xs - x0) ** 2 + (ys - y0) ** 2)
-        r_meters = r_pixels * self.dx
-
-        decay = xp.exp(-self.decay_alpha * r_meters)
-
-        frequencies = xp.clip(frequencies, 1e-3, self.max_frequency)
-        wavelengths = self.speed / frequencies
-        phases = 2 * xp.pi * frequencies * t
-
-        # for computing:
-        #   ripple[n, k, h, w] = amplitude * decay[n, 1, h, w] * sin(phase[n, k, 1, 1] - 2π * r[n, 1, h, w] / wavelength[n, k, 1, 1])
-        r = r_meters[:, None, :, :]
-        decay = decay[:, None, :, :]
-        wavelengths = wavelengths[:, :, None, None]
-        phases = phases[:, :, None, None]
-
-        propagation_limit = self.speed * self.time
-        mask = r <= propagation_limit
-
-        ripple = self.amplitude * decay * xp.sin(phases - 2 * xp.pi * r / wavelengths)
-        # ripple *= mask
-        
-        self.propagator.add_excitation(ripple.sum(axis=(0, 1)))
-        self.propagator.step()
-        self.Z[:] = self.propagator.get_state()
+        self.add_source_controls(source)
 
     def update_visualization(self):
         self.time += self.dt
+        weight: float = 1/len(self.excitation_sources)
 
-        if self.use_synthetic or self.processor is None:
-            freqs = np.full((self.n_sources, 1), self.frequency, dtype=np.float32)
-        else:
-            top_k = self.processor.current_top_k_frequencies
-            top_k = [f for f in top_k if f is not None and np.isfinite(f)]
-            if len(top_k) == 0:
-                return
-            k = len(top_k)
-            freqs = np.tile(top_k, (self.n_sources, 1))
-            # freqs = map_audio_freq_to_visual_freq(freqs, self.max_frequency)
+        for name, source in self.excitation_sources.items():
+            self.excitation[:] += weight*source(self.time)
 
-        self.compute_ripple(self.time, freqs)
+            # log.debug(f"Excitation source '{name}' at time {self.time:.3f}s: {source(self.time).shape} shape")
+
+        self.propagator.add_excitation(self.excitation)
+        self.propagator.step()
+        self.Z[:] = self.propagator.get_state()
 
         Z_vis = cp.asnumpy(self.Z) if self.use_gpu else self.Z
         max_abs = np.max(np.abs(Z_vis))
         self.image_item.setLevels([-max_abs, max_abs])
         self.image_item.setImage(Z_vis, autoLevels=False)
+        self.excitation[:] = 0  # Reset excitation for next step
 
 class WavePropagatorCPU:
     def __init__(self, shape, dx, dt, speed, damping):
@@ -283,18 +270,18 @@ class WavePropagatorCPU:
 
 
 class WavePropagatorGPU:
-    def __init__(self, shape, dx, dt, speed, damping):
+    def __init__(self, shape, dx: float, dt: float, speed: float, damping: float):
         self.shape = shape
-        self.dx = dx
-        self.dt = dt
-        self.c = speed
-        self.damping = damping
+        self.dx: float = dx
+        self.dt: float = dt
+        self.c: float = speed
+        self.damping: float = damping
 
         self.Z = cp.zeros(shape, dtype=cp.float32)
         self.Z_old = cp.zeros_like(self.Z)
         self.Z_new = cp.zeros_like(self.Z)
 
-        self.c2_dt2 = (self.c * self.dt / self.dx)**2
+        self.c2_dt2: float = (self.c * self.dt / self.dx)**2
 
     def add_excitation(self, excitation: cp.ndarray):
         assert excitation.shape == self.Z.shape

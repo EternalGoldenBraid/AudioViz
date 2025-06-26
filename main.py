@@ -5,6 +5,7 @@ from typing import Union, Optional, Dict
 
 from PyQt5 import QtWidgets, QtCore
 import numpy as np
+import cupy as cp
 import librosa as lr
 from matplotlib import cm
 from matplotlib.colors import Normalize
@@ -17,6 +18,10 @@ from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 
 from audioviz.utils.guitar_profiles import GuitarProfile  
+from audioviz.sources.audio import AudioExcitation
+from audioviz.sources.synthetic import (
+    SyntheticPointExcitation,
+)
 
 def main():
     # --- Config Phase ---
@@ -136,7 +141,7 @@ def main():
         visualizer.resize(800, 600)
         visualizer.show()
     
-    # Create Pitch Helix Visualizer
+    # Create Pitch Helix Visualizer (Remnant of another project)
     show_helix = False
     if show_helix:
         standard_guitar = GuitarProfile(
@@ -162,9 +167,8 @@ def main():
     ripple_config = {
         # "use_synthetic": True,  # Set to True for synthetic data
         "use_synthetic": False,  # Set to True for synthetic data
-        "n_sources": 4,
         # "plane_size_m": (10.20, 10.20),  # meters
-        "plane_size_m": (0.30, 0.30),  # meters
+        "plane_size_m": (0.30, 0.30)*100,  # meters
         "resolution":  (1440, 2560),  # pixels (H, W)
         "frequency": 1.0,  # Hz
         # "amplitude": 1.0,
@@ -174,13 +178,44 @@ def main():
         # "speed": 34.0,  # m/s
         "damping": 0.90,  # damping factor
         # "damping": 0.1,  # damping factor
+        "use_gpu": True,
     }
     
     if show_ripples:
-        ripple_window = RippleWaveVisualizer(
-            processor=processor,
+
+
+        ripple_window: RippleWaveVisualizer = RippleWaveVisualizer(
             **ripple_config
         )
+
+        # TODO Separate ripple and audio wave excitation configs
+        audio_excitation: AudioExcitation = AudioExcitation(
+            name="Audio Ripple",
+            processor=processor,
+            position=(0.5, 0.5),  # Center of the plane
+            max_frequency=ripple_window.max_frequency,
+            amplitude=ripple_config["amplitude"],
+            speed=ripple_config["speed"],
+            resolution=ripple_config["resolution"],
+            decay_alpha=0.0,  # No decay
+            backend=cp if ripple_config["use_gpu"] else np,
+        )
+        ripple_window.add_excitation_source(audio_excitation)
+
+        if ripple_config["use_synthetic"]:
+            # Good for debugging
+            synthetic_excitation = SyntheticPointExcitation(
+                name="Synthetic Ripple",
+                resolution=ripple_config["resolution"],
+                position=(0.5, 0.5),
+                amplitude=10,
+                frequency=400,
+                decay_alpha=0.0,
+                speed=ripple_config["speed"],
+                backend=cp if ripple_config["use_gpu"] else np,
+            )
+            ripple_window.add_excitation_source(synthetic_excitation)
+
         ripple_window.setWindowTitle("Ripple Wave Visualizer (Synthetic)")
         ripple_window.resize(600, 600)
         ripple_window.show()

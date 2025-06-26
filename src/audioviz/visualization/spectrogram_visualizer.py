@@ -8,6 +8,7 @@ import numpy as np
 import librosa as lr
 from matplotlib import cm
 from matplotlib.colors import Normalize
+from loguru import logger
 
 from .visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
@@ -20,7 +21,9 @@ class SpectrogramVisualizer(VisualizerBase):
                  waveform_plot_duration: float,
                  parent: QtWidgets.QWidget = None):
 
-        super().__init__(processor, parent=parent)
+        super().__init__(parent=parent)
+
+        self.processor: AudioProcessor = processor
 
         self.cmap: cm.colors.Colormap = cmap
         self.norm: Normalize = norm

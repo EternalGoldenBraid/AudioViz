@@ -76,7 +76,13 @@ class AudioProcessor:
 
         self.snapshot_queue: deque[Tuple[np.ndarray, List[np.ndarray]]] = deque(maxlen=5)
         self.num_top_frequencies: int = 3
-        self.current_top_k_frequencies: list[float] = [None] * self.num_top_frequencies
+        # self.current_top_k_frequencies: list[float] = [None] * self.num_top_frequencies
+        self.current_top_k_frequencies: np.ndarray = np.zeros(
+            (self.input_channels, self.num_top_frequencies), dtype=np.float32
+        )
+        self.current_top_k_energies: np.ndarray = np.zeros_like(
+            self.current_top_k_frequencies)
+
         self.freq_bins = np.fft.rfftfreq(self.n_fft, d=1/self.sr)
 
         self.raw_input_queue: deque[np.ndarray] = deque(maxlen=32)
@@ -131,7 +137,7 @@ class AudioProcessor:
             return False
 
         if not hasattr(self, 'stream') or self.stream is None:
-            logger.error("Output stream is not initialized.")
+            logger.info("Output stream is not initialized.")
         else:
             self.stream.start()
         if self.is_streaming and hasattr(self, 'input_stream'):
@@ -139,7 +145,33 @@ class AudioProcessor:
 
         return True
 
-    def get_smoothed_top_k_peak_frequency(self, 
+    def get_smoothed_top_k_peak_frequency(
+            self,
+            k: int = 3,
+            window_frames: int = 3
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Return top-k frequency values AND their corresponding energies for each selected channel.
+    
+        Returns:
+            Tuple[freqs, energies], both shape (C, k)
+        """
+    
+        channel_indices = range(len(self.spectrogram_buffers)) # Taking all channels
+        stacked = np.stack(
+            [self.spectrogram_buffers[ch][:, -window_frames:] for ch in channel_indices],
+            axis=0  # shape: (C, F, T)
+        )
+        averaged = np.mean(stacked, axis=2)  # shape: (C, F)
+    
+        freq_bins = np.fft.rfftfreq(self.n_fft, d=1/self.sr)
+        top_k_idxs = np.argsort(averaged, axis=1)[:, -k:]  # shape: (C, k)
+    
+        freqs = freq_bins[top_k_idxs]              # shape: (C, k)
+        energies = np.take_along_axis(averaged, top_k_idxs, axis=1)  # shape: (C, k)
+        return top_k_idxs, freqs, energies
+
+    def get_smoothed_top_k_peak_frequency_(self, 
             channel_idx: int = 1,
             k:int = 3, window_frames: int = 3) -> Optional[Tuple[List[int], List[float]]]:
         """
@@ -184,8 +216,10 @@ class AudioProcessor:
 
         self.update_spectrogram_buffer(indata)
 
-        idxs_, self.current_top_k_frequencies[:] = self.get_smoothed_top_k_peak_frequency(
-            window_frames=10, k=self.num_top_frequencies, channel_idx=0)
+        idxs_, self.current_top_k_frequencies[:], self.current_top_k_energies[:] = \
+            self.get_smoothed_top_k_peak_frequency(
+                # window_frames=10, k=self.num_top_frequencies, channel_idx=0)
+                window_frames=10, k=self.num_top_frequencies)
 
         self.snapshot_queue.append((
             self.audio_buffer.copy(),
