@@ -20,7 +20,7 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 - Real-time wave propagation visualized on a 2D surface
 - Flexible audio input: default is microphone via `sounddevice`, but any input device can be configured
 - Optional synthetic tone generator for testing
-- GPU acceleration (via CuPy)
+- Optional GPU acceleration (via CuPy); CPU wave propagation is the default
 - Adjustable wave physics: damping, decay, speed, amplitude
 - Modular audio processor and visualizer structure
 
@@ -40,7 +40,7 @@ pip install -r requirements.txt (get from `pyproject.toml`)
 python main.py
 ```
 
-Adjust runtime settings in `main.py`, including resolution, plane size, and GPU usage.
+Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
 ---
 

@@ -1,15 +1,15 @@
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple
 
 import numpy as np
-import cupy as cp
 import matplotlib.cm as cm
 from PyQt5 import QtWidgets
 import pyqtgraph as pg
 from PyQt5.QtWidgets import QSlider, QLabel
 from PyQt5.QtCore import Qt
+from audioviz.engine import RippleEngine
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
-from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
+
 
 class RippleWaveVisualizer(VisualizerBase):
     def __init__(self,
@@ -23,7 +23,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  damping: float = 0.999,
                  use_synthetic: bool = True,
                  apply_gaussian_smoothing: bool = False,
-                 use_gpu: bool = True,
+                 use_gpu: bool = False,
                  **kwargs):
 
         super().__init__(processor, **kwargs)
@@ -41,39 +41,16 @@ class RippleWaveVisualizer(VisualizerBase):
         self.speed = speed
         self.time = 0.0
 
-        self.backend = cp if use_gpu else np
-
-        self.dx = self.plane_size_m[0] / self.resolution[0]
-        self.dy = self.plane_size_m[1] / self.resolution[1]
-        self.dt = (max(self.dx, self.dy) / speed) * 1 / np.sqrt(2)
-
-        propagator_kwargs = {
-            "shape": self.resolution,
-            "dx": self.dx,
-            "dt": self.dt,
-            "speed": self.speed,
-            "damping": damping
-        }
-        if use_gpu:
-            self.propagator = WavePropagatorGPU(**propagator_kwargs)
-        else:
-            self.propagator = WavePropagatorCPU(**propagator_kwargs)
-
-        self.Z = self.backend.zeros(self.resolution, dtype=self.backend.float32)
-
-        self.max_frequency = self.speed / (2 * max(self.dx, self.dy))
-
-        self.source_positions = []
-        np.random.seed(42)
-        for _ in range(n_sources):
-            x = np.random.randint(0, resolution[0])
-            y = np.random.randint(0, resolution[1])
-            self.source_positions.append((x, y))
-
-        self.xs, self.ys = self.backend.meshgrid(
-            self.backend.arange(self.resolution[1]),
-            self.backend.arange(self.resolution[0])
+        self.engine = RippleEngine(
+            resolution=self.resolution,
+            plane_size_m=self.plane_size_m,
+            n_sources=self.n_sources,
+            speed=self.speed,
+            damping=damping,
+            amplitude=self.amplitude,
+            use_gpu=self.use_gpu,
         )
+        self.dt = self.engine.dt
 
         self.image_item = pg.ImageItem()
         # cmap = cm.get_cmap("seismic")
@@ -107,7 +84,7 @@ class RippleWaveVisualizer(VisualizerBase):
         )
         
         # Damping Slider
-        self.damping_label = QLabel("Damping: 0.999")
+        self.damping_label = QLabel(f"Damping: {damping:.3f}")
         self.damping_title = QLabel("Wave Damping")
         self.damping_title.setToolTip("Controls how quickly the wave loses energy as it propagates. 1.0 = no damping.")
         self.damping_slider = QSlider(Qt.Horizontal)
@@ -158,73 +135,26 @@ class RippleWaveVisualizer(VisualizerBase):
         layout.addWidget(self.amplitude_label)
         layout.addWidget(self.amplitude_slider)
 
-        self.compute_ripple = self.compute_ripple_cupy if use_gpu else self.compute_ripple_numpy
-
     def _update_speed(self, val: float):
         self.speed = val
         self.speed_label.setText(f"Speed: {val:.1f}")
-        self.dt = (max(self.dx, self.dy) / self.speed) * 1 / np.sqrt(2)
-        self.propagator.dt = self.dt
-        self.propagator.c = self.speed
-        self.propagator.c2_dt2 = (self.speed * self.dt / self.dx)**2
+        self.engine.set_speed(val)
+        self.dt = self.engine.dt
 
     def _update_amplitude(self, val: float):
         self.amplitude = val
+        self.engine.amplitude = val
         self.amplitude_label.setText(f"Amplitude: {val:.2f}")
 
     def _update_decay_alpha(self, val: float):
-        self.decay_alpha = val
+        self.engine.decay_alpha = val
         self.decay_label.setText(f"Decay α: {val:.1f}")
     
     def _update_damping(self, val: float):
-        self.propagator.damping = val
+        self.engine.set_damping(val)
         self.damping_label.setText(f"Damping: {val:.3f}")
 
-    def compute_ripple_numpy(self, t: float, frequencies: np.ndarray):
-        self._compute_ripple(np, t, frequencies)
-
-    def compute_ripple_cupy(self, t: float, frequencies: np.ndarray):
-        frequencies = cp.asarray(frequencies)
-        self._compute_ripple(cp, t, frequencies)
-
-    def _compute_ripple(self, xp, t: float, frequencies):
-        N, k = frequencies.shape
-
-        x0 = xp.array([p[0] for p in self.source_positions]).reshape(N, 1, 1)
-        y0 = xp.array([p[1] for p in self.source_positions]).reshape(N, 1, 1)
-
-        xs = self.xs[None, :, :]
-        ys = self.ys[None, :, :]
-
-        r_pixels = xp.sqrt((xs - x0) ** 2 + (ys - y0) ** 2)
-        r_meters = r_pixels * self.dx
-
-        decay = xp.exp(-self.decay_alpha * r_meters)
-
-        frequencies = xp.clip(frequencies, 1e-3, self.max_frequency)
-        wavelengths = self.speed / frequencies
-        phases = 2 * xp.pi * frequencies * t
-
-        # for computing:
-        #   ripple[n, k, h, w] = amplitude * decay[n, 1, h, w] * sin(phase[n, k, 1, 1] - 2π * r[n, 1, h, w] / wavelength[n, k, 1, 1])
-        r = r_meters[:, None, :, :]
-        decay = decay[:, None, :, :]
-        wavelengths = wavelengths[:, :, None, None]
-        phases = phases[:, :, None, None]
-
-        propagation_limit = self.speed * self.time
-        mask = r <= propagation_limit
-
-        ripple = self.amplitude * decay * xp.sin(phases - 2 * xp.pi * r / wavelengths)
-        # ripple *= mask
-        
-        self.propagator.add_excitation(ripple.sum(axis=(0, 1)))
-        self.propagator.step()
-        self.Z[:] = self.propagator.get_state()
-
     def update_visualization(self):
-        self.time += self.dt
-
         if self.use_synthetic or self.processor is None:
             freqs = np.full((self.n_sources, 1), self.frequency, dtype=np.float32)
         else:
@@ -232,93 +162,15 @@ class RippleWaveVisualizer(VisualizerBase):
             top_k = [f for f in top_k if f is not None and np.isfinite(f)]
             if len(top_k) == 0:
                 return
-            k = len(top_k)
             freqs = np.tile(top_k, (self.n_sources, 1))
-            # freqs = map_audio_freq_to_visual_freq(freqs, self.max_frequency)
 
-        self.compute_ripple(self.time, freqs)
+        self.engine.step(freqs)
+        self.time = self.engine.time
 
-        Z_vis = cp.asnumpy(self.Z) if self.use_gpu else self.Z
+        Z_vis = self.engine.get_field_numpy()
         max_abs = np.max(np.abs(Z_vis))
         self.image_item.setLevels([-max_abs, max_abs])
         self.image_item.setImage(Z_vis, autoLevels=False)
-
-class WavePropagatorCPU:
-    def __init__(self, shape, dx, dt, speed, damping):
-        self.shape = shape
-        self.dx = dx
-        self.dt = dt
-        self.c = speed
-        self.damping = damping
-
-        self.Z = np.zeros(shape, dtype=np.float32)
-        self.Z_old = np.zeros_like(self.Z)
-        self.Z_new = np.zeros_like(self.Z)
-
-        self.c2_dt2 = (self.c * self.dt / self.dx)**2
-
-    def add_excitation(self, excitation: np.ndarray):
-        assert excitation.shape == self.Z.shape
-        self.Z += excitation
-
-    def step(self):
-        Z = self.Z
-        laplacian = (
-            -4 * Z +
-            np.roll(Z, 1, axis=0) + np.roll(Z, -1, axis=0) +
-            np.roll(Z, 1, axis=1) + np.roll(Z, -1, axis=1)
-        )
-        self.Z_new = (2 * Z - self.Z_old + self.c2_dt2 * laplacian)
-        self.Z_new *= self.damping
-        self.Z_old = Z.copy()
-        self.Z = self.Z_new.copy()
-
-    def get_state(self):
-        return self.Z
-
-    def reset(self):
-        self.Z[:] = 0
-        self.Z_old[:] = 0
-        self.Z_new[:] = 0
-
-
-class WavePropagatorGPU:
-    def __init__(self, shape, dx, dt, speed, damping):
-        self.shape = shape
-        self.dx = dx
-        self.dt = dt
-        self.c = speed
-        self.damping = damping
-
-        self.Z = cp.zeros(shape, dtype=cp.float32)
-        self.Z_old = cp.zeros_like(self.Z)
-        self.Z_new = cp.zeros_like(self.Z)
-
-        self.c2_dt2 = (self.c * self.dt / self.dx)**2
-
-    def add_excitation(self, excitation: cp.ndarray):
-        assert excitation.shape == self.Z.shape
-        self.Z += excitation
-
-    def step(self):
-        Z = self.Z
-        laplacian = (
-            -4 * Z +
-            cp.roll(Z, 1, axis=0) + cp.roll(Z, -1, axis=0) +
-            cp.roll(Z, 1, axis=1) + cp.roll(Z, -1, axis=1)
-        )
-        self.Z_new = (2 * Z - self.Z_old + self.c2_dt2 * laplacian)
-        self.Z_new *= self.damping
-        self.Z_old = Z.copy()
-        self.Z = self.Z_new.copy()
-
-    def get_state(self):
-        return self.Z
-
-    def reset(self):
-        self.Z[:] = 0
-        self.Z_old[:] = 0
-        self.Z_new[:] = 0
 
 
 if __name__ == "__main__":

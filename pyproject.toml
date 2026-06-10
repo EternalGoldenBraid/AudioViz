@@ -5,6 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "audioviz"
 version = "0.1.0"
+dependencies = [
+    "librosa>=0.11.0",
+    "loguru>=0.7.3",
+    "matplotlib>=3.10.8",
+    "pyopengl>=3.1.9",
+    "pyqt5>=5.15.11",
+    "pyqtgraph>=0.14.0",
+    "sounddevice>=0.5.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
 
 # dependencies = [
 #     "librosa",

@@ -18,10 +18,44 @@ from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 
 from audioviz.utils.guitar_profiles import GuitarProfile  
 
+
+# --- High-level switches ---
+IS_STREAMING = True
+SHOW_SPECTROGRAM = True
+SHOW_HELIX = False
+SHOW_RIPPLES = True
+
+# --- Audio / spectrogram config ---
+DATA_PATH = Path("/home/nicklas/Projects/AudioViz/data")
+AUDIO_FILE = DATA_PATH / "test.wav"
+IO_BLOCKSIZE = 2096
+N_FFT = 256
+WINDOW_DURATION_MS = 20
+
+# --- Plotting config ---
+PLOT_UPDATE_INTERVAL_MS = 100
+WAVEFORM_PLOT_DURATION_S = 0.5
+PLOT_WINDOW_DURATION_S = 5.0
+
+# --- Ripple config ---
+RIPPLE_CONFIG = {
+    "use_synthetic": False,
+    "n_sources": 4,
+    "plane_size_m": (0.30, 0.30),
+    # "resolution": (1440, 2560),
+    "resolution": (64, 64),
+    "frequency": 1.0,
+    "amplitude": 10.0,
+    "speed": 340.0,
+    "damping": 0.90,
+    "use_gpu": False,
+}
+
+
 def main():
     # --- Config Phase ---
     
-    is_streaming = True
+    is_streaming = IS_STREAMING
     
     if is_streaming:
         data = None
@@ -29,9 +63,7 @@ def main():
         config = select_devices(config_file=Path("outputs/audio_devices.json"))
         sr: Union[int, float] = config["samplerate"]
     else:
-        data_path: Path = Path("/home/nicklas/Projects/AudioViz/data")
-        audio_file = data_path / "test.wav"
-        data, sr = lr.load(audio_file, sr=None)
+        data, sr = lr.load(AUDIO_FILE, sr=None)
     
         config = {
             "input_device_index": None,
@@ -47,17 +79,12 @@ def main():
         "input_channels": config["input_channels"],
         "output_device_index": config["output_device_index"],
         "output_channels": config["output_channels"],
-        "io_blocksize": 4096,
-        # "io_blocksize": 2048,
-        # "io_blocksize": 1024,
-        # "io_blocksize": 512,
+        "io_blocksize": IO_BLOCKSIZE,
     }
     
     # Spectrogram parameters
-    n_fft = 256
-    window_duration = 20  # ms
-    # window_duration = 500  # ms
-    window_length = int((window_duration / 1000) * sr)
+    n_fft = N_FFT
+    window_length = int((WINDOW_DURATION_MS / 1000) * sr)
     window_length = 2**int(np.log2(window_length))
     
     spectrogram_params = {
@@ -83,14 +110,14 @@ def main():
     # Plotting configs
     cmap = cm.get_cmap('viridis')
     norm = Normalize(vmin=-80, vmax=0)
-    plot_update_interval = 100  # ms
+    plot_update_interval = PLOT_UPDATE_INTERVAL_MS
     
     plotting_config = {
         "cmap": cmap,
         "norm": norm,
         "plot_update_interval": plot_update_interval,
-        "num_samples_in_plot_window": int(5.0 * sr),
-        "waveform_plot_duration": 0.5,
+        "num_samples_in_plot_window": int(PLOT_WINDOW_DURATION_S * sr),
+        "waveform_plot_duration": WAVEFORM_PLOT_DURATION_S,
     }
     
     # --- Run Phase ---
@@ -124,7 +151,7 @@ def main():
     processing_timer.start()
     
     # Visualizer
-    show_spectrogram = True 
+    show_spectrogram = SHOW_SPECTROGRAM
     if show_spectrogram == True:
         visualizer = SpectrogramVisualizer(
             processor=processor,
@@ -137,7 +164,7 @@ def main():
         visualizer.show()
     
     # Create Pitch Helix Visualizer
-    show_helix = False
+    show_helix = SHOW_HELIX
     if show_helix:
         standard_guitar = GuitarProfile(
             open_strings=[82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
@@ -158,28 +185,12 @@ def main():
         helix_window.show()
     
     # Create Ripple Wave Visualizer
-    show_ripples = True
-    ripple_config = {
-        # "use_synthetic": True,  # Set to True for synthetic data
-        "use_synthetic": False,  # Set to True for synthetic data
-        "n_sources": 4,
-        # "plane_size_m": (10.20, 10.20),  # meters
-        "plane_size_m": (0.30, 0.30),  # meters
-        "resolution":  (1440, 2560),  # pixels (H, W)
-        "frequency": 1.0,  # Hz
-        # "amplitude": 1.0,
-        "amplitude": 10.0,
-        # "speed": 1e-4,  # m/s
-        "speed": 340.0,  # m/s
-        # "speed": 34.0,  # m/s
-        "damping": 0.90,  # damping factor
-        # "damping": 0.1,  # damping factor
-    }
+    show_ripples = SHOW_RIPPLES
     
     if show_ripples:
         ripple_window = RippleWaveVisualizer(
             processor=processor,
-            **ripple_config
+            **RIPPLE_CONFIG
         )
         ripple_window.setWindowTitle("Ripple Wave Visualizer (Synthetic)")
         ripple_window.resize(600, 600)
