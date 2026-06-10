@@ -3,7 +3,10 @@ from typing import Optional, Tuple
 import numpy as np
 from PyQt5 import QtWidgets
 from audioviz.engine import RippleEngine
-from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+from audioviz.visualization.ripple_renderers import (
+    NumpyImageRenderer,
+    OpenGLFieldRenderer,
+)
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.ripple_control_panel import RippleControlPanel
@@ -53,10 +56,13 @@ class RippleWaveVisualizer(VisualizerBase):
             amplitude=self.amplitude,
             use_gpu=self.use_gpu,
             use_shader=self.use_shader,
+            use_external_opengl_context=self.use_shader,
         )
         self.dt = self.engine.dt
 
-        self.renderer = NumpyImageRenderer()
+        self.renderer = (
+            OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer()
+        )
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.renderer.widget)
 
@@ -85,6 +91,7 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_amplitude_changed=self._update_amplitude,
                 on_decay_alpha_changed=self._update_decay_alpha,
                 on_damping_changed=self._update_damping,
+                before_reset=self.renderer.prepare_frame,
                 on_reset=self._sync_after_reset,
             )
             self.control_panel.resize(300, 300)
@@ -104,6 +111,9 @@ class RippleWaveVisualizer(VisualizerBase):
             if len(top_k) == 0:
                 return
             freqs = np.tile(top_k, (self.n_sources, 1))
+
+        if not self.renderer.prepare_frame():
+            return
 
         self.engine.step(freqs)
         self.time = self.engine.time

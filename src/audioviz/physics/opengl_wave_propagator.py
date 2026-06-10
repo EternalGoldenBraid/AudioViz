@@ -74,6 +74,7 @@ class WavePropagatorOpenGL:
         dt: float,
         speed: float,
         damping: float,
+        use_current_context: bool = False,
     ):
         self.shape = shape
         self.dx = dx
@@ -81,31 +82,35 @@ class WavePropagatorOpenGL:
         self.c = speed
         self.damping = damping
         self.c2_dt2 = (self.c * self.dt / self.dx) ** 2
+        self.use_current_context = use_current_context
 
         self._context = None
         self._surface = None
-        self._gl = self._load_gl_with_context()
-        self._gl_compute = self._load_compute_functions()
+        self._gl = None
+        self._gl_compute = None
 
         self._rows, self._cols = self.shape
         self._pending_excitation = np.zeros(self.shape, dtype=np.float32)
         self._readback = np.zeros(self.shape, dtype=np.float32)
 
-        self._program = self._compile_compute_program(COMPUTE_SHADER_SOURCE)
-        self._textures = [self._create_float_texture() for _ in range(5)]
-        self._tex_old = self._textures[0]
-        self._tex_current = self._textures[1]
-        self._tex_next = self._textures[2]
-        self._tex_current_after = self._textures[3]
-        self._tex_excitation = self._textures[4]
+        self._program = None
+        self._textures = []
+        self._tex_old = None
+        self._tex_current = None
+        self._tex_next = None
+        self._tex_current_after = None
+        self._tex_excitation = None
+
+        if not self.use_current_context:
+            self._ensure_initialized()
 
     def add_excitation(self, excitation: np.ndarray) -> None:
         assert excitation.shape == self.shape
         self._pending_excitation += np.asarray(excitation, dtype=np.float32)
 
     def step(self) -> None:
+        self._ensure_initialized()
         gl = self._gl
-        self._make_context_current()
 
         self._upload_texture(self._tex_excitation, self._pending_excitation)
         self._pending_excitation.fill(0.0)
@@ -150,16 +155,39 @@ class WavePropagatorOpenGL:
         )
 
     def get_state(self) -> np.ndarray:
-        self._make_context_current()
+        self._ensure_initialized()
         self._readback[:] = self._download_texture(self._tex_current)
         return self._readback
 
     def reset(self) -> None:
+        self._ensure_initialized()
         zeros = np.zeros(self.shape, dtype=np.float32)
         for texture in self._textures:
             self._upload_texture(texture, zeros)
         self._pending_excitation.fill(0.0)
         self._readback.fill(0.0)
+
+    def get_current_texture_id(self) -> int:
+        self._ensure_initialized()
+        return int(self._tex_current)
+
+    def get_texture_shape(self) -> tuple[int, int]:
+        return self.shape
+
+    def _ensure_initialized(self) -> None:
+        if self._program is not None:
+            self._make_context_current()
+            return
+
+        self._gl = self._load_gl_with_context()
+        self._gl_compute = self._load_compute_functions()
+        self._program = self._compile_compute_program(COMPUTE_SHADER_SOURCE)
+        self._textures = [self._create_float_texture() for _ in range(5)]
+        self._tex_old = self._textures[0]
+        self._tex_current = self._textures[1]
+        self._tex_next = self._textures[2]
+        self._tex_current_after = self._textures[3]
+        self._tex_excitation = self._textures[4]
 
     def _load_gl_with_context(self):
         self._make_context_current()
@@ -224,6 +252,12 @@ class WavePropagatorOpenGL:
 
         if QtGui.QOpenGLContext.currentContext() is not None:
             return
+
+        if self.use_current_context:
+            raise RuntimeError(
+                "OpenGL shader ripple rendering requires the renderer-owned "
+                "OpenGL context to be current before stepping the engine."
+            )
 
         app = QtWidgets.QApplication.instance()
         if app is None:

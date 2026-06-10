@@ -16,6 +16,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_amplitude_changed: Optional[Callable[[float], None]] = None,
         on_decay_alpha_changed: Optional[Callable[[float], None]] = None,
         on_damping_changed: Optional[Callable[[float], None]] = None,
+        before_reset: Optional[Callable[[], bool]] = None,
         on_reset: Optional[Callable[[], None]] = None,
     ):
         super().__init__()
@@ -24,6 +25,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_amplitude_changed = on_amplitude_changed
         self.on_decay_alpha_changed = on_decay_alpha_changed
         self.on_damping_changed = on_damping_changed
+        self.before_reset = before_reset
         self.on_reset = on_reset
 
         self.setWindowTitle("Ripple Controls")
@@ -115,6 +117,8 @@ class RippleControlPanel(QtWidgets.QWidget):
         return label, slider
 
     def reset_field(self) -> None:
+        if self.before_reset is not None and not self.before_reset():
+            return
         self.engine.reset()
         if self.on_reset is not None:
             self.on_reset()

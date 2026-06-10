@@ -23,6 +23,7 @@ class RippleEngine:
         decay_alpha: float = 0.0,
         use_gpu: bool = False,
         use_shader: bool = False,
+        use_external_opengl_context: bool = False,
     ):
         if use_gpu and use_shader:
             raise ValueError("Choose either use_gpu=True or use_shader=True, not both.")
@@ -36,6 +37,7 @@ class RippleEngine:
         self.decay_alpha = decay_alpha
         self.use_gpu = use_gpu
         self.use_shader = use_shader
+        self.use_external_opengl_context = use_external_opengl_context
 
         self.backend = load_cupy() if use_gpu else np
         self.dx = self.plane_size_m[0] / self.resolution[0]
@@ -58,7 +60,10 @@ class RippleEngine:
             "damping": self.damping,
         }
         if use_shader:
-            self.propagator = WavePropagatorOpenGL(**propagator_kwargs)
+            self.propagator = WavePropagatorOpenGL(
+                **propagator_kwargs,
+                use_current_context=self.use_external_opengl_context,
+            )
         elif use_gpu:
             self.propagator = WavePropagatorGPU(
                 **propagator_kwargs,
@@ -102,13 +107,31 @@ class RippleEngine:
     def step(self, frequencies: np.ndarray):
         self.time += self.dt
         self._add_ripple_excitation(self.time, frequencies)
+        if self.use_shader:
+            return self.Z
         self.Z[:] = self.propagator.get_state()
         return self.Z
 
     def get_field_numpy(self) -> np.ndarray:
+        if self.use_shader:
+            return self.propagator.get_state()
         if self.use_gpu:
             return self.backend.asnumpy(self.Z)
         return self.Z
+
+    def get_opengl_field_texture_id(self) -> int:
+        if not self.use_shader:
+            raise RuntimeError(
+                "OpenGL field textures are only available with use_shader=True."
+            )
+        return self.propagator.get_current_texture_id()
+
+    def get_opengl_field_shape(self) -> Tuple[int, int]:
+        if not self.use_shader:
+            raise RuntimeError(
+                "OpenGL field textures are only available with use_shader=True."
+            )
+        return self.propagator.get_texture_shape()
 
     def _add_ripple_excitation(self, t: float, frequencies: np.ndarray) -> None:
         xp = self.backend

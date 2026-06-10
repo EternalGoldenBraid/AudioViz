@@ -50,6 +50,7 @@ RIPPLE_CONFIG = {
     "speed": 340.0,
     "damping": 0.90,
     "use_gpu": False,
+    "use_opengl": False,
 }
 
 
@@ -190,9 +191,11 @@ def main():
     show_ripples = SHOW_RIPPLES
     
     if show_ripples:
+        ripple_config = RIPPLE_CONFIG.copy()
+        ripple_config["use_shader"] = ripple_config.pop("use_opengl")
         ripple_window = RippleWaveVisualizer(
             processor=processor,
-            **RIPPLE_CONFIG
+            **ripple_config
         )
         ripple_window.setWindowTitle("Ripple Wave Visualizer (Synthetic)")
         ripple_window.resize(600, 600)
