@@ -9,6 +9,7 @@ import librosa as lr
 from matplotlib import cm
 from matplotlib.colors import Normalize
 from loguru import logger
+import qdarkstyle
 
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.spectrogram_visualizer import SpectrogramVisualizer
@@ -123,6 +124,7 @@ def main():
     # --- Run Phase ---
     
     app = QtWidgets.QApplication([])
+    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     
     # Audio processor
     processor = AudioProcessor(
