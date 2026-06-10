@@ -4,11 +4,10 @@ import numpy as np
 import matplotlib.cm as cm
 from PyQt5 import QtWidgets
 import pyqtgraph as pg
-from PyQt5.QtWidgets import QSlider, QLabel
-from PyQt5.QtCore import Qt
 from audioviz.engine import RippleEngine
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
+from audioviz.visualization.ripple_control_panel import RippleControlPanel
 
 
 class RippleWaveVisualizer(VisualizerBase):
@@ -38,8 +37,11 @@ class RippleWaveVisualizer(VisualizerBase):
         self.frequency = frequency
         self.apply_gaussian_smoothing = apply_gaussian_smoothing
         self.amplitude = amplitude
+        self.decay_alpha = 0.0
         self.speed = speed
+        self.damping = damping
         self.time = 0.0
+        self.control_panel: Optional[RippleControlPanel] = None
 
         self.engine = RippleEngine(
             resolution=self.resolution,
@@ -68,91 +70,40 @@ class RippleWaveVisualizer(VisualizerBase):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.plot_widget)
 
-        # Decay Alpha Slider
-        self.decay_alpha = 0.0
-        self.decay_label = QLabel("Decay α: 0.0")
-        self.decay_title = QLabel("Excitation Falloff (α)")
-        self.decay_title.setToolTip(
-            "Controls how quickly the excitation decays away from the source point. " 
-            "Higher α = more localized excitation. Lower α = more spread out excitation e.g. larger object causing the ripple)."
-        )
-        self.decay_slider = QSlider(Qt.Horizontal)
-        self.decay_slider.setMinimum(0)
-        self.decay_slider.setMaximum(1000)  # maps to 0.0 - 20.0
-        self.decay_slider.valueChanged.connect(
-            lambda val: self._update_decay_alpha(val / 10.0)
-        )
-        
-        # Damping Slider
-        self.damping_label = QLabel(f"Damping: {damping:.3f}")
-        self.damping_title = QLabel("Wave Damping")
-        self.damping_title.setToolTip("Controls how quickly the wave loses energy as it propagates. 1.0 = no damping.")
-        self.damping_slider = QSlider(Qt.Horizontal)
-        self.damping_slider.setMinimum(0)
-        self.damping_slider.setMaximum(1000) # maps to 0.0 - 1.0
-        self.damping_slider.valueChanged.connect(
-            lambda val: self._update_damping(val / 1000) # step size of 0.01
-        )
-
-        # Speed Slider
-        self.speed_label = QLabel(f"Speed: {self.speed:.1f}")
-        self.speed_title = QLabel("Wave Speed (m/s)")
-        self.speed_title.setToolTip("Controls how fast the wave propagates across the surface.")
-        self.speed_slider = QSlider(Qt.Horizontal)
-        self.speed_slider.setMinimum(1)
-        self.speed_slider.setMaximum(1000)  # Maps to 1–1000 m/s
-        self.speed_slider.setValue(int(self.speed))
-        self.speed_slider.valueChanged.connect(
-            lambda val: self._update_speed(val)
-        )
-
-        # Amplitude Slider
-        self.amplitude_label = QLabel(f"Amplitude: {self.amplitude:.2f}")
-        self.amplitude_title = QLabel("Excitation Amplitude")
-        self.amplitude_title.setToolTip("Controls the strength of the input excitation added to the wave field.")
-        self.amplitude_slider = QSlider(Qt.Horizontal)
-        self.amplitude_slider.setMinimum(0)
-        self.amplitude_slider.setMaximum(500)  # Maps to 0.00–5.00
-        self.amplitude_slider.setValue(int(self.amplitude * 100))
-        self.amplitude_slider.valueChanged.connect(
-            lambda val: self._update_amplitude(val / 100.0)
-        )
-
-        # Add to layout
-        layout.addWidget(self.decay_title)
-        layout.addWidget(self.decay_label)
-        layout.addWidget(self.decay_slider)
-
-        layout.addWidget(self.damping_title)
-        layout.addWidget(self.damping_label)
-        layout.addWidget(self.damping_slider)
-
-        layout.addWidget(self.speed_title)
-        layout.addWidget(self.speed_label)
-        layout.addWidget(self.speed_slider)
-
-        layout.addWidget(self.amplitude_title)
-        layout.addWidget(self.amplitude_label)
-        layout.addWidget(self.amplitude_slider)
+        controls_button = QtWidgets.QPushButton("Show Controls")
+        controls_button.clicked.connect(self.toggle_controls)
+        layout.addWidget(controls_button)
 
     def _update_speed(self, val: float):
         self.speed = val
-        self.speed_label.setText(f"Speed: {val:.1f}")
-        self.engine.set_speed(val)
         self.dt = self.engine.dt
 
     def _update_amplitude(self, val: float):
         self.amplitude = val
-        self.engine.amplitude = val
-        self.amplitude_label.setText(f"Amplitude: {val:.2f}")
 
     def _update_decay_alpha(self, val: float):
-        self.engine.decay_alpha = val
-        self.decay_label.setText(f"Decay α: {val:.1f}")
+        self.decay_alpha = val
     
     def _update_damping(self, val: float):
-        self.engine.set_damping(val)
-        self.damping_label.setText(f"Damping: {val:.3f}")
+        self.damping = val
+
+    def toggle_controls(self):
+        if self.control_panel is None:
+            self.control_panel = RippleControlPanel(
+                self.engine,
+                on_speed_changed=self._update_speed,
+                on_amplitude_changed=self._update_amplitude,
+                on_decay_alpha_changed=self._update_decay_alpha,
+                on_damping_changed=self._update_damping,
+                on_reset=self._sync_after_reset,
+            )
+            self.control_panel.resize(300, 300)
+        self.control_panel.show()
+        self.control_panel.raise_()
+        self.control_panel.activateWindow()
+
+    def _sync_after_reset(self) -> None:
+        self.time = self.engine.time
 
     def update_visualization(self):
         if self.use_synthetic or self.processor is None:

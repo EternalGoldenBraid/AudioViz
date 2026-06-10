@@ -86,6 +86,11 @@ class RippleEngine:
         self.damping = damping
         self.propagator.damping = damping
 
+    def reset(self) -> None:
+        self.propagator.reset()
+        self.Z[:] = 0
+        self.time = 0.0
+
     def step(self, frequencies: np.ndarray):
         self.time += self.dt
         self._add_ripple_excitation(self.time, frequencies)
