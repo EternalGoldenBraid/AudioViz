@@ -23,6 +23,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  use_synthetic: bool = True,
                  apply_gaussian_smoothing: bool = False,
                  use_gpu: bool = False,
+                 use_shader: bool = False,
                  **kwargs):
 
         super().__init__(processor, **kwargs)
@@ -30,6 +31,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.processor = processor
         self.use_synthetic = processor is None or use_synthetic
         self.use_gpu = use_gpu
+        self.use_shader = use_shader
 
         self.n_sources = n_sources
         self.plane_size_m = plane_size_m
@@ -51,6 +53,7 @@ class RippleWaveVisualizer(VisualizerBase):
             damping=damping,
             amplitude=self.amplitude,
             use_gpu=self.use_gpu,
+            use_shader=self.use_shader,
         )
         self.dt = self.engine.dt
 

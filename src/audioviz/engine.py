@@ -7,6 +7,7 @@ from audioviz.physics.wave_propagator import (
     WavePropagatorGPU,
     load_cupy,
 )
+from audioviz.physics.opengl_wave_propagator import WavePropagatorOpenGL
 
 
 class RippleEngine:
@@ -21,7 +22,11 @@ class RippleEngine:
         amplitude: float = 1.0,
         decay_alpha: float = 0.0,
         use_gpu: bool = False,
+        use_shader: bool = False,
     ):
+        if use_gpu and use_shader:
+            raise ValueError("Choose either use_gpu=True or use_shader=True, not both.")
+
         self.resolution = resolution
         self.plane_size_m = plane_size_m
         self.n_sources = n_sources
@@ -30,6 +35,7 @@ class RippleEngine:
         self.amplitude = amplitude
         self.decay_alpha = decay_alpha
         self.use_gpu = use_gpu
+        self.use_shader = use_shader
 
         self.backend = load_cupy() if use_gpu else np
         self.dx = self.plane_size_m[0] / self.resolution[0]
@@ -51,7 +57,9 @@ class RippleEngine:
             "speed": self.speed,
             "damping": self.damping,
         }
-        if use_gpu:
+        if use_shader:
+            self.propagator = WavePropagatorOpenGL(**propagator_kwargs)
+        elif use_gpu:
             self.propagator = WavePropagatorGPU(
                 **propagator_kwargs,
                 cupy_module=self.backend,
