@@ -43,6 +43,24 @@ def test_ripple_control_panel_updates_wave_physics(ripple_panel_deps):
     assert engine.decay_alpha == 4.2
 
 
+def test_ripple_control_panel_amplitude_slider_covers_initial_value(ripple_panel_deps):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=10.0,
+        damping=0.999,
+        amplitude=10.0,
+        use_gpu=False,
+    )
+    panel = RippleControlPanel(engine)
+    app.processEvents()
+
+    assert panel.amplitude_slider.maximum() >= 1000
+    assert panel.amplitude_slider.value() == 1000
+
+
 def test_ripple_control_panel_resets_field(ripple_panel_deps):
     QtWidgets, RippleControlPanel = ripple_panel_deps
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])

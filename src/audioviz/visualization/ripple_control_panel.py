@@ -80,10 +80,13 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.amplitude_label, self.amplitude_slider = self._add_slider(
             group_layout,
             title="Excitation Amplitude",
-            tooltip="Controls the strength of the input excitation added to the wave field.",
+            tooltip=(
+                "Controls the strength of excitation added to the wave field. "
+                "Set to 0 to mute audio-driven ripples."
+            ),
             value_label=f"Amplitude: {self.engine.amplitude:.2f}",
             minimum=0,
-            maximum=500,
+            maximum=max(1000, int(self.engine.amplitude * 100)),
             value=int(self.engine.amplitude * 100),
             on_change=lambda raw: self.update_amplitude(raw / 100.0),
         )
