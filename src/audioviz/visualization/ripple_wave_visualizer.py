@@ -1,10 +1,9 @@
 from typing import Optional, Tuple
 
 import numpy as np
-import matplotlib.cm as cm
 from PyQt5 import QtWidgets
-import pyqtgraph as pg
 from audioviz.engine import RippleEngine
+from audioviz.visualization.ripple_renderers import NumpyImageRenderer
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.ripple_control_panel import RippleControlPanel
@@ -57,21 +56,9 @@ class RippleWaveVisualizer(VisualizerBase):
         )
         self.dt = self.engine.dt
 
-        self.image_item = pg.ImageItem()
-        # cmap = cm.get_cmap("seismic")
-        cmap = cm.get_cmap("inferno")
-        lut = (cmap(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
-        self.image_item.setLookupTable(lut)
-
-        self.plot = pg.PlotItem()
-        self.plot.setTitle("Ripple Simulation")
-        self.plot.addItem(self.image_item)
-
-        self.plot_widget = pg.GraphicsLayoutWidget()
-        self.plot_widget.addItem(self.plot)
-
+        self.renderer = NumpyImageRenderer()
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self.plot_widget)
+        layout.addWidget(self.renderer.widget)
 
         controls_button = QtWidgets.QPushButton("Show Controls")
         controls_button.clicked.connect(self.toggle_controls)
@@ -120,11 +107,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.engine.step(freqs)
         self.time = self.engine.time
-
-        Z_vis = self.engine.get_field_numpy()
-        max_abs = np.max(np.abs(Z_vis))
-        self.image_item.setLevels([-max_abs, max_abs])
-        self.image_item.setImage(Z_vis, autoLevels=False)
+        self.renderer.render(self.engine)
 
 
 if __name__ == "__main__":
