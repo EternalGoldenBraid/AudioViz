@@ -81,6 +81,7 @@ class NumpyImageRenderer:
         title: str = "Ripple Simulation",
         colormap_name: str = "inferno",
     ):
+        self._auto_levels_pending = True
         self.image_item = pg.ImageItem()
         colormap = cm.get_cmap(colormap_name)
         lookup_table = (colormap(np.linspace(0, 1, 256))[:, :3] * 255).astype(
@@ -93,15 +94,22 @@ class NumpyImageRenderer:
         self.plot.addItem(self.image_item)
 
         self.widget = pg.GraphicsLayoutWidget()
-        self.widget.addItem(self.plot)
+        self.widget.addItem(self.plot, row=0, col=0)
+
+        self.histogram = pg.HistogramLUTItem(image=self.image_item)
+        self.histogram.gradient.loadPreset(colormap_name)
+        self.widget.addItem(self.histogram, row=0, col=1)
 
     def prepare_frame(self) -> bool:
         return True
 
     def render(self, field_source: RippleFieldSource) -> None:
         field = field_source.get_field_numpy()
-        max_abs = np.max(np.abs(field))
-        self.image_item.setLevels([-max_abs, max_abs])
+        if self._auto_levels_pending:
+            max_abs = np.max(np.abs(field))
+            if max_abs > 0:
+                self.histogram.setLevels(-max_abs, max_abs)
+            self._auto_levels_pending = False
         self.image_item.setImage(field, autoLevels=False)
 
 
