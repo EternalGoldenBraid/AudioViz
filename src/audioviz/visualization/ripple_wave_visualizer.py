@@ -1,8 +1,16 @@
+import time
 from typing import Optional, Tuple
 
 import numpy as np
 from PyQt5 import QtWidgets
 from audioviz.engine import RippleEngine
+from audioviz.sources.pose import (
+    MediaPipePoseExtractor,
+    PoseGraphExtractor,
+    PoseGraphState,
+    centered_field_rect,
+    pose_graph_state_to_ripple_sources,
+)
 from audioviz.visualization.ripple_renderers import (
     NumpyImageRenderer,
     OpenGLFieldRenderer,
@@ -26,6 +34,15 @@ class RippleWaveVisualizer(VisualizerBase):
                  apply_gaussian_smoothing: bool = False,
                  use_gpu: bool = False,
                  use_shader: bool = False,
+                 use_pose_sources: bool = False,
+                 pose_model_path: str | None = None,
+                 pose_camera_index: int = 0,
+                 pose_acceleration_scale: float = 1.0,
+                 pose_max_excitation: float | None = None,
+                 pose_field_width_fraction: float = 1.0,
+                 pose_field_height_fraction: float = 1.0,
+                 pose_extractor: PoseGraphExtractor | None = None,
+                 pose_capture=None,
                  **kwargs):
 
         super().__init__(processor, **kwargs)
@@ -34,6 +51,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.use_synthetic = processor is None or use_synthetic
         self.use_gpu = use_gpu
         self.use_shader = use_shader
+        self.use_pose_sources = use_pose_sources
 
         self.n_sources = n_sources
         self.plane_size_m = plane_size_m
@@ -46,6 +64,23 @@ class RippleWaveVisualizer(VisualizerBase):
         self.damping = damping
         self.time = 0.0
         self.control_panel: Optional[RippleControlPanel] = None
+        self.pose_acceleration_scale = pose_acceleration_scale
+        self.pose_max_excitation = pose_max_excitation
+        self.pose_field_rect = centered_field_rect(
+            self.resolution,
+            width_fraction=pose_field_width_fraction,
+            height_fraction=pose_field_height_fraction,
+        )
+        self.pose_state: PoseGraphState | None = None
+        self.pose_last_update_time = time.monotonic()
+        self.pose_extractor = pose_extractor
+        self.pose_capture = pose_capture
+
+        if self.use_pose_sources:
+            self._ensure_pose_source(
+                model_path=pose_model_path,
+                camera_index=pose_camera_index,
+            )
 
         self.engine = RippleEngine(
             resolution=self.resolution,
@@ -103,6 +138,10 @@ class RippleWaveVisualizer(VisualizerBase):
         self.time = self.engine.time
 
     def update_visualization(self):
+        if self.use_pose_sources:
+            self._update_pose_visualization()
+            return
+
         if self.use_synthetic or self.processor is None:
             freqs = np.full((self.n_sources, 1), self.frequency, dtype=np.float32)
         else:
@@ -118,6 +157,89 @@ class RippleWaveVisualizer(VisualizerBase):
         self.engine.step(freqs)
         self.time = self.engine.time
         self.renderer.render(self.engine)
+
+    def _ensure_pose_source(
+        self,
+        *,
+        model_path: str | None,
+        camera_index: int,
+    ) -> None:
+        if self.pose_extractor is None:
+            self.pose_extractor = MediaPipePoseExtractor(model_path=model_path)
+        if self.pose_capture is None:
+            cv2 = self._load_cv2()
+            self.pose_capture = cv2.VideoCapture(camera_index)
+            if not self.pose_capture.isOpened():
+                self.pose_extractor.close()
+                self.pose_extractor = None
+                raise RuntimeError(f"Failed to open pose camera index {camera_index}")
+
+    def _update_pose_visualization(self) -> None:
+        if self.pose_capture is None or self.pose_extractor is None:
+            return
+
+        ok, frame = self.pose_capture.read()
+        if not ok:
+            return
+
+        pose = self.pose_extractor.extract(frame)
+        if not pose.coords.size:
+            return
+
+        now = time.monotonic()
+        dt = max(now - self.pose_last_update_time, 1e-6)
+        self.pose_last_update_time = now
+
+        initialized_pose_state = False
+        if self.pose_state is None or self.pose_state.num_nodes != len(pose.coords):
+            self.pose_state = PoseGraphState(
+                len(pose.coords),
+                pose.adjacency,
+                velocity_smoothing_alpha=0.8,
+            )
+            initialized_pose_state = True
+        self.pose_state.update(pose.coords, dt)
+
+        source_positions, source_excitations = pose_graph_state_to_ripple_sources(
+            self.pose_state,
+            self.resolution,
+            field_rect=self.pose_field_rect,
+            acceleration_scale=self.pose_acceleration_scale,
+            max_excitation=self.pose_max_excitation,
+        )
+        if initialized_pose_state:
+            source_excitations = np.zeros_like(source_excitations)
+
+        if not self.renderer.prepare_frame():
+            return
+
+        self.engine.set_source_positions(source_positions)
+        self.engine.step_source_excitations(source_excitations)
+        self.time = self.engine.time
+        self.renderer.render(self.engine)
+
+    def closeEvent(self, event):
+        self.close_pose_sources()
+        super().closeEvent(event)
+
+    def close_pose_sources(self) -> None:
+        if self.pose_extractor is not None:
+            self.pose_extractor.close()
+            self.pose_extractor = None
+        if self.pose_capture is not None:
+            self.pose_capture.release()
+            self.pose_capture = None
+
+    @staticmethod
+    def _load_cv2():
+        try:
+            import cv2
+        except ImportError as exc:
+            raise ImportError(
+                "OpenCV is required for pose-driven ripple sources. "
+                "Install the pose-demo dependency group first."
+            ) from exc
+        return cv2
 
 
 if __name__ == "__main__":

@@ -51,6 +51,11 @@ RIPPLE_CONFIG = {
     "damping": 0.90,
     "use_gpu": False,
     "use_opengl": False,
+    "use_pose_sources": False,
+    "pose_model_path": "models/pose_landmarker_lite.task",
+    "pose_camera_index": 0,
+    "pose_acceleration_scale": 1e-4,
+    "pose_max_excitation": 0.02,
 }
 
 
