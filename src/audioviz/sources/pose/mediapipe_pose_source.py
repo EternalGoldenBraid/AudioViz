@@ -14,6 +14,7 @@ class MediaPipePoseExtractor(PoseGraphExtractor):
         static_image_mode: bool = False,
         min_detection_confidence: float = 0.5,
         min_tracking_confidence: float = 0.5,
+        array_module=np,
     ) -> None:
         try:
             import mediapipe as mp
@@ -24,6 +25,11 @@ class MediaPipePoseExtractor(PoseGraphExtractor):
             ) from exc
 
         self._mp = mp
+        self._frame = PoseGraphFrame.empty(
+            33,
+            adjacency=mediapipe_pose_adjacency(33),
+            array_module=array_module,
+        )
         self._mode = "legacy" if hasattr(mp, "solutions") else "tasks"
         if self._mode == "legacy":
             self._mp_pose = mp.solutions.pose
@@ -64,16 +70,11 @@ class MediaPipePoseExtractor(PoseGraphExtractor):
             landmarks = results.pose_landmarks[0] if results.pose_landmarks else None
 
         if not landmarks:
-            return PoseGraphFrame(
-                coords=np.zeros((0, 2), dtype=np.float32),
-                adjacency=np.zeros((0, 0), dtype=np.float32),
-            )
+            self._frame.clear()
+            return self._frame
 
-        coords = np.array(
-            [(landmark.x, landmark.y) for landmark in landmarks],
-            dtype=np.float32,
-        )
-        return PoseGraphFrame(coords=coords, adjacency=mediapipe_pose_adjacency(len(coords)))
+        self._frame.update_xy(landmarks)
+        return self._frame
 
     def close(self) -> None:
         self._pose.close()
