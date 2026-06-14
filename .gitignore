@@ -4,4 +4,5 @@
 *.egg-info
 data/*
 models/*.task
+outputs/pose_ripple_validation/
 __pycache__/
