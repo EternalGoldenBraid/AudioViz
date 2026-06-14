@@ -44,6 +44,27 @@ Adjust runtime settings in `main.py`, including resolution, plane size, and opti
 
 ---
 
+## 🧍 Pose Model
+
+The pose graph demo expects a local MediaPipe Pose Landmarker `.task` model when
+the installed MediaPipe version uses the Tasks API. Use the Lite bundle as the
+mobile-friendly default:
+
+```bash
+mkdir -p models
+curl -L -o models/pose_landmarker_lite.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task
+```
+
+Run the camera demo with the optional pose dependencies:
+
+```bash
+uv run --group pose-demo python scripts/pose_graph_demo.py --model-path models/pose_landmarker_lite.task
+```
+
+The downloaded `.task` bundle is ignored by git.
+
+---
+
 ## 🎛️ Interactive Controls
 
 Accessible from GUI sliders:

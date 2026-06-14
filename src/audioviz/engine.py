@@ -79,13 +79,27 @@ class RippleEngine:
 
     def _make_source_positions(self):
         rng = np.random.default_rng(42)
-        return [
+        rows, cols = self.resolution
+        positions = np.column_stack(
             (
-                rng.integers(0, self.resolution[0]),
-                rng.integers(0, self.resolution[1]),
+                rng.integers(0, cols, size=self.n_sources),
+                rng.integers(0, rows, size=self.n_sources),
             )
-            for _ in range(self.n_sources)
-        ]
+        )
+        return positions.astype(np.float32)
+
+    def set_source_positions(self, source_positions: np.ndarray) -> None:
+        positions = np.asarray(source_positions, dtype=np.float32)
+        if positions.ndim != 2 or positions.shape[1] != 2:
+            raise ValueError("source_positions must have shape (n_sources, 2)")
+        rows, cols = self.resolution
+        if np.any(positions[:, 0] < 0.0) or np.any(positions[:, 0] > cols - 1):
+            raise ValueError("source x positions must fit inside the field width")
+        if np.any(positions[:, 1] < 0.0) or np.any(positions[:, 1] > rows - 1):
+            raise ValueError("source y positions must fit inside the field height")
+
+        self.source_positions = positions.copy()
+        self.n_sources = len(positions)
 
     def set_speed(self, speed: float) -> None:
         self.speed = speed

@@ -3,4 +3,5 @@
 .pixi
 *.egg-info
 data/*
+models/*.task
 __pycache__/
