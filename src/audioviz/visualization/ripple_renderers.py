@@ -82,7 +82,7 @@ class NumpyImageRenderer:
         colormap_name: str = "inferno",
     ):
         self._auto_levels_pending = True
-        self.image_item = pg.ImageItem()
+        self.image_item = pg.ImageItem(axisOrder="row-major")
         colormap = cm.get_cmap(colormap_name)
         lookup_table = (colormap(np.linspace(0, 1, 256))[:, :3] * 255).astype(
             np.uint8
@@ -91,6 +91,7 @@ class NumpyImageRenderer:
 
         self.plot = pg.PlotItem()
         self.plot.setTitle(title)
+        self.plot.invertY(True)
         self.plot.addItem(self.image_item)
 
         self.widget = pg.GraphicsLayoutWidget()

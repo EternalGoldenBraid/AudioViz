@@ -203,6 +203,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.pose_debug_view:
             self._update_pose_debug_view(frame, pose)
         if not pose.coords.size:
+            self._render_pose_field_without_detection()
             return
 
         now = time.monotonic()
@@ -229,10 +230,22 @@ class RippleWaveVisualizer(VisualizerBase):
         if initialized_pose_state:
             source_excitations = np.zeros_like(source_excitations)
 
+        self.engine.set_source_positions(source_positions)
+        self._render_pose_field(source_excitations)
+
+    def _render_pose_field_without_detection(self) -> None:
+        if self.pose_state is None:
+            if not self.renderer.prepare_frame():
+                return
+            self.renderer.render(self.engine)
+            return
+
+        self._render_pose_field(np.zeros(self.engine.n_sources, dtype=np.float32))
+
+    def _render_pose_field(self, source_excitations: np.ndarray) -> None:
         if not self.renderer.prepare_frame():
             return
 
-        self.engine.set_source_positions(source_positions)
         self.engine.step_source_excitations(source_excitations)
         self.time = self.engine.time
         self.renderer.render(self.engine)

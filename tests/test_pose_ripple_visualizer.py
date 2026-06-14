@@ -45,6 +45,24 @@ class _FakeExtractor:
         self.closed = True
 
 
+class _MissingPoseExtractor:
+    def __init__(self):
+        self.frames = [
+            PoseGraphFrame(
+                coords=np.array([[0.25, 0.25], [0.75, 0.75]], dtype=np.float32),
+                adjacency=adjacency_from_edges(2, [(0, 1)]),
+            ),
+            PoseGraphFrame.empty(2, adjacency=adjacency_from_edges(2, [(0, 1)])),
+        ]
+        self.closed = False
+
+    def extract(self, _frame):
+        return self.frames.pop(0)
+
+    def close(self):
+        self.closed = True
+
+
 class _FakeRenderer:
     def __init__(self):
         self.render_count = 0
@@ -100,4 +118,58 @@ def test_ripple_visualizer_feeds_pose_landmarks_into_source_excitations():
     visualizer.close_pose_sources()
     assert capture.released
     assert extractor.closed
+    app.processEvents()
+
+
+def test_ripple_visualizer_keeps_rendering_when_pose_detection_drops_out():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture()
+    extractor = _MissingPoseExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=0.99,
+        amplitude=1.0,
+        use_pose_sources=True,
+        pose_capture=capture,
+        pose_extractor=extractor,
+        pose_acceleration_scale=1.0,
+        pose_max_excitation=10.0,
+        pose_debug_view=True,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    visualizer.update_visualization()
+    field_after_detection = visualizer.engine.get_field_numpy().copy()
+
+    visualizer.update_visualization()
+    field_after_dropout = visualizer.engine.get_field_numpy().copy()
+
+    assert visualizer.renderer.render_count == 2
+    assert visualizer.pose_debug_frame_count == 2
+    assert np.count_nonzero(field_after_detection) == 0
+    assert np.count_nonzero(field_after_dropout) == 0
+
+    visualizer.close_pose_sources()
+    assert capture.released
+    assert extractor.closed
+    app.processEvents()
+
+
+def test_numpy_ripple_renderer_uses_top_left_image_origin():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    renderer = NumpyImageRenderer()
+
+    assert renderer.plot.getViewBox().state["yInverted"] is True
+
+    renderer.widget.close()
     app.processEvents()
