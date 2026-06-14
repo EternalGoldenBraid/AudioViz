@@ -126,6 +126,15 @@ class RippleEngine:
         self.Z[:] = self.propagator.get_state()
         return self.Z
 
+    def step_source_excitations(self, source_excitations: np.ndarray):
+        self.time += self.dt
+        self._add_source_excitation(source_excitations)
+        self.propagator.step()
+        if self.use_shader:
+            return self.Z
+        self.Z[:] = self.propagator.get_state()
+        return self.Z
+
     def get_field_numpy(self) -> np.ndarray:
         if self.use_shader:
             return self.propagator.get_state()
@@ -182,3 +191,20 @@ class RippleEngine:
 
         self.propagator.add_excitation(ripple.sum(axis=(0, 1)))
         self.propagator.step()
+
+    def _add_source_excitation(self, source_excitations: np.ndarray) -> None:
+        xp = self.backend
+        values = xp.asarray(source_excitations, dtype=xp.float32).reshape(-1)
+        if len(values) != self.n_sources:
+            raise ValueError(
+                f"Expected {self.n_sources} source excitations, got {len(values)}."
+            )
+
+        rows, cols = self.resolution
+        positions = xp.asarray(self.source_positions, dtype=xp.float32)
+        xs = xp.clip(xp.rint(positions[:, 0]).astype(xp.int32), 0, cols - 1)
+        ys = xp.clip(xp.rint(positions[:, 1]).astype(xp.int32), 0, rows - 1)
+
+        excitation = xp.zeros(self.resolution, dtype=xp.float32)
+        xp.add.at(excitation, (ys, xs), values * self.amplitude)
+        self.propagator.add_excitation(excitation)

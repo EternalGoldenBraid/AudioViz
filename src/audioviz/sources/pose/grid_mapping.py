@@ -60,6 +60,33 @@ def normalized_pose_coords_to_source_positions(
     return mapped
 
 
+def pose_graph_state_to_ripple_sources(
+    state,
+    resolution: tuple[int, int],
+    *,
+    field_rect: FieldRect | None = None,
+    acceleration_scale: float = 1.0,
+    max_excitation: float | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map pose graph nodes to ripple positions and acceleration excitations."""
+    if acceleration_scale < 0.0:
+        raise ValueError("acceleration_scale must be non-negative")
+    if max_excitation is not None and max_excitation < 0.0:
+        raise ValueError("max_excitation must be non-negative")
+
+    source_positions = normalized_pose_coords_to_source_positions(
+        state.get_positions(),
+        resolution,
+        field_rect=field_rect,
+    )
+    accelerations = np.asarray(state.get_accelerations(), dtype=np.float32)
+    excitations = np.linalg.norm(accelerations, axis=1).astype(np.float32)
+    excitations *= np.float32(acceleration_scale)
+    if max_excitation is not None:
+        excitations = np.clip(excitations, 0.0, max_excitation).astype(np.float32)
+    return source_positions, excitations
+
+
 def _validate_resolution(resolution: tuple[int, int]) -> tuple[int, int]:
     if len(resolution) != 2:
         raise ValueError("resolution must contain (rows, cols)")

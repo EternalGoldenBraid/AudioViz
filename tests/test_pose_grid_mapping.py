@@ -3,8 +3,10 @@ import pytest
 
 from audioviz.engine import RippleEngine
 from audioviz.sources.pose import (
+    PoseGraphState,
     centered_field_rect,
     normalized_pose_coords_to_source_positions,
+    pose_graph_state_to_ripple_sources,
 )
 
 
@@ -101,6 +103,69 @@ def test_ripple_engine_accepts_pose_mapped_source_positions():
     assert engine.n_sources == 2
     np.testing.assert_allclose(engine.source_positions, positions)
     engine.step(np.full((2, 1), 5.0, dtype=np.float32))
+
+
+def test_pose_graph_state_maps_acceleration_norm_to_source_excitations():
+    state = PoseGraphState(2, velocity_smoothing_alpha=1.0)
+    state.update(np.array([[0.1, 0.2], [0.8, 0.5]], dtype=np.float32), dt=1.0)
+    state.update(np.array([[0.3, 0.2], [0.8, 0.8]], dtype=np.float32), dt=1.0)
+
+    positions, excitations = pose_graph_state_to_ripple_sources(
+        state,
+        resolution=(10, 20),
+        acceleration_scale=2.0,
+    )
+
+    np.testing.assert_allclose(positions, [[5.7, 1.8], [15.2, 7.2]])
+    np.testing.assert_allclose(excitations, [0.4472136, 1.6492423], atol=1e-6)
+
+
+def test_pose_graph_state_excitations_can_be_clipped():
+    state = PoseGraphState(1, velocity_smoothing_alpha=1.0)
+    state.update(np.array([[1.0, 0.0]], dtype=np.float32), dt=1.0)
+
+    _, excitations = pose_graph_state_to_ripple_sources(
+        state,
+        resolution=(10, 10),
+        acceleration_scale=10.0,
+        max_excitation=3.0,
+    )
+
+    np.testing.assert_allclose(excitations, [3.0])
+
+
+def test_ripple_engine_steps_direct_source_excitations():
+    engine = RippleEngine(
+        resolution=(5, 6),
+        plane_size_m=(1.0, 1.0),
+        n_sources=1,
+        speed=1.0,
+        damping=1.0,
+        amplitude=2.0,
+        use_gpu=False,
+    )
+    engine.set_source_positions(np.array([[2.0, 3.0], [2.4, 3.4]], dtype=np.float32))
+
+    engine.step_source_excitations(np.array([1.0, 3.0], dtype=np.float32))
+
+    state = engine.get_field_numpy()
+    assert engine.n_sources == 2
+    assert state[3, 1] > 0.0
+    assert state[3, 3] > 0.0
+    np.testing.assert_allclose(engine.propagator.Z_old[3, 2], 8.0)
+
+
+def test_ripple_engine_validates_direct_source_excitations_shape():
+    engine = RippleEngine(
+        resolution=(5, 6),
+        plane_size_m=(1.0, 1.0),
+        n_sources=2,
+        speed=1.0,
+        use_gpu=False,
+    )
+
+    with pytest.raises(ValueError, match="source excitations"):
+        engine.step_source_excitations(np.ones(1, dtype=np.float32))
 
 
 def test_ripple_engine_source_positions_use_xy_field_bounds():
