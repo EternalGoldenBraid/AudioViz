@@ -75,6 +75,7 @@ def test_ripple_visualizer_feeds_pose_landmarks_into_source_excitations():
         pose_extractor=extractor,
         pose_acceleration_scale=1.0,
         pose_max_excitation=10.0,
+        pose_debug_view=True,
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
@@ -93,6 +94,8 @@ def test_ripple_visualizer_feeds_pose_landmarks_into_source_excitations():
     assert np.count_nonzero(first_field) == 0
     assert np.count_nonzero(second_field) > 0
     assert visualizer.renderer.render_count == 2
+    assert visualizer.pose_debug_widget is not None
+    assert visualizer.pose_debug_frame_count == 2
 
     visualizer.close_pose_sources()
     assert capture.released

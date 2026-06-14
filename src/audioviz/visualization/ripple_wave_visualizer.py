@@ -2,7 +2,8 @@ import time
 from typing import Optional, Tuple
 
 import numpy as np
-from PyQt5 import QtWidgets
+import pyqtgraph as pg
+from PyQt5 import QtCore, QtWidgets
 from audioviz.engine import RippleEngine
 from audioviz.sources.pose import (
     MediaPipePoseExtractor,
@@ -41,6 +42,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_max_excitation: float | None = None,
                  pose_field_width_fraction: float = 1.0,
                  pose_field_height_fraction: float = 1.0,
+                 pose_debug_view: bool = False,
                  pose_extractor: PoseGraphExtractor | None = None,
                  pose_capture=None,
                  **kwargs):
@@ -66,6 +68,8 @@ class RippleWaveVisualizer(VisualizerBase):
         self.control_panel: Optional[RippleControlPanel] = None
         self.pose_acceleration_scale = pose_acceleration_scale
         self.pose_max_excitation = pose_max_excitation
+        self.pose_debug_view = pose_debug_view
+        self.pose_debug_frame_count = 0
         self.pose_field_rect = centered_field_rect(
             self.resolution,
             width_fraction=pose_field_width_fraction,
@@ -98,8 +102,21 @@ class RippleWaveVisualizer(VisualizerBase):
         self.renderer = (
             OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer()
         )
+        self.pose_debug_widget = None
+        self.pose_debug_image = None
+        self.pose_debug_edges = None
+        self.pose_debug_points = None
+
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self.renderer.widget)
+        if self.pose_debug_view:
+            content = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+            content.addWidget(self.renderer.widget)
+            content.addWidget(self._create_pose_debug_widget())
+            content.setStretchFactor(0, 3)
+            content.setStretchFactor(1, 2)
+            layout.addWidget(content)
+        else:
+            layout.addWidget(self.renderer.widget)
 
         controls_button = QtWidgets.QPushButton("Show Controls")
         controls_button.clicked.connect(self.toggle_controls)
@@ -183,6 +200,8 @@ class RippleWaveVisualizer(VisualizerBase):
             return
 
         pose = self.pose_extractor.extract(frame)
+        if self.pose_debug_view:
+            self._update_pose_debug_view(frame, pose)
         if not pose.coords.size:
             return
 
@@ -229,6 +248,54 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.pose_capture is not None:
             self.pose_capture.release()
             self.pose_capture = None
+
+    def _create_pose_debug_widget(self):
+        widget = pg.GraphicsLayoutWidget()
+        plot = widget.addPlot(row=0, col=0)
+        plot.setAspectLocked(True)
+        plot.hideAxis("left")
+        plot.hideAxis("bottom")
+        plot.invertY(True)
+
+        self.pose_debug_image = pg.ImageItem(axisOrder="row-major")
+        self.pose_debug_edges = pg.PlotDataItem(
+            pen=pg.mkPen((255, 180, 40), width=2),
+            connect="finite",
+        )
+        self.pose_debug_points = pg.ScatterPlotItem(
+            size=8,
+            brush=pg.mkBrush(40, 180, 255),
+            pen=pg.mkPen(255, 255, 255, width=1),
+        )
+        plot.addItem(self.pose_debug_image)
+        plot.addItem(self.pose_debug_edges)
+        plot.addItem(self.pose_debug_points)
+        self.pose_debug_widget = widget
+        return widget
+
+    def _update_pose_debug_view(self, frame: np.ndarray, pose) -> None:
+        if self.pose_debug_image is None:
+            return
+
+        rgb_frame = np.ascontiguousarray(frame[..., ::-1])
+        self.pose_debug_image.setImage(rgb_frame, autoLevels=False)
+        self.pose_debug_frame_count += 1
+
+        height, width = frame.shape[:2]
+        if not pose.coords.size:
+            self.pose_debug_edges.setData([], [])
+            self.pose_debug_points.setData([], [])
+            return
+
+        coords_px = pose.coords * np.array([width - 1, height - 1], dtype=np.float32)
+        edge_xs = []
+        edge_ys = []
+        for i, j in np.argwhere(np.triu(pose.adjacency, k=1) > 0):
+            edge_xs.extend([coords_px[i, 0], coords_px[j, 0], np.nan])
+            edge_ys.extend([coords_px[i, 1], coords_px[j, 1], np.nan])
+
+        self.pose_debug_edges.setData(edge_xs, edge_ys)
+        self.pose_debug_points.setData(coords_px[:, 0], coords_px[:, 1])
 
     @staticmethod
     def _load_cv2():

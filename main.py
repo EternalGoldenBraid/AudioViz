@@ -56,6 +56,7 @@ RIPPLE_CONFIG = {
     "pose_camera_index": 0,
     "pose_acceleration_scale": 1e-4,
     "pose_max_excitation": 0.02,
+    "pose_debug_view": True,
 }
 
 
