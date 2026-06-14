@@ -38,6 +38,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  use_pose_sources: bool = False,
                  pose_model_path: str | None = None,
                  pose_camera_index: int = 0,
+                 pose_position_smoothing_alpha: float = 0.35,
                  pose_acceleration_scale: float = 1.0,
                  pose_max_excitation: float | None = None,
                  pose_field_width_fraction: float = 1.0,
@@ -66,6 +67,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.damping = damping
         self.time = 0.0
         self.control_panel: Optional[RippleControlPanel] = None
+        self.pose_position_smoothing_alpha = pose_position_smoothing_alpha
         self.pose_acceleration_scale = pose_acceleration_scale
         self.pose_max_excitation = pose_max_excitation
         self.pose_debug_view = pose_debug_view
@@ -215,6 +217,7 @@ class RippleWaveVisualizer(VisualizerBase):
             self.pose_state = PoseGraphState(
                 len(pose.coords),
                 pose.adjacency,
+                position_smoothing_alpha=self.pose_position_smoothing_alpha,
                 velocity_smoothing_alpha=0.8,
             )
             initialized_pose_state = True
