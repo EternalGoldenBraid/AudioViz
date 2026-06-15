@@ -297,7 +297,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.pose_debug_image is None:
             return
 
-        rgb_frame = np.ascontiguousarray(frame[..., ::-1])
+        rgb_frame = np.ascontiguousarray(frame[:, ::-1, ::-1])
         self.pose_debug_image.setImage(rgb_frame, autoLevels=False)
         self.pose_debug_frame_count += 1
 
@@ -308,6 +308,7 @@ class RippleWaveVisualizer(VisualizerBase):
             return
 
         coords_px = pose.coords * np.array([width - 1, height - 1], dtype=np.float32)
+        coords_px[:, 0] = (width - 1) - coords_px[:, 0]
         edge_xs = []
         edge_ys = []
         for i, j in np.argwhere(np.triu(pose.adjacency, k=1) > 0):

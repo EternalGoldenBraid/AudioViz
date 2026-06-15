@@ -166,6 +166,52 @@ def test_ripple_visualizer_keeps_rendering_when_pose_detection_drops_out():
     app.processEvents()
 
 
+def test_pose_debug_view_mirrors_frame_and_graph_horizontally():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        use_pose_sources=False,
+        pose_debug_view=True,
+    )
+    visualizer.timer.stop()
+
+    frame = np.array(
+        [
+            [[0, 1, 2], [10, 11, 12], [20, 21, 22]],
+            [[30, 31, 32], [40, 41, 42], [50, 51, 52]],
+        ],
+        dtype=np.uint8,
+    )
+    pose = PoseGraphFrame(
+        coords=np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32),
+        adjacency=adjacency_from_edges(2, [(0, 1)]),
+    )
+
+    visualizer._update_pose_debug_view(frame, pose)
+
+    np.testing.assert_array_equal(
+        visualizer.pose_debug_image.image,
+        np.ascontiguousarray(frame[:, ::-1, ::-1]),
+    )
+    np.testing.assert_allclose(
+        [(point.pos().x(), point.pos().y()) for point in visualizer.pose_debug_points.points()],
+        [(2.0, 0.0), (0.0, 1.0)],
+    )
+    edge_xs, edge_ys = visualizer.pose_debug_edges.getData()
+    np.testing.assert_allclose(edge_xs[:2], [2.0, 0.0])
+    np.testing.assert_allclose(edge_ys[:2], [0.0, 1.0])
+    assert np.isnan(edge_xs[2])
+    assert np.isnan(edge_ys[2])
+
+    visualizer.close()
+    app.processEvents()
+
+
 def test_numpy_ripple_renderer_uses_top_left_image_origin():
     from PyQt5 import QtWidgets
     from audioviz.visualization.ripple_renderers import NumpyImageRenderer
