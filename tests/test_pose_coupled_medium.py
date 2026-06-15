@@ -1,0 +1,56 @@
+import numpy as np
+
+from audioviz.engine import RippleEngine
+from audioviz.sources.pose import adjacency_from_edges
+
+
+def test_pose_coupled_medium_updates_grid_and_pose_states():
+    engine = RippleEngine(
+        resolution=(6, 6),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_gpu=False,
+        pose_graph_stiffness=0.5,
+        pose_coupling_strength=1.0,
+        pose_drive_scale=1.0,
+    )
+    adjacency = adjacency_from_edges(1, [])
+    engine.update_pose_medium(
+        positions=np.array([[2.5, 2.5]], dtype=np.float32),
+        valid=np.array([True]),
+        drive=np.array([1.0], dtype=np.float32),
+        adjacency=adjacency,
+    )
+
+    engine.step_pose_medium()
+
+    assert np.count_nonzero(engine.get_field_numpy()) > 0
+    assert engine.get_pose_medium_state()[0] > 0.0
+    np.testing.assert_allclose(engine.source_positions, [[2.5, 2.5]])
+
+
+def test_pose_coupled_medium_ignores_invalid_pose_nodes():
+    engine = RippleEngine(
+        resolution=(6, 6),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_gpu=False,
+        pose_coupling_strength=1.0,
+        pose_drive_scale=1.0,
+    )
+    adjacency = adjacency_from_edges(2, [(0, 1)])
+    engine.update_pose_medium(
+        positions=np.array([[1.5, 1.5], [4.0, 4.0]], dtype=np.float32),
+        valid=np.array([True, False]),
+        drive=np.array([1.0, 10.0], dtype=np.float32),
+        adjacency=adjacency,
+    )
+
+    engine.step_pose_medium()
+
+    assert engine.n_sources == 1
+    np.testing.assert_allclose(engine.source_positions, [[1.5, 1.5]])

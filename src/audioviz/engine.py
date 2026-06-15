@@ -6,6 +6,8 @@ from audioviz.physics.wave_propagator import (
     BoundaryCondition,
     WavePropagatorCPU,
     WavePropagatorGPU,
+    _laplacian_neumann,
+    _laplacian_periodic,
     coerce_boundary_condition,
     load_cupy,
 )
@@ -26,6 +28,9 @@ class RippleEngine:
         use_gpu: bool = False,
         use_shader: bool = False,
         boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
+        pose_graph_stiffness: float = 0.25,
+        pose_coupling_strength: float = 0.5,
+        pose_drive_scale: float = 0.1,
         use_external_opengl_context: bool = False,
     ):
         if use_gpu and use_shader:
@@ -41,6 +46,9 @@ class RippleEngine:
         self.use_gpu = use_gpu
         self.use_shader = use_shader
         self.boundary_condition = coerce_boundary_condition(boundary_condition)
+        self.pose_graph_stiffness = pose_graph_stiffness
+        self.pose_coupling_strength = pose_coupling_strength
+        self.pose_drive_scale = pose_drive_scale
         self.use_external_opengl_context = use_external_opengl_context
 
         self.backend = load_cupy() if use_gpu else np
@@ -78,6 +86,15 @@ class RippleEngine:
             self.propagator = WavePropagatorCPU(**propagator_kwargs)
 
         self.Z = self.backend.zeros(self.resolution, dtype=self.backend.float32)
+        self.Z_old = self.backend.zeros(self.resolution, dtype=self.backend.float32)
+        self.pose_medium_enabled = False
+        self.pose_values = None
+        self.pose_values_old = None
+        self.pose_adjacency = None
+        self.pose_degree = None
+        self.pose_positions = None
+        self.pose_valid = None
+        self.pose_drive = None
 
     def _stable_dt(self) -> float:
         return (max(self.dx, self.dy) / self.speed) * 1 / np.sqrt(2)
@@ -121,6 +138,10 @@ class RippleEngine:
     def reset(self) -> None:
         self.propagator.reset()
         self.Z[:] = 0
+        if self.pose_values is not None:
+            self.pose_values[:] = 0
+        if self.pose_values_old is not None:
+            self.pose_values_old[:] = 0
         self.time = 0.0
 
     def step(self, frequencies: np.ndarray):
@@ -128,6 +149,8 @@ class RippleEngine:
         self._add_ripple_excitation(self.time, frequencies)
         if self.use_shader:
             return self.Z
+        if hasattr(self.propagator, "Z_old"):
+            self.Z_old = np.array(self.propagator.Z_old, copy=True)
         self.Z[:] = self.propagator.get_state()
         return self.Z
 
@@ -137,6 +160,8 @@ class RippleEngine:
         self.propagator.step()
         if self.use_shader:
             return self.Z
+        if hasattr(self.propagator, "Z_old"):
+            self.Z_old = np.array(self.propagator.Z_old, copy=True)
         self.Z[:] = self.propagator.get_state()
         return self.Z
 
@@ -213,3 +238,142 @@ class RippleEngine:
         excitation = xp.zeros(self.resolution, dtype=xp.float32)
         xp.add.at(excitation, (ys, xs), values * self.amplitude)
         self.propagator.add_excitation(excitation)
+
+    def configure_pose_medium(self, adjacency: np.ndarray) -> None:
+        if self.use_gpu or self.use_shader:
+            raise NotImplementedError(
+                "Pose-medium coupling is currently implemented for the CPU backend only."
+            )
+
+        adjacency_array = np.asarray(adjacency, dtype=np.float32)
+        if adjacency_array.ndim != 2 or adjacency_array.shape[0] != adjacency_array.shape[1]:
+            raise ValueError("pose adjacency must be a square matrix")
+
+        num_nodes = adjacency_array.shape[0]
+        if (
+            self.pose_adjacency is not None
+            and self.pose_adjacency.shape == adjacency_array.shape
+            and np.array_equal(self.pose_adjacency, adjacency_array)
+        ):
+            return
+
+        self.pose_medium_enabled = True
+        self.pose_adjacency = adjacency_array
+        self.pose_degree = adjacency_array.sum(axis=1).astype(np.float32)
+        self.pose_values = np.zeros(num_nodes, dtype=np.float32)
+        self.pose_values_old = np.zeros(num_nodes, dtype=np.float32)
+        self.pose_positions = np.zeros((num_nodes, 2), dtype=np.float32)
+        self.pose_valid = np.zeros(num_nodes, dtype=bool)
+        self.pose_drive = np.zeros(num_nodes, dtype=np.float32)
+
+    def update_pose_medium(
+        self,
+        *,
+        positions: np.ndarray,
+        valid: np.ndarray,
+        drive: np.ndarray,
+        adjacency: np.ndarray | None = None,
+    ) -> None:
+        if adjacency is not None or self.pose_adjacency is None:
+            self.configure_pose_medium(
+                adjacency if adjacency is not None else np.zeros((len(positions), len(positions)), dtype=np.float32)
+            )
+
+        assert self.pose_positions is not None
+        assert self.pose_valid is not None
+        assert self.pose_drive is not None
+        positions_array = np.asarray(positions, dtype=np.float32)
+        valid_array = np.asarray(valid, dtype=bool)
+        drive_array = np.asarray(drive, dtype=np.float32).reshape(-1)
+        num_nodes = len(valid_array)
+        if positions_array.shape != (num_nodes, 2):
+            raise ValueError("positions must have shape (num_nodes, 2)")
+        if drive_array.shape != (num_nodes,):
+            raise ValueError("drive must have shape (num_nodes,)")
+        if self.pose_positions.shape != (num_nodes, 2):
+            raise ValueError("pose medium size does not match current pose graph")
+
+        self.pose_positions[:] = positions_array
+        self.pose_valid[:] = valid_array
+        self.pose_drive[:] = drive_array
+        self.source_positions = positions_array[valid_array].copy()
+        self.n_sources = len(self.source_positions)
+
+    def step_pose_medium(self) -> np.ndarray:
+        if not self.pose_medium_enabled:
+            raise RuntimeError("Pose medium has not been configured.")
+        assert self.pose_values is not None
+        assert self.pose_values_old is not None
+        assert self.pose_adjacency is not None
+        assert self.pose_degree is not None
+        assert self.pose_positions is not None
+        assert self.pose_valid is not None
+        assert self.pose_drive is not None
+
+        self.time += self.dt
+        grid = self.Z
+        pose = self.pose_values
+        driven_pose = pose.copy()
+        driven_pose += self.pose_drive_scale * self.pose_drive
+
+        grid_laplacian = (
+            _laplacian_periodic(np, grid)
+            if self.boundary_condition is BoundaryCondition.CYCLIC
+            else _laplacian_neumann(np, grid)
+        )
+        pose_laplacian = self.pose_adjacency @ driven_pose - self.pose_degree * driven_pose
+        pose_laplacian *= self.pose_graph_stiffness
+
+        grid_coupling = np.zeros_like(grid)
+        pose_coupling = np.zeros_like(pose)
+
+        for node_index in np.flatnonzero(self.pose_valid):
+            x, y = self.pose_positions[node_index]
+            for row, col, weight in self._grid_bilinear_neighbors(x, y):
+                coupling = self.pose_coupling_strength * weight
+                grid_value = grid[row, col]
+                pose_value = driven_pose[node_index]
+                grid_coupling[row, col] += coupling * (pose_value - grid_value)
+                pose_coupling[node_index] += coupling * (grid_value - pose_value)
+
+        new_grid = 2 * grid - self.Z_old + self.propagator.c2_dt2 * (grid_laplacian + grid_coupling)
+        new_pose = (
+            2 * driven_pose
+            - self.pose_values_old
+            + self.propagator.c2_dt2 * (pose_laplacian + pose_coupling)
+        )
+        new_grid *= self.damping
+        new_pose *= self.damping
+
+        self.Z_old = grid.copy()
+        self.Z = new_grid.astype(np.float32, copy=False)
+        self.pose_values_old = pose.copy()
+        self.pose_values = new_pose.astype(np.float32, copy=False)
+        return self.Z
+
+    def get_pose_medium_state(self) -> np.ndarray:
+        if self.pose_values is None:
+            raise RuntimeError("Pose medium has not been configured.")
+        return self.pose_values.copy()
+
+    @staticmethod
+    def _grid_bilinear_neighbors(x: float, y: float) -> list[tuple[int, int, float]]:
+        x0 = int(np.floor(x))
+        y0 = int(np.floor(y))
+        x1 = x0 + 1
+        y1 = y0 + 1
+        wx = float(x - x0)
+        wy = float(y - y0)
+        weights = [
+            (y0, x0, (1.0 - wx) * (1.0 - wy)),
+            (y0, x1, wx * (1.0 - wy)),
+            (y1, x0, (1.0 - wx) * wy),
+            (y1, x1, wx * wy),
+        ]
+        merged: dict[tuple[int, int], float] = {}
+        for row, col, weight in weights:
+            if weight <= 0.0:
+                continue
+            key = (row, col)
+            merged[key] = merged.get(key, 0.0) + weight
+        return [(row, col, weight) for (row, col), weight in merged.items()]

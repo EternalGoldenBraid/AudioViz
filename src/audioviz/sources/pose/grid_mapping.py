@@ -48,6 +48,25 @@ def normalized_pose_coords_to_source_positions(
     if positions.ndim != 2 or positions.shape[1] != 2:
         raise ValueError("coords must have shape (num_nodes, 2)")
     positions = positions[pose_coords_in_image_support(positions)]
+    return map_pose_coords_to_field_positions(
+        positions,
+        resolution,
+        field_rect=field_rect,
+        clip=clip,
+    )
+
+
+def map_pose_coords_to_field_positions(
+    coords: np.ndarray,
+    resolution: tuple[int, int],
+    *,
+    field_rect: FieldRect | None = None,
+    clip: bool = True,
+) -> np.ndarray:
+    rows, cols = _validate_resolution(resolution)
+    positions = np.asarray(coords, dtype=np.float32)
+    if positions.ndim != 2 or positions.shape[1] != 2:
+        raise ValueError("coords must have shape (num_nodes, 2)")
 
     if field_rect is None:
         field_rect = (0.0, 0.0, float(cols), float(rows))
@@ -92,7 +111,7 @@ def pose_graph_state_to_ripple_sources(
         raise ValueError("max_excitation must be non-negative")
 
     valid = pose_coords_in_image_support(state.get_positions())
-    source_positions = normalized_pose_coords_to_source_positions(
+    source_positions = map_pose_coords_to_field_positions(
         state.get_positions()[valid],
         resolution,
         field_rect=field_rect,

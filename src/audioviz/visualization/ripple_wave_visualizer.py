@@ -11,6 +11,7 @@ from audioviz.sources.pose import (
     PoseGraphExtractor,
     PoseGraphState,
     centered_field_rect,
+    map_pose_coords_to_field_positions,
     pose_coords_in_image_support,
     pose_graph_state_to_ripple_sources,
 )
@@ -43,6 +44,9 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_camera_index: int = 0,
                  pose_acceleration_scale: float = 1.0,
                  pose_max_excitation: float | None = None,
+                 pose_graph_stiffness: float = 0.25,
+                 pose_coupling_strength: float = 0.5,
+                 pose_drive_scale: float = 0.1,
                  pose_field_width_fraction: float = 1.0,
                  pose_field_height_fraction: float = 1.0,
                  pose_debug_view: bool = False,
@@ -58,6 +62,10 @@ class RippleWaveVisualizer(VisualizerBase):
         self.use_shader = use_shader
         self.boundary_condition = boundary_condition
         self.use_pose_sources = use_pose_sources
+        if self.use_pose_sources and (self.use_gpu or self.use_shader):
+            raise NotImplementedError(
+                "Pose-medium coupling currently requires the CPU ripple backend."
+            )
 
         self.n_sources = n_sources
         self.plane_size_m = plane_size_m
@@ -70,8 +78,14 @@ class RippleWaveVisualizer(VisualizerBase):
         self.damping = damping
         self.time = 0.0
         self.control_panel: Optional[RippleControlPanel] = None
-        self.pose_acceleration_scale = pose_acceleration_scale
         self.pose_max_excitation = pose_max_excitation
+        self.pose_graph_stiffness = pose_graph_stiffness
+        self.pose_coupling_strength = pose_coupling_strength
+        self.pose_drive_scale = (
+            pose_acceleration_scale
+            if pose_drive_scale == 0.1 and pose_acceleration_scale != 1.0
+            else pose_drive_scale
+        )
         self.pose_debug_view = pose_debug_view
         self.pose_debug_frame_count = 0
         self.pose_field_rect = centered_field_rect(
@@ -100,6 +114,9 @@ class RippleWaveVisualizer(VisualizerBase):
             use_gpu=self.use_gpu,
             use_shader=self.use_shader,
             boundary_condition=self.boundary_condition,
+            pose_graph_stiffness=self.pose_graph_stiffness,
+            pose_coupling_strength=self.pose_coupling_strength,
+            pose_drive_scale=self.pose_drive_scale,
             use_external_opengl_context=self.use_shader,
         )
         self.dt = self.engine.dt
@@ -225,18 +242,26 @@ class RippleWaveVisualizer(VisualizerBase):
             initialized_pose_state = True
         self.pose_state.update(pose.coords, dt)
 
-        source_positions, source_excitations = pose_graph_state_to_ripple_sources(
-            self.pose_state,
+        positions = self.pose_state.get_positions()
+        valid = pose_coords_in_image_support(positions)
+        mapped_positions = map_pose_coords_to_field_positions(
+            positions,
             self.resolution,
             field_rect=self.pose_field_rect,
-            acceleration_scale=self.pose_acceleration_scale,
-            max_excitation=self.pose_max_excitation,
         )
+        pose_drive = np.linalg.norm(self.pose_state.get_velocities(), axis=1).astype(np.float32)
+        if self.pose_max_excitation is not None:
+            pose_drive = np.clip(pose_drive, 0.0, self.pose_max_excitation).astype(np.float32)
         if initialized_pose_state:
-            source_excitations = np.zeros_like(source_excitations)
+            pose_drive = np.zeros_like(pose_drive)
 
-        self.engine.set_source_positions(source_positions)
-        self._render_pose_field(source_excitations)
+        self.engine.update_pose_medium(
+            positions=mapped_positions,
+            valid=valid,
+            drive=pose_drive,
+            adjacency=pose.adjacency,
+        )
+        self._render_pose_medium()
 
     def _render_pose_field_without_detection(self) -> None:
         if self.pose_state is None:
@@ -245,13 +270,30 @@ class RippleWaveVisualizer(VisualizerBase):
             self.renderer.render(self.engine)
             return
 
-        self._render_pose_field(np.zeros(self.engine.n_sources, dtype=np.float32))
+        zero_drive = np.zeros(self.pose_state.num_nodes, dtype=np.float32)
+        self.engine.update_pose_medium(
+            positions=np.zeros((self.pose_state.num_nodes, 2), dtype=np.float32),
+            valid=np.zeros(self.pose_state.num_nodes, dtype=bool),
+            drive=zero_drive,
+            adjacency=self.pose_state.adjacency,
+        )
+        self._render_pose_medium()
 
     def _render_pose_field(self, source_excitations: np.ndarray) -> None:
         if not self.renderer.prepare_frame():
             return
 
         self.engine.step_source_excitations(source_excitations)
+        self.time = self.engine.time
+        self.renderer.render(self.engine)
+
+    def _render_pose_medium(self) -> None:
+        if not self.renderer.prepare_frame():
+            return
+
+        self.engine.step_pose_medium()
+        if self.pose_state is not None:
+            self.pose_state.set_ripple_states(self.engine.get_pose_medium_state())
         self.time = self.engine.time
         self.renderer.render(self.engine)
 
