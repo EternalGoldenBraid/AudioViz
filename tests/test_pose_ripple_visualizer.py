@@ -107,8 +107,12 @@ def test_ripple_visualizer_feeds_pose_landmarks_into_source_excitations():
     second_field = visualizer.engine.get_field_numpy().copy()
 
     assert visualizer.engine.n_sources == 2
-    np.testing.assert_allclose(first_source_positions, [[4.75, 2.25], [14.25, 6.75]])
-    np.testing.assert_allclose(second_source_positions, [[4.75, 2.25], [15.58, 6.75]])
+    np.testing.assert_allclose(first_source_positions, [[14.25, 2.25], [4.75, 6.75]])
+    np.testing.assert_allclose(
+        second_source_positions,
+        [[14.25, 2.25], [3.42, 6.75]],
+        atol=1e-5,
+    )
     assert np.count_nonzero(first_field) == 0
     assert np.count_nonzero(second_field) > 0
     assert visualizer.renderer.render_count == 2

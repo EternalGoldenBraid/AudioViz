@@ -10,7 +10,7 @@ from audioviz.sources.pose import (
 )
 
 
-def test_normalized_pose_coords_map_to_full_ripple_field():
+def test_normalized_pose_coords_map_to_full_ripple_field_with_horizontal_mirroring():
     coords = np.array(
         [
             [0.0, 0.0],
@@ -28,9 +28,9 @@ def test_normalized_pose_coords_map_to_full_ripple_field():
     np.testing.assert_allclose(
         positions,
         [
-            [0.0, 0.0],
+            [199.0, 0.0],
             [99.5, 49.5],
-            [199.0, 99.0],
+            [0.0, 99.0],
         ],
     )
 
@@ -51,8 +51,8 @@ def test_normalized_pose_coords_can_map_to_centered_field_rect():
     np.testing.assert_allclose(
         positions,
         [
-            [50.0, 25.0],
-            [149.0, 74.0],
+            [149.0, 25.0],
+            [50.0, 74.0],
         ],
     )
 
@@ -67,8 +67,8 @@ def test_normalized_pose_mapping_clips_landmarks_to_field_rect():
     np.testing.assert_allclose(
         positions,
         [
-            [5.0, 4.0],
-            [14.0, 6.0],
+            [14.0, 4.0],
+            [5.0, 6.0],
         ],
     )
 
@@ -116,7 +116,7 @@ def test_pose_graph_state_maps_acceleration_norm_to_source_excitations():
         acceleration_scale=2.0,
     )
 
-    np.testing.assert_allclose(positions, [[5.7, 1.8], [15.2, 7.2]])
+    np.testing.assert_allclose(positions, [[13.3, 1.8], [3.8, 7.2]])
     np.testing.assert_allclose(excitations, [0.4472136, 1.6492423], atol=1e-6)
 
 

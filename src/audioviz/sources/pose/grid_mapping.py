@@ -38,8 +38,9 @@ def normalized_pose_coords_to_source_positions(
     """Map normalized pose coordinates to ripple source positions.
 
     MediaPipe pose landmarks are normalized as (x, y) camera coordinates. The
-    ripple engine also consumes source positions as (x, y) field pixels, so this
-    is the only conversion needed while the pose graph is camera-frame anchored.
+    ripple engine also consumes source positions as (x, y) field pixels, but the
+    rendered ripple field should mirror the camera feed left/right so motion
+    feels intuitive on screen.
     """
     rows, cols = _validate_resolution(resolution)
     positions = np.asarray(coords, dtype=np.float32)
@@ -51,7 +52,7 @@ def normalized_pose_coords_to_source_positions(
     x, y, width, height = _validate_field_rect(field_rect, rows=rows, cols=cols)
 
     mapped = np.empty_like(positions, dtype=np.float32)
-    mapped[:, 0] = x + positions[:, 0] * max(width - 1.0, 0.0)
+    mapped[:, 0] = x + (1.0 - positions[:, 0]) * max(width - 1.0, 0.0)
     mapped[:, 1] = y + positions[:, 1] * max(height - 1.0, 0.0)
 
     if clip:
