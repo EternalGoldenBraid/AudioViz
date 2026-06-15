@@ -63,6 +63,27 @@ class _MissingPoseExtractor:
         self.closed = True
 
 
+class _OutOfFrameExtractor:
+    def __init__(self):
+        self.frames = [
+            PoseGraphFrame(
+                coords=np.array([[0.25, 0.25], [0.75, 0.75]], dtype=np.float32),
+                adjacency=adjacency_from_edges(2, [(0, 1)]),
+            ),
+            PoseGraphFrame(
+                coords=np.array([[0.25, 0.25], [3.0, 0.75]], dtype=np.float32),
+                adjacency=adjacency_from_edges(2, [(0, 1)]),
+            ),
+        ]
+        self.closed = False
+
+    def extract(self, _frame):
+        return self.frames.pop(0)
+
+    def close(self):
+        self.closed = True
+
+
 class _FakeRenderer:
     def __init__(self):
         self.render_count = 0
@@ -209,6 +230,79 @@ def test_pose_debug_view_mirrors_frame_and_graph_horizontally():
     assert np.isnan(edge_ys[2])
 
     visualizer.close()
+    app.processEvents()
+
+
+def test_pose_debug_view_omits_out_of_frame_landmarks_and_edges():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        use_pose_sources=False,
+        pose_debug_view=True,
+    )
+    visualizer.timer.stop()
+
+    frame = np.zeros((2, 3, 3), dtype=np.uint8)
+    pose = PoseGraphFrame(
+        coords=np.array([[0.0, 0.0], [1.25, 1.0]], dtype=np.float32),
+        adjacency=adjacency_from_edges(2, [(0, 1)]),
+    )
+
+    visualizer._update_pose_debug_view(frame, pose)
+
+    points = [(point.pos().x(), point.pos().y()) for point in visualizer.pose_debug_points.points()]
+    assert points == [(2.0, 0.0)]
+    edge_xs, edge_ys = visualizer.pose_debug_edges.getData()
+    assert edge_xs is None or len(edge_xs) == 0
+    assert edge_ys is None or len(edge_ys) == 0
+
+    visualizer.close()
+    app.processEvents()
+
+
+def test_ripple_visualizer_filters_out_of_frame_pose_landmarks_without_resetting_state():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture()
+    extractor = _OutOfFrameExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_pose_sources=True,
+        pose_capture=capture,
+        pose_extractor=extractor,
+        pose_acceleration_scale=1.0,
+        pose_max_excitation=10.0,
+        pose_debug_view=True,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    visualizer.update_visualization()
+    first_pose_state = visualizer.pose_state
+    visualizer.update_visualization()
+
+    assert visualizer.pose_state is first_pose_state
+    assert visualizer.pose_state is not None
+    assert visualizer.pose_state.num_nodes == 2
+    assert visualizer.engine.n_sources == 1
+    np.testing.assert_allclose(visualizer.engine.source_positions, [[14.25, 2.25]])
+    assert len(visualizer.pose_debug_points.points()) == 1
+
+    visualizer.close_pose_sources()
+    assert capture.released
+    assert extractor.closed
     app.processEvents()
 
 

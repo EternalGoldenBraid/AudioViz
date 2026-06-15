@@ -40,12 +40,14 @@ def normalized_pose_coords_to_source_positions(
     MediaPipe pose landmarks are normalized as (x, y) camera coordinates. The
     ripple engine also consumes source positions as (x, y) field pixels, but the
     rendered ripple field should mirror the camera feed left/right so motion
-    feels intuitive on screen.
+    feels intuitive on screen. Coordinates outside the image support are not
+    mapped into the ripple field.
     """
     rows, cols = _validate_resolution(resolution)
     positions = np.asarray(coords, dtype=np.float32)
     if positions.ndim != 2 or positions.shape[1] != 2:
         raise ValueError("coords must have shape (num_nodes, 2)")
+    positions = positions[pose_coords_in_image_support(positions)]
 
     if field_rect is None:
         field_rect = (0.0, 0.0, float(cols), float(rows))
@@ -59,6 +61,20 @@ def normalized_pose_coords_to_source_positions(
         mapped[:, 0] = np.clip(mapped[:, 0], x, x + max(width - 1.0, 0.0))
         mapped[:, 1] = np.clip(mapped[:, 1], y, y + max(height - 1.0, 0.0))
     return mapped
+
+
+def pose_coords_in_image_support(coords: np.ndarray) -> np.ndarray:
+    positions = np.asarray(coords, dtype=np.float32)
+    if positions.ndim != 2 or positions.shape[1] != 2:
+        raise ValueError("coords must have shape (num_nodes, 2)")
+
+    return (
+        np.isfinite(positions).all(axis=1)
+        & (positions[:, 0] >= 0.0)
+        & (positions[:, 0] <= 1.0)
+        & (positions[:, 1] >= 0.0)
+        & (positions[:, 1] <= 1.0)
+    )
 
 
 def pose_graph_state_to_ripple_sources(
@@ -75,12 +91,13 @@ def pose_graph_state_to_ripple_sources(
     if max_excitation is not None and max_excitation < 0.0:
         raise ValueError("max_excitation must be non-negative")
 
+    valid = pose_coords_in_image_support(state.get_positions())
     source_positions = normalized_pose_coords_to_source_positions(
-        state.get_positions(),
+        state.get_positions()[valid],
         resolution,
         field_rect=field_rect,
     )
-    accelerations = np.asarray(state.get_accelerations(), dtype=np.float32)
+    accelerations = np.asarray(state.get_accelerations(), dtype=np.float32)[valid]
     excitations = np.linalg.norm(accelerations, axis=1).astype(np.float32)
     excitations *= np.float32(acceleration_scale)
     if max_excitation is not None:

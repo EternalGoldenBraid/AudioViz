@@ -11,6 +11,7 @@ from audioviz.sources.pose import (
     PoseGraphExtractor,
     PoseGraphState,
     centered_field_rect,
+    pose_coords_in_image_support,
     pose_graph_state_to_ripple_sources,
 )
 from audioviz.visualization.ripple_renderers import (
@@ -307,16 +308,24 @@ class RippleWaveVisualizer(VisualizerBase):
             self.pose_debug_points.setData([], [])
             return
 
+        valid = pose_coords_in_image_support(pose.coords)
+        if not np.any(valid):
+            self.pose_debug_edges.setData([], [])
+            self.pose_debug_points.setData([], [])
+            return
+
         coords_px = pose.coords * np.array([width - 1, height - 1], dtype=np.float32)
         coords_px[:, 0] = (width - 1) - coords_px[:, 0]
         edge_xs = []
         edge_ys = []
         for i, j in np.argwhere(np.triu(pose.adjacency, k=1) > 0):
+            if not (valid[i] and valid[j]):
+                continue
             edge_xs.extend([coords_px[i, 0], coords_px[j, 0], np.nan])
             edge_ys.extend([coords_px[i, 1], coords_px[j, 1], np.nan])
 
         self.pose_debug_edges.setData(edge_xs, edge_ys)
-        self.pose_debug_points.setData(coords_px[:, 0], coords_px[:, 1])
+        self.pose_debug_points.setData(coords_px[valid, 0], coords_px[valid, 1])
 
     @staticmethod
     def _load_cv2():

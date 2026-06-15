@@ -6,6 +6,7 @@ from audioviz.sources.pose import (
     PoseGraphState,
     centered_field_rect,
     normalized_pose_coords_to_source_positions,
+    pose_coords_in_image_support,
     pose_graph_state_to_ripple_sources,
 )
 
@@ -57,9 +58,20 @@ def test_normalized_pose_coords_can_map_to_centered_field_rect():
     )
 
 
-def test_normalized_pose_mapping_clips_landmarks_to_field_rect():
+def test_pose_coords_in_image_support_marks_only_in_frame_landmarks():
+    mask = pose_coords_in_image_support(
+        np.array(
+            [[0.0, 0.0], [1.0, 1.0], [-0.1, 0.5], [0.5, 1.1], [np.nan, 0.2]],
+            dtype=np.float32,
+        )
+    )
+
+    np.testing.assert_array_equal(mask, [True, True, False, False, False])
+
+
+def test_normalized_pose_mapping_filters_landmarks_outside_field_support():
     positions = normalized_pose_coords_to_source_positions(
-        np.array([[-1.0, 0.5], [2.0, 2.0]], dtype=np.float32),
+        np.array([[-1.0, 0.5], [0.5, 0.5], [2.0, 2.0]], dtype=np.float32),
         resolution=(10, 20),
         field_rect=(5.0, 2.0, 10.0, 5.0),
     )
@@ -67,8 +79,7 @@ def test_normalized_pose_mapping_clips_landmarks_to_field_rect():
     np.testing.assert_allclose(
         positions,
         [
-            [14.0, 4.0],
-            [5.0, 6.0],
+            [9.5, 4.0],
         ],
     )
 
@@ -132,6 +143,30 @@ def test_pose_graph_state_excitations_can_be_clipped():
     )
 
     np.testing.assert_allclose(excitations, [3.0])
+
+
+def test_pose_graph_state_filters_out_of_frame_landmarks_from_ripple_sources():
+    state = PoseGraphState(3, velocity_smoothing_alpha=1.0)
+    state.update(
+        np.array(
+            [
+                [0.25, 0.5],
+                [-0.1, 0.2],
+                [1.1, 0.3],
+            ],
+            dtype=np.float32,
+        ),
+        dt=1.0,
+    )
+
+    positions, excitations = pose_graph_state_to_ripple_sources(
+        state,
+        resolution=(10, 20),
+        acceleration_scale=1.0,
+    )
+
+    np.testing.assert_allclose(positions, [[14.25, 4.5]])
+    np.testing.assert_allclose(excitations, [np.sqrt(0.25**2 + 0.5**2)])
 
 
 def test_ripple_engine_steps_direct_source_excitations():
