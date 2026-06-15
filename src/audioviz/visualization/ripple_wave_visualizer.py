@@ -5,6 +5,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
 from audioviz.engine import RippleEngine
+from audioviz.physics import BoundaryCondition
 from audioviz.sources.pose import (
     MediaPipePoseExtractor,
     PoseGraphExtractor,
@@ -35,6 +36,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  apply_gaussian_smoothing: bool = False,
                  use_gpu: bool = False,
                  use_shader: bool = False,
+                 boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
                  use_pose_sources: bool = False,
                  pose_model_path: str | None = None,
                  pose_camera_index: int = 0,
@@ -54,6 +56,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.use_synthetic = processor is None or use_synthetic
         self.use_gpu = use_gpu
         self.use_shader = use_shader
+        self.boundary_condition = boundary_condition
         self.use_pose_sources = use_pose_sources
 
         self.n_sources = n_sources
@@ -97,6 +100,7 @@ class RippleWaveVisualizer(VisualizerBase):
             amplitude=self.amplitude,
             use_gpu=self.use_gpu,
             use_shader=self.use_shader,
+            boundary_condition=self.boundary_condition,
             use_external_opengl_context=self.use_shader,
         )
         self.dt = self.engine.dt

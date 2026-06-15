@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from audioviz.physics.wave_propagator import BoundaryCondition, coerce_boundary_condition
+
 
 COMPUTE_SHADER_SOURCE = """
 #version 430
@@ -20,6 +22,10 @@ layout(r32f, binding = 4) uniform writeonly image2D z_current_after_excitation;
 uniform ivec2 grid_shape;
 uniform float c2_dt2;
 uniform float damping;
+uniform int boundary_condition;
+
+const int BOUNDARY_CONDITION_CYCLIC = 0;
+const int BOUNDARY_CONDITION_NEUMANN = 1;
 
 float current_with_excitation(ivec2 p) {
     return imageLoad(z_current, p).r + imageLoad(excitation, p).r;
@@ -34,18 +40,41 @@ void main() {
         return;
     }
 
-    ivec2 left = ivec2((p.x + width - 1) % width, p.y);
-    ivec2 right = ivec2((p.x + 1) % width, p.y);
-    ivec2 up = ivec2(p.x, (p.y + height - 1) % height);
-    ivec2 down = ivec2(p.x, (p.y + 1) % height);
-
     float center = current_with_excitation(p);
-    float laplacian =
-        -4.0 * center
-        + current_with_excitation(left)
-        + current_with_excitation(right)
-        + current_with_excitation(up)
-        + current_with_excitation(down);
+    float neighbor_sum = 0.0;
+    float degree = 0.0;
+
+    if (boundary_condition == BOUNDARY_CONDITION_CYCLIC) {
+        ivec2 left = ivec2((p.x + width - 1) % width, p.y);
+        ivec2 right = ivec2((p.x + 1) % width, p.y);
+        ivec2 up = ivec2(p.x, (p.y + height - 1) % height);
+        ivec2 down = ivec2(p.x, (p.y + 1) % height);
+        neighbor_sum =
+            current_with_excitation(left)
+            + current_with_excitation(right)
+            + current_with_excitation(up)
+            + current_with_excitation(down);
+        degree = 4.0;
+    } else {
+        if (p.x > 0) {
+            neighbor_sum += current_with_excitation(ivec2(p.x - 1, p.y));
+            degree += 1.0;
+        }
+        if (p.x + 1 < width) {
+            neighbor_sum += current_with_excitation(ivec2(p.x + 1, p.y));
+            degree += 1.0;
+        }
+        if (p.y > 0) {
+            neighbor_sum += current_with_excitation(ivec2(p.x, p.y - 1));
+            degree += 1.0;
+        }
+        if (p.y + 1 < height) {
+            neighbor_sum += current_with_excitation(ivec2(p.x, p.y + 1));
+            degree += 1.0;
+        }
+    }
+
+    float laplacian = neighbor_sum - degree * center;
 
     float next = 2.0 * center - imageLoad(z_old, p).r + c2_dt2 * laplacian;
     next *= damping;
@@ -74,6 +103,7 @@ class WavePropagatorOpenGL:
         dt: float,
         speed: float,
         damping: float,
+        boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
         use_current_context: bool = False,
     ):
         self.shape = shape
@@ -82,6 +112,7 @@ class WavePropagatorOpenGL:
         self.c = speed
         self.damping = damping
         self.c2_dt2 = (self.c * self.dt / self.dx) ** 2
+        self.boundary_condition = coerce_boundary_condition(boundary_condition)
         self.use_current_context = use_current_context
 
         self._context = None
@@ -128,6 +159,10 @@ class WavePropagatorOpenGL:
         gl.glUniform1f(
             gl.glGetUniformLocation(self._program, "damping"),
             float(self.damping),
+        )
+        gl.glUniform1i(
+            gl.glGetUniformLocation(self._program, "boundary_condition"),
+            0 if self.boundary_condition is BoundaryCondition.CYCLIC else 1,
         )
 
         self._bind_image(0, self._tex_current, gl.GL_READ_ONLY)

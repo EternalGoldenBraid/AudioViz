@@ -3,8 +3,10 @@ from typing import Tuple
 import numpy as np
 
 from audioviz.physics.wave_propagator import (
+    BoundaryCondition,
     WavePropagatorCPU,
     WavePropagatorGPU,
+    coerce_boundary_condition,
     load_cupy,
 )
 from audioviz.physics.opengl_wave_propagator import WavePropagatorOpenGL
@@ -23,6 +25,7 @@ class RippleEngine:
         decay_alpha: float = 0.0,
         use_gpu: bool = False,
         use_shader: bool = False,
+        boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
         use_external_opengl_context: bool = False,
     ):
         if use_gpu and use_shader:
@@ -37,6 +40,7 @@ class RippleEngine:
         self.decay_alpha = decay_alpha
         self.use_gpu = use_gpu
         self.use_shader = use_shader
+        self.boundary_condition = coerce_boundary_condition(boundary_condition)
         self.use_external_opengl_context = use_external_opengl_context
 
         self.backend = load_cupy() if use_gpu else np
@@ -58,6 +62,7 @@ class RippleEngine:
             "dt": self.dt,
             "speed": self.speed,
             "damping": self.damping,
+            "boundary_condition": self.boundary_condition,
         }
         if use_shader:
             self.propagator = WavePropagatorOpenGL(
