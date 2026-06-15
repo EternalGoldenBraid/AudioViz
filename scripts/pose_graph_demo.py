@@ -73,7 +73,6 @@ def run(
     camera_index: int,
     width: int | None,
     height: int | None,
-    position_smoothing: float,
     smoothing: float,
     model_path: str | None,
 ) -> int:
@@ -108,7 +107,6 @@ def run(
                     state = PoseGraphState(
                         len(pose.coords),
                         pose.adjacency,
-                        position_smoothing_alpha=position_smoothing,
                         velocity_smoothing_alpha=smoothing,
                     )
                 state.update(pose.coords, dt)
@@ -129,7 +127,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--camera-index", type=int, default=0)
     parser.add_argument("--width", type=int)
     parser.add_argument("--height", type=int)
-    parser.add_argument("--position-smoothing", type=float, default=0.35)
     parser.add_argument("--smoothing", type=float, default=0.8)
     parser.add_argument(
         "--model-path",
@@ -144,7 +141,6 @@ def main(argv: list[str] | None = None) -> int:
         args.camera_index,
         args.width,
         args.height,
-        args.position_smoothing,
         args.smoothing,
         args.model_path,
     )

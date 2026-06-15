@@ -37,26 +37,20 @@ def test_pose_graph_state_smooths_velocity_and_copies_outputs():
     np.testing.assert_allclose(state.get_positions(), [[1.0, 0.0]])
 
 
-def test_pose_graph_state_smooths_positions_before_velocity_updates():
-    state = PoseGraphState(
-        1,
-        position_smoothing_alpha=0.5,
-        velocity_smoothing_alpha=1.0,
-    )
+def test_pose_graph_state_uses_observed_positions_for_velocity_updates():
+    state = PoseGraphState(1, velocity_smoothing_alpha=1.0)
 
     state.update(np.array([[1.0, 0.0]], dtype=np.float32), dt=1.0)
     state.update(np.array([[2.0, 0.0]], dtype=np.float32), dt=1.0)
 
-    np.testing.assert_allclose(state.get_positions(), [[1.5, 0.0]])
-    np.testing.assert_allclose(state.get_velocities(), [[0.5, 0.0]])
-    np.testing.assert_allclose(state.get_accelerations(), [[-0.5, 0.0]])
+    np.testing.assert_allclose(state.get_positions(), [[2.0, 0.0]])
+    np.testing.assert_allclose(state.get_velocities(), [[1.0, 0.0]])
+    np.testing.assert_allclose(state.get_accelerations(), [[0.0, 0.0]])
 
 
 def test_pose_graph_state_validates_inputs():
     with pytest.raises(ValueError, match="num_nodes"):
         PoseGraphState(-1)
-    with pytest.raises(ValueError, match="position_smoothing_alpha"):
-        PoseGraphState(1, position_smoothing_alpha=1.5)
     with pytest.raises(ValueError, match="velocity_smoothing_alpha"):
         PoseGraphState(1, velocity_smoothing_alpha=1.5)
     with pytest.raises(ValueError, match="adjacency shape"):
