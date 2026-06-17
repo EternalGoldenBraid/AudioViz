@@ -23,6 +23,7 @@ from audioviz.visualization.ripple_renderers import (
 from audioviz.visualization.ripple_control_panel import (
     ControlPanelSection,
     RippleControlPanel,
+    SourceToggle,
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
@@ -62,6 +63,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.processor = processor
         self.use_synthetic = use_synthetic
+        self.use_audio_source = processor is not None and not use_synthetic
         self.use_gpu = use_gpu
         self.use_shader = use_shader
         self.boundary_condition = boundary_condition
@@ -173,8 +175,10 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_amplitude_changed=self._update_amplitude,
                 on_decay_alpha_changed=self._update_decay_alpha,
                 on_damping_changed=self._update_damping,
+                source_toggles=self._build_source_toggles(),
                 source_sections=self._build_source_control_sections(),
                 on_source_control_changed=self._update_source_control,
+                on_source_toggle_changed=self._update_source_toggle,
                 before_reset=self.renderer.prepare_frame,
                 on_reset=self._sync_after_reset,
             )
@@ -194,6 +198,11 @@ class RippleWaveVisualizer(VisualizerBase):
             return
 
         if freqs is None:
+            if not self.renderer.prepare_frame():
+                return
+            self.engine.step_without_excitation()
+            self.time = self.engine.time
+            self.renderer.render(self.engine)
             return
 
         if not self.renderer.prepare_frame():
@@ -204,17 +213,24 @@ class RippleWaveVisualizer(VisualizerBase):
         self.renderer.render(self.engine)
 
     def _resolve_ripple_frequencies(self) -> np.ndarray | None:
+        frequency_groups: list[np.ndarray] = []
         if self.use_synthetic:
-            return self.synthetic_frequencies.copy()
-
-        if self.processor is None:
+            frequency_groups.append(self.synthetic_frequencies.copy())
+        audio_frequencies = self._resolve_audio_frequencies()
+        if audio_frequencies is not None:
+            frequency_groups.append(audio_frequencies)
+        if not frequency_groups:
             return None
+        return np.concatenate(frequency_groups, axis=1)
 
+    def _resolve_audio_frequencies(self) -> np.ndarray | None:
+        if not self.use_audio_source or self.processor is None:
+            return None
         top_k = self.processor.current_top_k_frequencies
         top_k = [f for f in top_k if f is not None and np.isfinite(f)]
         if len(top_k) == 0:
             return None
-        return np.tile(top_k, (self.n_sources, 1))
+        return np.tile(np.asarray(top_k, dtype=np.float32), (self.n_sources, 1))
 
     @staticmethod
     def _coerce_synthetic_frequencies(
@@ -235,8 +251,6 @@ class RippleWaveVisualizer(VisualizerBase):
         )
 
     def _build_source_control_sections(self) -> tuple[ControlPanelSection, ...]:
-        if not self.use_synthetic:
-            return ()
         sections: list[ControlPanelSection] = []
         for index, frequency_hz in enumerate(self.synthetic_frequencies[:, 0]):
             sections.append(
@@ -251,6 +265,22 @@ class RippleWaveVisualizer(VisualizerBase):
             )
         return tuple(sections)
 
+    def _build_source_toggles(self) -> tuple[SourceToggle, ...]:
+        return (
+            SourceToggle(
+                key="synthetic",
+                label="Synthetic",
+                enabled=self.use_synthetic,
+                available=True,
+            ),
+            SourceToggle(
+                key="audio",
+                label="Audio",
+                enabled=self.use_audio_source,
+                available=self.processor is not None,
+            ),
+        )
+
     def _update_source_control(
         self,
         section_key: str,
@@ -262,6 +292,17 @@ class RippleWaveVisualizer(VisualizerBase):
         index = int(section_key.removeprefix("synthetic-source-"))
         self.synthetic_frequencies[index, 0] = float(value)
         self.frequency = float(self.synthetic_frequencies[0, 0])
+
+    def _update_source_toggle(self, source_key: str, enabled: bool) -> None:
+        if source_key == "synthetic":
+            self.use_synthetic = enabled
+            return
+        if source_key == "audio":
+            if self.processor is None:
+                raise RuntimeError("Audio source toggles require an audio processor.")
+            self.use_audio_source = enabled
+            return
+        raise KeyError(f"Unknown source toggle: {source_key}")
 
     def _ensure_pose_source(
         self,

@@ -165,6 +165,16 @@ class RippleEngine:
         self.Z[:] = self.propagator.get_state()
         return self.Z
 
+    def step_without_excitation(self):
+        self.time += self.dt
+        self.propagator.step()
+        if self.use_shader:
+            return self.Z
+        if hasattr(self.propagator, "Z_old"):
+            self.Z_old = np.array(self.propagator.Z_old, copy=True)
+        self.Z[:] = self.propagator.get_state()
+        return self.Z
+
     def get_field_numpy(self) -> np.ndarray:
         if self.use_shader:
             return self.propagator.get_state()

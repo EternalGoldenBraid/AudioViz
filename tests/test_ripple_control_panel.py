@@ -137,4 +137,34 @@ def test_ripple_control_panel_explains_when_no_source_controls_exist(ripple_pane
     app.processEvents()
 
     labels = [label.text() for label in panel.findChildren(QtWidgets.QLabel)]
-    assert any("use_synthetic=True" in text for text in labels)
+    assert any("No source-specific controls" in text for text in labels)
+
+
+def test_ripple_control_panel_updates_checkable_source_dropdown(ripple_panel_deps):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        use_gpu=False,
+    )
+    from audioviz.visualization.ripple_control_panel import SourceToggle
+
+    updates = []
+    panel = RippleControlPanel(
+        engine,
+        source_toggles=(
+            SourceToggle(key="synthetic", label="Synthetic", enabled=True),
+            SourceToggle(key="audio", label="Audio", enabled=False),
+        ),
+        on_source_toggle_changed=lambda key, enabled: updates.append((key, enabled)),
+    )
+    app.processEvents()
+
+    assert panel.source_toggle_button.text() == "Active Sources: Synthetic"
+
+    panel.source_toggle_actions["audio"].trigger()
+    app.processEvents()
+
+    assert updates[-1] == ("audio", True)
+    assert panel.source_toggle_button.text() == "Active Sources: Synthetic, Audio"

@@ -95,6 +95,11 @@ class _FakeRenderer:
         self.render_count += 1
 
 
+class _FakeProcessor:
+    def __init__(self, frequencies):
+        self.current_top_k_frequencies = list(frequencies)
+
+
 def test_ripple_visualizer_feeds_pose_landmarks_into_source_excitations():
     from PyQt5 import QtWidgets
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
@@ -379,6 +384,87 @@ def test_ripple_visualizer_updates_per_source_synthetic_frequencies_from_control
 
     visualizer.close()
     app.processEvents()
+
+
+def test_ripple_visualizer_combines_synthetic_and_audio_sources_when_enabled():
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        processor=_FakeProcessor([220.0, 330.0]),
+        n_sources=2,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        frequency=[110.0, 120.0],
+        use_synthetic=True,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.use_audio_source = True
+
+    np.testing.assert_allclose(
+        visualizer._resolve_ripple_frequencies(),
+        [[110.0, 220.0, 330.0], [120.0, 220.0, 330.0]],
+    )
+
+    visualizer.close()
+
+
+def test_ripple_visualizer_source_dropdown_toggles_audio_and_synthetic():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=_FakeProcessor([220.0]),
+        n_sources=1,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        frequency=110.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.toggle_controls()
+
+    panel = visualizer.control_panel
+    assert panel is not None
+    assert visualizer.use_audio_source is True
+    assert visualizer.use_synthetic is False
+
+    panel.source_toggle_actions["audio"].trigger()
+    panel.source_toggle_actions["synthetic"].trigger()
+    app.processEvents()
+
+    assert visualizer.use_audio_source is False
+    assert visualizer.use_synthetic is True
+    np.testing.assert_allclose(visualizer._resolve_ripple_frequencies(), [[110.0]])
+
+    visualizer.close()
+    app.processEvents()
+
+
+def test_ripple_visualizer_steps_without_excitation_when_all_sources_disabled():
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        n_sources=1,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        frequency=110.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    initial_time = visualizer.engine.time
+    visualizer.update_visualization()
+
+    assert visualizer.renderer.render_count == 1
+    assert visualizer.engine.time > initial_time
+
+    visualizer.close()
 
 
 def test_numpy_ripple_renderer_uses_top_left_image_origin():

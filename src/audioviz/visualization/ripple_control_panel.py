@@ -5,7 +5,15 @@ from typing import Callable, Optional, Sequence
 
 from PyQt5 import QtWidgets
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QDoubleSpinBox, QLabel, QScrollArea, QSlider
+from PyQt5.QtWidgets import (
+    QAction,
+    QDoubleSpinBox,
+    QLabel,
+    QMenu,
+    QScrollArea,
+    QSlider,
+    QToolButton,
+)
 
 from audioviz.engine import RippleEngine
 from audioviz.source_controls import ControlValue, SourceControl
@@ -18,6 +26,14 @@ class ControlPanelSection:
     controls: Sequence[SourceControl]
 
 
+@dataclass(frozen=True)
+class SourceToggle:
+    key: str
+    label: str
+    enabled: bool
+    available: bool = True
+
+
 class RippleControlPanel(QtWidgets.QWidget):
     def __init__(
         self,
@@ -27,8 +43,10 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_amplitude_changed: Optional[Callable[[float], None]] = None,
         on_decay_alpha_changed: Optional[Callable[[float], None]] = None,
         on_damping_changed: Optional[Callable[[float], None]] = None,
+        source_toggles: Sequence[SourceToggle] = (),
         source_sections: Sequence[ControlPanelSection] = (),
         on_source_control_changed: Optional[Callable[[str, str, ControlValue], None]] = None,
+        on_source_toggle_changed: Optional[Callable[[str, bool], None]] = None,
         before_reset: Optional[Callable[[], bool]] = None,
         on_reset: Optional[Callable[[], None]] = None,
     ):
@@ -38,11 +56,14 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_amplitude_changed = on_amplitude_changed
         self.on_decay_alpha_changed = on_decay_alpha_changed
         self.on_damping_changed = on_damping_changed
+        self.source_toggles = tuple(source_toggles)
         self.source_sections = tuple(source_sections)
         self.on_source_control_changed = on_source_control_changed
+        self.on_source_toggle_changed = on_source_toggle_changed
         self.before_reset = before_reset
         self.on_reset = on_reset
         self.source_control_widgets: dict[tuple[str, str], QDoubleSpinBox] = {}
+        self.source_toggle_actions: dict[str, QAction] = {}
 
         self.setWindowTitle("Ripple Controls")
         layout = QtWidgets.QVBoxLayout(self)
@@ -118,6 +139,14 @@ class RippleControlPanel(QtWidgets.QWidget):
 
         source_controls_group = QtWidgets.QGroupBox("Source Controls")
         source_controls_layout = QtWidgets.QVBoxLayout(source_controls_group)
+        if self.source_toggles:
+            self.source_toggle_button = QToolButton()
+            self.source_toggle_button.setPopupMode(QToolButton.InstantPopup)
+            self.source_toggle_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            self.source_toggle_menu = QMenu(self.source_toggle_button)
+            self.source_toggle_button.setMenu(self.source_toggle_menu)
+            self._populate_source_toggle_menu()
+            source_controls_layout.addWidget(self.source_toggle_button)
         if self.source_sections:
             for section in self.source_sections:
                 source_group = QtWidgets.QGroupBox(section.title)
@@ -134,8 +163,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         else:
             source_controls_layout.addWidget(
                 QLabel(
-                    "No source-specific controls are available in the current mode. "
-                    "Synthetic source controls appear when use_synthetic=True."
+                    "No source-specific controls are available for the current visualizer."
                 )
             )
         content_layout.addWidget(source_controls_group)
@@ -236,3 +264,31 @@ class RippleControlPanel(QtWidgets.QWidget):
     ) -> None:
         if self.on_source_control_changed is not None:
             self.on_source_control_changed(section_key, control_key, value)
+
+    def _populate_source_toggle_menu(self) -> None:
+        self.source_toggle_menu.clear()
+        self.source_toggle_actions.clear()
+        for toggle in self.source_toggles:
+            action = self.source_toggle_menu.addAction(toggle.label)
+            action.setCheckable(True)
+            action.setChecked(toggle.enabled)
+            action.setEnabled(toggle.available)
+            action.toggled.connect(
+                lambda checked, key=toggle.key: self._emit_source_toggle_change(key, checked)
+            )
+            self.source_toggle_actions[toggle.key] = action
+        self._update_source_toggle_button_text()
+
+    def _update_source_toggle_button_text(self) -> None:
+        enabled_labels = [
+            action.text()
+            for action in self.source_toggle_actions.values()
+            if action.isEnabled() and action.isChecked()
+        ]
+        label = ", ".join(enabled_labels) if enabled_labels else "None"
+        self.source_toggle_button.setText(f"Active Sources: {label}")
+
+    def _emit_source_toggle_change(self, source_key: str, enabled: bool) -> None:
+        self._update_source_toggle_button_text()
+        if self.on_source_toggle_changed is not None:
+            self.on_source_toggle_changed(source_key, enabled)
