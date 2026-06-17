@@ -350,6 +350,37 @@ def test_ripple_visualizer_keeps_synthetic_source_when_pose_coupling_is_enabled(
     app.processEvents()
 
 
+def test_ripple_visualizer_updates_per_source_synthetic_frequencies_from_controls():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        n_sources=2,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        frequency=[110.0, 220.0],
+        use_synthetic=True,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.toggle_controls()
+
+    panel = visualizer.control_panel
+    assert panel is not None
+    panel.source_control_widgets[("synthetic-source-1", "frequency_hz")].setValue(330.0)
+    app.processEvents()
+
+    np.testing.assert_allclose(
+        visualizer._resolve_ripple_frequencies(),
+        [[110.0], [330.0]],
+    )
+
+    visualizer.close()
+    app.processEvents()
+
+
 def test_numpy_ripple_renderer_uses_top_left_image_origin():
     from PyQt5 import QtWidgets
     from audioviz.visualization.ripple_renderers import NumpyImageRenderer

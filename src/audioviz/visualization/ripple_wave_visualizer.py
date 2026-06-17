@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 import numpy as np
 import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
+from audioviz.source_controls import SyntheticFrequencySource
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources.pose import (
@@ -19,9 +20,12 @@ from audioviz.visualization.ripple_renderers import (
     NumpyImageRenderer,
     OpenGLFieldRenderer,
 )
+from audioviz.visualization.ripple_control_panel import (
+    ControlPanelSection,
+    RippleControlPanel,
+)
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
-from audioviz.visualization.ripple_control_panel import RippleControlPanel
 
 
 class RippleWaveVisualizer(VisualizerBase):
@@ -70,7 +74,11 @@ class RippleWaveVisualizer(VisualizerBase):
         self.n_sources = n_sources
         self.plane_size_m = plane_size_m
         self.resolution = resolution
-        self.frequency = frequency
+        self.synthetic_frequencies = self._coerce_synthetic_frequencies(
+            frequency,
+            n_sources=self.n_sources,
+        )
+        self.frequency = float(self.synthetic_frequencies[0, 0])
         self.apply_gaussian_smoothing = apply_gaussian_smoothing
         self.amplitude = amplitude
         self.decay_alpha = 0.0
@@ -165,6 +173,8 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_amplitude_changed=self._update_amplitude,
                 on_decay_alpha_changed=self._update_decay_alpha,
                 on_damping_changed=self._update_damping,
+                source_sections=self._build_source_control_sections(),
+                on_source_control_changed=self._update_source_control,
                 before_reset=self.renderer.prepare_frame,
                 on_reset=self._sync_after_reset,
             )
@@ -195,7 +205,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _resolve_ripple_frequencies(self) -> np.ndarray | None:
         if self.use_synthetic:
-            return np.full((self.n_sources, 1), self.frequency, dtype=np.float32)
+            return self.synthetic_frequencies.copy()
 
         if self.processor is None:
             return None
@@ -205,6 +215,53 @@ class RippleWaveVisualizer(VisualizerBase):
         if len(top_k) == 0:
             return None
         return np.tile(top_k, (self.n_sources, 1))
+
+    @staticmethod
+    def _coerce_synthetic_frequencies(
+        frequency: float | list[float] | tuple[float, ...] | np.ndarray,
+        *,
+        n_sources: int,
+    ) -> np.ndarray:
+        values = np.asarray(frequency, dtype=np.float32)
+        if values.ndim == 0:
+            return np.full((n_sources, 1), float(values), dtype=np.float32)
+        if values.ndim == 1 and values.shape[0] == n_sources:
+            return values.reshape(n_sources, 1).astype(np.float32, copy=False)
+        if values.ndim == 2 and values.shape == (n_sources, 1):
+            return values.astype(np.float32, copy=False)
+        raise ValueError(
+            "frequency must be a scalar, a length-n_sources vector, "
+            "or an (n_sources, 1) matrix"
+        )
+
+    def _build_source_control_sections(self) -> tuple[ControlPanelSection, ...]:
+        if not self.use_synthetic:
+            return ()
+        sections: list[ControlPanelSection] = []
+        for index, frequency_hz in enumerate(self.synthetic_frequencies[:, 0]):
+            sections.append(
+                ControlPanelSection(
+                    key=f"synthetic-source-{index}",
+                    title=f"Synthetic Source {index + 1}",
+                    controls=SyntheticFrequencySource(
+                        frequency_hz=float(frequency_hz),
+                        n_sources=1,
+                    ).get_controls(),
+                )
+            )
+        return tuple(sections)
+
+    def _update_source_control(
+        self,
+        section_key: str,
+        control_key: str,
+        value: float | bool | int | str,
+    ) -> None:
+        if control_key != "frequency_hz" or not section_key.startswith("synthetic-source-"):
+            raise KeyError(f"Unknown source control: {section_key}.{control_key}")
+        index = int(section_key.removeprefix("synthetic-source-"))
+        self.synthetic_frequencies[index, 0] = float(value)
+        self.frequency = float(self.synthetic_frequencies[0, 0])
 
     def _ensure_pose_source(
         self,

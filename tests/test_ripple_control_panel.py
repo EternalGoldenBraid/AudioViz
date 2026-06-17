@@ -83,3 +83,42 @@ def test_ripple_control_panel_resets_field(ripple_panel_deps):
     assert engine.time == 0.0
     assert np.all(engine.Z == 0)
     assert np.all(engine.propagator.Z == 0)
+
+
+def test_ripple_control_panel_renders_per_source_synthetic_frequency_controls(
+    ripple_panel_deps,
+):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        use_gpu=False,
+    )
+    updates = []
+    from audioviz.source_controls import SyntheticFrequencySource
+    from audioviz.visualization.ripple_control_panel import ControlPanelSection
+
+    panel = RippleControlPanel(
+        engine,
+        source_sections=(
+            ControlPanelSection(
+                key="synthetic-source-0",
+                title="Synthetic Source 1",
+                controls=SyntheticFrequencySource(frequency_hz=110.0, n_sources=1).get_controls(),
+            ),
+            ControlPanelSection(
+                key="synthetic-source-1",
+                title="Synthetic Source 2",
+                controls=SyntheticFrequencySource(frequency_hz=220.0, n_sources=1).get_controls(),
+            ),
+        ),
+        on_source_control_changed=lambda section, key, value: updates.append(
+            (section, key, value)
+        ),
+    )
+
+    panel.source_control_widgets[("synthetic-source-1", "frequency_hz")].setValue(330.0)
+    app.processEvents()
+
+    assert updates[-1] == ("synthetic-source-1", "frequency_hz", 330.0)

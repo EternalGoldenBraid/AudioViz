@@ -1,10 +1,21 @@
-from typing import Callable, Optional
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable, Optional, Sequence
 
 from PyQt5 import QtWidgets
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QLabel, QSlider
+from PyQt5.QtWidgets import QDoubleSpinBox, QLabel, QSlider
 
 from audioviz.engine import RippleEngine
+from audioviz.source_controls import ControlValue, SourceControl
+
+
+@dataclass(frozen=True)
+class ControlPanelSection:
+    key: str
+    title: str
+    controls: Sequence[SourceControl]
 
 
 class RippleControlPanel(QtWidgets.QWidget):
@@ -16,6 +27,8 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_amplitude_changed: Optional[Callable[[float], None]] = None,
         on_decay_alpha_changed: Optional[Callable[[float], None]] = None,
         on_damping_changed: Optional[Callable[[float], None]] = None,
+        source_sections: Sequence[ControlPanelSection] = (),
+        on_source_control_changed: Optional[Callable[[str, str, ControlValue], None]] = None,
         before_reset: Optional[Callable[[], bool]] = None,
         on_reset: Optional[Callable[[], None]] = None,
     ):
@@ -25,8 +38,11 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_amplitude_changed = on_amplitude_changed
         self.on_decay_alpha_changed = on_decay_alpha_changed
         self.on_damping_changed = on_damping_changed
+        self.source_sections = tuple(source_sections)
+        self.on_source_control_changed = on_source_control_changed
         self.before_reset = before_reset
         self.on_reset = on_reset
+        self.source_control_widgets: dict[tuple[str, str], QDoubleSpinBox] = {}
 
         self.setWindowTitle("Ripple Controls")
         layout = QtWidgets.QVBoxLayout(self)
@@ -93,6 +109,21 @@ class RippleControlPanel(QtWidgets.QWidget):
 
         layout.addWidget(group)
 
+        for section in self.source_sections:
+            source_group = QtWidgets.QGroupBox(section.title)
+            source_group_layout = QtWidgets.QFormLayout(source_group)
+            for control in section.controls:
+                if control.kind != "number":
+                    raise NotImplementedError(
+                        f"Unsupported source control kind: {control.kind!r}"
+                    )
+                widget = self._create_number_control(section.key, control)
+                source_group_layout.addRow(control.label, widget)
+                self.source_control_widgets[(section.key, control.key)] = widget
+            layout.addWidget(source_group)
+
+        layout.addStretch(1)
+
     def _add_slider(
         self,
         layout: QtWidgets.QVBoxLayout,
@@ -149,3 +180,41 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.damping_label.setText(f"Damping: {val:.3f}")
         if self.on_damping_changed is not None:
             self.on_damping_changed(val)
+
+    def _create_number_control(
+        self,
+        section_key: str,
+        control: SourceControl,
+    ) -> QDoubleSpinBox:
+        widget = QDoubleSpinBox()
+        widget.setDecimals(self._decimals_for_step(control.step))
+        widget.setSingleStep(float(control.step) if control.step is not None else 1.0)
+        widget.setMinimum(float(control.minimum) if control.minimum is not None else -1e12)
+        widget.setMaximum(float(control.maximum) if control.maximum is not None else 1e12)
+        widget.setValue(float(control.default))
+        if control.unit:
+            widget.setSuffix(f" {control.unit}")
+        widget.valueChanged.connect(
+            lambda value, section_key=section_key, control_key=control.key: self._emit_source_control_change(
+                section_key, control_key, float(value)
+            )
+        )
+        return widget
+
+    @staticmethod
+    def _decimals_for_step(step: float | None) -> int:
+        if step is None or step >= 1.0:
+            return 0
+        text = f"{step:.8f}".rstrip("0")
+        if "." not in text:
+            return 0
+        return len(text.split(".", 1)[1])
+
+    def _emit_source_control_change(
+        self,
+        section_key: str,
+        control_key: str,
+        value: ControlValue,
+    ) -> None:
+        if self.on_source_control_changed is not None:
+            self.on_source_control_changed(section_key, control_key, value)
