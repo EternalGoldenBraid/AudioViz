@@ -122,3 +122,19 @@ def test_ripple_control_panel_renders_per_source_synthetic_frequency_controls(
     app.processEvents()
 
     assert updates[-1] == ("synthetic-source-1", "frequency_hz", 330.0)
+
+
+def test_ripple_control_panel_explains_when_no_source_controls_exist(ripple_panel_deps):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        use_gpu=False,
+    )
+
+    panel = RippleControlPanel(engine, source_sections=())
+    app.processEvents()
+
+    labels = [label.text() for label in panel.findChildren(QtWidgets.QLabel)]
+    assert any("use_synthetic=True" in text for text in labels)

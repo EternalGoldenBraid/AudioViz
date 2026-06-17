@@ -5,7 +5,7 @@ from typing import Callable, Optional, Sequence
 
 from PyQt5 import QtWidgets
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QDoubleSpinBox, QLabel, QSlider
+from PyQt5.QtWidgets import QDoubleSpinBox, QLabel, QScrollArea, QSlider
 
 from audioviz.engine import RippleEngine
 from audioviz.source_controls import ControlValue, SourceControl
@@ -47,8 +47,15 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.setWindowTitle("Ripple Controls")
         layout = QtWidgets.QVBoxLayout(self)
 
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        content = QtWidgets.QWidget()
+        content_layout = QtWidgets.QVBoxLayout(content)
+        scroll_area.setWidget(content)
+        layout.addWidget(scroll_area)
+
         info_label = QLabel("Wave physics controls for the ripple field.")
-        layout.addWidget(info_label)
+        content_layout.addWidget(info_label)
 
         group = QtWidgets.QGroupBox("Wave Physics")
         group_layout = QtWidgets.QVBoxLayout(group)
@@ -107,22 +114,33 @@ class RippleControlPanel(QtWidgets.QWidget):
             on_change=lambda raw: self.update_amplitude(raw / 100.0),
         )
 
-        layout.addWidget(group)
+        content_layout.addWidget(group)
 
-        for section in self.source_sections:
-            source_group = QtWidgets.QGroupBox(section.title)
-            source_group_layout = QtWidgets.QFormLayout(source_group)
-            for control in section.controls:
-                if control.kind != "number":
-                    raise NotImplementedError(
-                        f"Unsupported source control kind: {control.kind!r}"
-                    )
-                widget = self._create_number_control(section.key, control)
-                source_group_layout.addRow(control.label, widget)
-                self.source_control_widgets[(section.key, control.key)] = widget
-            layout.addWidget(source_group)
+        source_controls_group = QtWidgets.QGroupBox("Source Controls")
+        source_controls_layout = QtWidgets.QVBoxLayout(source_controls_group)
+        if self.source_sections:
+            for section in self.source_sections:
+                source_group = QtWidgets.QGroupBox(section.title)
+                source_group_layout = QtWidgets.QFormLayout(source_group)
+                for control in section.controls:
+                    if control.kind != "number":
+                        raise NotImplementedError(
+                            f"Unsupported source control kind: {control.kind!r}"
+                        )
+                    widget = self._create_number_control(section.key, control)
+                    source_group_layout.addRow(control.label, widget)
+                    self.source_control_widgets[(section.key, control.key)] = widget
+                source_controls_layout.addWidget(source_group)
+        else:
+            source_controls_layout.addWidget(
+                QLabel(
+                    "No source-specific controls are available in the current mode. "
+                    "Synthetic source controls appear when use_synthetic=True."
+                )
+            )
+        content_layout.addWidget(source_controls_group)
 
-        layout.addStretch(1)
+        content_layout.addStretch(1)
 
     def _add_slider(
         self,

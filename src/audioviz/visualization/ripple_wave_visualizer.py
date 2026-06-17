@@ -178,7 +178,7 @@ class RippleWaveVisualizer(VisualizerBase):
                 before_reset=self.renderer.prepare_frame,
                 on_reset=self._sync_after_reset,
             )
-            self.control_panel.resize(300, 300)
+            self.control_panel.resize(360, 520)
         self.control_panel.show()
         self.control_panel.raise_()
         self.control_panel.activateWindow()
