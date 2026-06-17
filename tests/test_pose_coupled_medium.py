@@ -28,7 +28,7 @@ def test_pose_coupled_medium_updates_grid_and_pose_states():
 
     assert np.count_nonzero(engine.get_field_numpy()) > 0
     assert engine.get_pose_medium_state()[0] > 0.0
-    np.testing.assert_allclose(engine.source_positions, [[2.5, 2.5]])
+    np.testing.assert_allclose(engine.get_pose_medium_positions(valid_only=True), [[2.5, 2.5]])
 
 
 def test_pose_coupled_medium_ignores_invalid_pose_nodes():
@@ -52,5 +52,4 @@ def test_pose_coupled_medium_ignores_invalid_pose_nodes():
 
     engine.step_pose_medium()
 
-    assert engine.n_sources == 1
-    np.testing.assert_allclose(engine.source_positions, [[1.5, 1.5]])
+    np.testing.assert_allclose(engine.get_pose_medium_positions(valid_only=True), [[1.5, 1.5]])

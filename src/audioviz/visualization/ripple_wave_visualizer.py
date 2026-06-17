@@ -57,7 +57,7 @@ class RippleWaveVisualizer(VisualizerBase):
         super().__init__(processor, **kwargs)
 
         self.processor = processor
-        self.use_synthetic = processor is None or use_synthetic
+        self.use_synthetic = use_synthetic
         self.use_gpu = use_gpu
         self.use_shader = use_shader
         self.boundary_condition = boundary_condition
@@ -177,18 +177,14 @@ class RippleWaveVisualizer(VisualizerBase):
         self.time = self.engine.time
 
     def update_visualization(self):
+        freqs = self._resolve_ripple_frequencies()
+
         if self.use_pose_sources:
-            self._update_pose_visualization()
+            self._update_pose_visualization(freqs)
             return
 
-        if self.use_synthetic or self.processor is None:
-            freqs = np.full((self.n_sources, 1), self.frequency, dtype=np.float32)
-        else:
-            top_k = self.processor.current_top_k_frequencies
-            top_k = [f for f in top_k if f is not None and np.isfinite(f)]
-            if len(top_k) == 0:
-                return
-            freqs = np.tile(top_k, (self.n_sources, 1))
+        if freqs is None:
+            return
 
         if not self.renderer.prepare_frame():
             return
@@ -196,6 +192,19 @@ class RippleWaveVisualizer(VisualizerBase):
         self.engine.step(freqs)
         self.time = self.engine.time
         self.renderer.render(self.engine)
+
+    def _resolve_ripple_frequencies(self) -> np.ndarray | None:
+        if self.use_synthetic:
+            return np.full((self.n_sources, 1), self.frequency, dtype=np.float32)
+
+        if self.processor is None:
+            return None
+
+        top_k = self.processor.current_top_k_frequencies
+        top_k = [f for f in top_k if f is not None and np.isfinite(f)]
+        if len(top_k) == 0:
+            return None
+        return np.tile(top_k, (self.n_sources, 1))
 
     def _ensure_pose_source(
         self,
@@ -213,7 +222,7 @@ class RippleWaveVisualizer(VisualizerBase):
                 self.pose_extractor = None
                 raise RuntimeError(f"Failed to open pose camera index {camera_index}")
 
-    def _update_pose_visualization(self) -> None:
+    def _update_pose_visualization(self, freqs: np.ndarray | None) -> None:
         if self.pose_capture is None or self.pose_extractor is None:
             return
 
@@ -225,7 +234,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.pose_debug_view:
             self._update_pose_debug_view(frame, pose)
         if not pose.coords.size:
-            self._render_pose_field_without_detection()
+            self._render_pose_field_without_detection(freqs)
             return
 
         now = time.monotonic()
@@ -261,10 +270,17 @@ class RippleWaveVisualizer(VisualizerBase):
             drive=pose_drive,
             adjacency=pose.adjacency,
         )
-        self._render_pose_medium()
+        self._render_pose_medium(freqs)
 
-    def _render_pose_field_without_detection(self) -> None:
+    def _render_pose_field_without_detection(self, freqs: np.ndarray | None) -> None:
         if self.pose_state is None:
+            if freqs is not None:
+                if not self.renderer.prepare_frame():
+                    return
+                self.engine.step(freqs)
+                self.time = self.engine.time
+                self.renderer.render(self.engine)
+                return
             if not self.renderer.prepare_frame():
                 return
             self.renderer.render(self.engine)
@@ -277,7 +293,7 @@ class RippleWaveVisualizer(VisualizerBase):
             drive=zero_drive,
             adjacency=self.pose_state.adjacency,
         )
-        self._render_pose_medium()
+        self._render_pose_medium(freqs)
 
     def _render_pose_field(self, source_excitations: np.ndarray) -> None:
         if not self.renderer.prepare_frame():
@@ -287,11 +303,11 @@ class RippleWaveVisualizer(VisualizerBase):
         self.time = self.engine.time
         self.renderer.render(self.engine)
 
-    def _render_pose_medium(self) -> None:
+    def _render_pose_medium(self, freqs: np.ndarray | None) -> None:
         if not self.renderer.prepare_frame():
             return
 
-        self.engine.step_pose_medium()
+        self.engine.step_pose_medium(freqs)
         if self.pose_state is not None:
             self.pose_state.set_ripple_states(self.engine.get_pose_medium_state())
         self.time = self.engine.time

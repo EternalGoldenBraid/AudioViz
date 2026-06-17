@@ -109,6 +109,7 @@ def test_ripple_visualizer_feeds_pose_landmarks_into_source_excitations():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
+        use_synthetic=False,
         use_pose_sources=True,
         pose_capture=capture,
         pose_extractor=extractor,
@@ -120,17 +121,16 @@ def test_ripple_visualizer_feeds_pose_landmarks_into_source_excitations():
     visualizer.renderer = _FakeRenderer()
 
     visualizer.update_visualization()
-    first_source_positions = visualizer.engine.source_positions.copy()
+    first_pose_positions = visualizer.engine.get_pose_medium_positions(valid_only=True)
     first_field = visualizer.engine.get_field_numpy().copy()
 
     visualizer.update_visualization()
-    second_source_positions = visualizer.engine.source_positions.copy()
+    second_pose_positions = visualizer.engine.get_pose_medium_positions(valid_only=True)
     second_field = visualizer.engine.get_field_numpy().copy()
 
-    assert visualizer.engine.n_sources == 2
-    np.testing.assert_allclose(first_source_positions, [[14.25, 2.25], [4.75, 6.75]])
+    np.testing.assert_allclose(first_pose_positions, [[14.25, 2.25], [4.75, 6.75]])
     np.testing.assert_allclose(
-        second_source_positions,
+        second_pose_positions,
         [[14.25, 2.25], [0.95, 6.75]],
         atol=1e-5,
     )
@@ -160,6 +160,7 @@ def test_ripple_visualizer_keeps_rendering_when_pose_detection_drops_out():
         speed=1.0,
         damping=0.99,
         amplitude=1.0,
+        use_synthetic=False,
         use_pose_sources=True,
         pose_capture=capture,
         pose_extractor=extractor,
@@ -279,6 +280,7 @@ def test_ripple_visualizer_filters_out_of_frame_pose_landmarks_without_resetting
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
+        use_synthetic=False,
         use_pose_sources=True,
         pose_capture=capture,
         pose_extractor=extractor,
@@ -296,9 +298,51 @@ def test_ripple_visualizer_filters_out_of_frame_pose_landmarks_without_resetting
     assert visualizer.pose_state is first_pose_state
     assert visualizer.pose_state is not None
     assert visualizer.pose_state.num_nodes == 2
-    assert visualizer.engine.n_sources == 1
-    np.testing.assert_allclose(visualizer.engine.source_positions, [[14.25, 2.25]])
+    np.testing.assert_allclose(
+        visualizer.engine.get_pose_medium_positions(valid_only=True),
+        [[14.25, 2.25]],
+    )
     assert len(visualizer.pose_debug_points.points()) == 1
+
+
+def test_ripple_visualizer_keeps_synthetic_source_when_pose_coupling_is_enabled():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture(frame_count=1)
+    extractor = _FakeExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        n_sources=1,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        frequency=2.0,
+        use_synthetic=True,
+        use_pose_sources=True,
+        pose_capture=capture,
+        pose_extractor=extractor,
+        pose_acceleration_scale=0.0,
+        pose_max_excitation=0.0,
+        pose_debug_view=False,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+    visualizer.engine.set_source_positions(np.array([[10.0, 5.0]], dtype=np.float32))
+
+    visualizer.update_visualization()
+
+    np.testing.assert_allclose(visualizer.engine.source_positions, [[10.0, 5.0]])
+    assert visualizer.engine.n_sources == 1
+    assert np.count_nonzero(visualizer.engine.get_field_numpy()) > 0
+
+    visualizer.close_pose_sources()
+    assert capture.released
+    assert extractor.closed
+    app.processEvents()
 
     visualizer.close_pose_sources()
     assert capture.released

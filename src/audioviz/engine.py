@@ -296,10 +296,8 @@ class RippleEngine:
         self.pose_positions[:] = positions_array
         self.pose_valid[:] = valid_array
         self.pose_drive[:] = drive_array
-        self.source_positions = positions_array[valid_array].copy()
-        self.n_sources = len(self.source_positions)
 
-    def step_pose_medium(self) -> np.ndarray:
+    def step_pose_medium(self, frequencies: np.ndarray | None = None) -> np.ndarray:
         if not self.pose_medium_enabled:
             raise RuntimeError("Pose medium has not been configured.")
         assert self.pose_values is not None
@@ -313,13 +311,16 @@ class RippleEngine:
         self.time += self.dt
         grid = self.Z
         pose = self.pose_values
+        driven_grid = grid.copy()
         driven_pose = pose.copy()
         driven_pose += self.pose_drive_scale * self.pose_drive
+        if frequencies is not None:
+            driven_grid += self._compute_ripple_excitation_field(self.time, frequencies)
 
         grid_laplacian = (
-            _laplacian_periodic(np, grid)
+            _laplacian_periodic(np, driven_grid)
             if self.boundary_condition is BoundaryCondition.CYCLIC
-            else _laplacian_neumann(np, grid)
+            else _laplacian_neumann(np, driven_grid)
         )
         pose_laplacian = self.pose_adjacency @ driven_pose - self.pose_degree * driven_pose
         pose_laplacian *= self.pose_graph_stiffness
@@ -331,12 +332,12 @@ class RippleEngine:
             x, y = self.pose_positions[node_index]
             for row, col, weight in self._grid_bilinear_neighbors(x, y):
                 coupling = self.pose_coupling_strength * weight
-                grid_value = grid[row, col]
+                grid_value = driven_grid[row, col]
                 pose_value = driven_pose[node_index]
                 grid_coupling[row, col] += coupling * (pose_value - grid_value)
                 pose_coupling[node_index] += coupling * (grid_value - pose_value)
 
-        new_grid = 2 * grid - self.Z_old + self.propagator.c2_dt2 * (grid_laplacian + grid_coupling)
+        new_grid = 2 * driven_grid - self.Z_old + self.propagator.c2_dt2 * (grid_laplacian + grid_coupling)
         new_pose = (
             2 * driven_pose
             - self.pose_values_old
@@ -355,6 +356,13 @@ class RippleEngine:
         if self.pose_values is None:
             raise RuntimeError("Pose medium has not been configured.")
         return self.pose_values.copy()
+
+    def get_pose_medium_positions(self, *, valid_only: bool = False) -> np.ndarray:
+        if self.pose_positions is None:
+            raise RuntimeError("Pose medium has not been configured.")
+        if not valid_only or self.pose_valid is None:
+            return self.pose_positions.copy()
+        return self.pose_positions[self.pose_valid].copy()
 
     @staticmethod
     def _grid_bilinear_neighbors(x: float, y: float) -> list[tuple[int, int, float]]:
@@ -377,3 +385,37 @@ class RippleEngine:
             key = (row, col)
             merged[key] = merged.get(key, 0.0) + weight
         return [(row, col, weight) for (row, col), weight in merged.items()]
+
+    def _compute_ripple_excitation_field(self, t: float, frequencies: np.ndarray) -> np.ndarray:
+        xp = self.backend
+        frequencies = xp.asarray(frequencies, dtype=xp.float32)
+        n_sources, _ = frequencies.shape
+
+        if n_sources != self.n_sources:
+            raise ValueError(
+                f"Expected {self.n_sources} source rows, got {n_sources}."
+            )
+
+        x0 = xp.array([p[0] for p in self.source_positions]).reshape(n_sources, 1, 1)
+        y0 = xp.array([p[1] for p in self.source_positions]).reshape(n_sources, 1, 1)
+
+        xs = self.xs[None, :, :]
+        ys = self.ys[None, :, :]
+
+        r_pixels = xp.sqrt((xs - x0) ** 2 + (ys - y0) ** 2)
+        r_meters = r_pixels * self.dx
+        decay = xp.exp(-self.decay_alpha * r_meters)
+
+        frequencies = xp.clip(frequencies, 1e-3, self.max_frequency)
+        wavelengths = self.speed / frequencies
+        phases = 2 * xp.pi * frequencies * t
+
+        r = r_meters[:, None, :, :]
+        decay = decay[:, None, :, :]
+        wavelengths = wavelengths[:, :, None, None]
+        phases = phases[:, :, None, None]
+
+        ripple = self.amplitude * decay * xp.sin(
+            phases - 2 * xp.pi * r / wavelengths
+        )
+        return ripple.sum(axis=(0, 1))
