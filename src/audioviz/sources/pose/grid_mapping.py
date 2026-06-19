@@ -134,6 +134,63 @@ def map_pose_segmentation_to_field_mask(
     return field_mask
 
 
+def build_pose_graph_segmentation_mask(
+    coords: np.ndarray,
+    adjacency: np.ndarray,
+    image_shape: tuple[int, int],
+    *,
+    radius_fraction: float = 0.06,
+) -> np.ndarray:
+    height, width = _validate_resolution(image_shape)
+    if radius_fraction <= 0.0:
+        raise ValueError("radius_fraction must be positive")
+
+    positions = np.asarray(coords, dtype=np.float32)
+    edges = np.asarray(adjacency, dtype=np.float32)
+    if positions.ndim != 2 or positions.shape[1] != 2:
+        raise ValueError("coords must have shape (num_nodes, 2)")
+    if edges.shape != (len(positions), len(positions)):
+        raise ValueError("adjacency shape must match coords")
+
+    valid = pose_coords_in_image_support(positions)
+    if not np.any(valid):
+        return np.zeros((height, width), dtype=np.float32)
+
+    yy, xx = np.mgrid[0:height, 0:width]
+    xx = xx.astype(np.float32)
+    yy = yy.astype(np.float32)
+    points = positions.copy()
+    points[:, 0] *= np.float32(width - 1)
+    points[:, 1] *= np.float32(height - 1)
+    radius = max(2.0, float(radius_fraction) * min(height, width))
+    radius2 = np.float32(radius * radius)
+    mask = np.zeros((height, width), dtype=bool)
+
+    for index in np.flatnonzero(valid):
+        point_x, point_y = points[index]
+        dist2 = (xx - point_x) ** 2 + (yy - point_y) ** 2
+        mask |= dist2 <= radius2
+
+    for start, end in np.argwhere(np.triu(edges, k=1) > 0):
+        if not (valid[start] and valid[end]):
+            continue
+        ax, ay = points[start]
+        bx, by = points[end]
+        abx = bx - ax
+        aby = by - ay
+        denom = abx * abx + aby * aby
+        if denom <= 1e-6:
+            continue
+        projection = ((xx - ax) * abx + (yy - ay) * aby) / denom
+        projection = np.clip(projection, 0.0, 1.0)
+        nearest_x = ax + projection * abx
+        nearest_y = ay + projection * aby
+        dist2 = (xx - nearest_x) ** 2 + (yy - nearest_y) ** 2
+        mask |= dist2 <= radius2
+
+    return mask.astype(np.float32)
+
+
 def pose_graph_state_to_ripple_sources(
     state,
     resolution: tuple[int, int],

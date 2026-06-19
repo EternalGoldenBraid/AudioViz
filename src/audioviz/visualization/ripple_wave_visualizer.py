@@ -11,6 +11,7 @@ from audioviz.sources.pose import (
     MediaPipePoseExtractor,
     PoseGraphExtractor,
     PoseGraphState,
+    build_pose_graph_segmentation_mask,
     centered_field_rect,
     map_pose_coords_to_field_positions,
     map_pose_segmentation_to_field_mask,
@@ -359,17 +360,18 @@ class RippleWaveVisualizer(VisualizerBase):
             return
 
         pose = self.pose_extractor.extract(frame)
+        segmentation_mask = self._resolve_pose_segmentation_mask(frame, pose)
         self.engine.set_body_boundary_mask(
             map_pose_segmentation_to_field_mask(
-                pose.segmentation_mask,
+                segmentation_mask,
                 self.resolution,
                 field_rect=self.pose_field_rect,
             )
-            if pose.segmentation_mask is not None
+            if segmentation_mask is not None
             else None
         )
         if self.pose_debug_view:
-            self._update_pose_debug_view(frame, pose)
+            self._update_pose_debug_view(frame, pose, segmentation_mask=segmentation_mask)
         if not pose.coords.size:
             self._render_pose_field_without_detection(freqs)
             return
@@ -476,15 +478,23 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_debug_widget = widget
         return widget
 
-    def _update_pose_debug_view(self, frame: np.ndarray, pose) -> None:
+    def _update_pose_debug_view(
+        self,
+        frame: np.ndarray,
+        pose,
+        *,
+        segmentation_mask: np.ndarray | None = None,
+    ) -> None:
         if self.pose_debug_image is None:
             return
 
         rgb_frame = np.ascontiguousarray(frame[:, ::-1, ::-1])
-        if pose.segmentation_mask is not None:
+        if segmentation_mask is None:
+            segmentation_mask = pose.segmentation_mask
+        if segmentation_mask is not None:
             rgb_frame = self._overlay_pose_debug_mask(
                 rgb_frame,
-                pose.segmentation_mask,
+                segmentation_mask,
             )
         self.pose_debug_image.setImage(rgb_frame, autoLevels=False)
         self.pose_debug_frame_count += 1
@@ -569,6 +579,30 @@ class RippleWaveVisualizer(VisualizerBase):
             & padded[1:-1, 2:]
         )
         return center & ~neighbors_same
+
+    def _resolve_pose_segmentation_mask(
+        self,
+        frame: np.ndarray,
+        pose,
+    ) -> np.ndarray | None:
+        if self._has_usable_segmentation_mask(pose.segmentation_mask):
+            return pose.segmentation_mask
+        if pose.coords.size == 0:
+            return None
+        return build_pose_graph_segmentation_mask(
+            pose.coords,
+            pose.adjacency,
+            frame.shape[:2],
+        )
+
+    @staticmethod
+    def _has_usable_segmentation_mask(segmentation_mask: np.ndarray | None) -> bool:
+        if segmentation_mask is None:
+            return False
+        mask = np.asarray(segmentation_mask, dtype=np.float32)
+        if mask.ndim != 2:
+            return False
+        return bool(np.any(mask >= np.float32(0.5)))
 
     @staticmethod
     def _load_cv2():

@@ -4,6 +4,8 @@ import pytest
 from audioviz.engine import RippleEngine
 from audioviz.sources.pose import (
     PoseGraphState,
+    adjacency_from_edges,
+    build_pose_graph_segmentation_mask,
     centered_field_rect,
     map_pose_segmentation_to_field_mask,
     normalized_pose_coords_to_source_positions,
@@ -110,6 +112,19 @@ def test_pose_segmentation_mask_can_map_into_centered_field_rect():
         dtype=bool,
     )
     np.testing.assert_array_equal(field_mask, expected)
+
+
+def test_pose_graph_segmentation_mask_builds_from_landmarks_and_edges():
+    mask = build_pose_graph_segmentation_mask(
+        np.array([[0.2, 0.5], [0.8, 0.5]], dtype=np.float32),
+        adjacency_from_edges(2, [(0, 1)]),
+        (20, 30),
+    )
+
+    assert mask.shape == (20, 30)
+    assert mask.dtype == np.float32
+    assert np.count_nonzero(mask) > 0
+    assert mask[10, 15] > 0.0
 
 
 def test_normalized_pose_mapping_filters_landmarks_outside_field_support():

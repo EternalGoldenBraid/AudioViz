@@ -4,7 +4,12 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
+from audioviz.sources.pose import (
+    PoseGraphFrame,
+    adjacency_from_edges,
+    build_pose_graph_segmentation_mask,
+    map_pose_segmentation_to_field_mask,
+)
 
 
 class _FakeCapture:
@@ -97,6 +102,24 @@ class _MaskedExtractor:
                     ],
                     dtype=np.float32,
                 ),
+            ),
+        ]
+        self.closed = False
+
+    def extract(self, _frame):
+        return self.frames.pop(0)
+
+    def close(self):
+        self.closed = True
+
+
+class _BlankMaskExtractor:
+    def __init__(self):
+        self.frames = [
+            PoseGraphFrame(
+                coords=np.array([[0.25, 0.25], [0.75, 0.75]], dtype=np.float32),
+                adjacency=adjacency_from_edges(2, [(0, 1)]),
+                segmentation_mask=np.zeros((4, 4), dtype=np.float32),
             ),
         ]
         self.closed = False
@@ -300,6 +323,39 @@ def test_pose_debug_view_overlays_segmentation_mask_with_same_mirroring():
     app.processEvents()
 
 
+def test_pose_debug_view_falls_back_to_pose_graph_mask_when_segmentation_missing():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        use_pose_sources=False,
+        pose_debug_view=True,
+    )
+    visualizer.timer.stop()
+
+    frame = np.zeros((20, 20, 3), dtype=np.uint8)
+    pose = PoseGraphFrame(
+        coords=np.array([[0.25, 0.5], [0.75, 0.5]], dtype=np.float32),
+        adjacency=adjacency_from_edges(2, [(0, 1)]),
+    )
+
+    fallback_mask = visualizer._resolve_pose_segmentation_mask(frame, pose)
+
+    assert fallback_mask is not None
+    assert np.count_nonzero(fallback_mask) > 0
+
+    visualizer._update_pose_debug_view(frame, pose, segmentation_mask=fallback_mask)
+
+    assert np.count_nonzero(visualizer.pose_debug_image.image) > 0
+
+    visualizer.close()
+    app.processEvents()
+
+
 def test_pose_debug_view_omits_out_of_frame_landmarks_and_edges():
     from PyQt5 import QtWidgets
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
@@ -403,6 +459,44 @@ def test_ripple_visualizer_maps_segmentation_mask_into_engine_boundary_mask():
         dtype=bool,
     )
     np.testing.assert_array_equal(visualizer.engine.body_boundary_mask, expected)
+
+    visualizer.close_pose_sources()
+    app.processEvents()
+
+
+def test_ripple_visualizer_falls_back_when_segmentation_mask_is_blank():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture(frame_count=1)
+    extractor = _BlankMaskExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        use_synthetic=False,
+        use_pose_sources=True,
+        pose_capture=capture,
+        pose_extractor=extractor,
+        pose_debug_view=True,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    visualizer.update_visualization()
+
+    expected = map_pose_segmentation_to_field_mask(
+        build_pose_graph_segmentation_mask(
+            np.array([[0.25, 0.25], [0.75, 0.75]], dtype=np.float32),
+            adjacency_from_edges(2, [(0, 1)]),
+            (4, 4),
+        ),
+        resolution=(10, 20),
+        field_rect=visualizer.pose_field_rect,
+    )
+    np.testing.assert_array_equal(visualizer.engine.body_boundary_mask, expected)
+    assert np.count_nonzero(visualizer.pose_debug_image.image) > 0
 
     visualizer.close_pose_sources()
     app.processEvents()

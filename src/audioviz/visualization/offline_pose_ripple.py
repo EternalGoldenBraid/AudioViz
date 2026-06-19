@@ -6,7 +6,11 @@ from pathlib import Path
 import numpy as np
 from matplotlib import colormaps
 
-from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
+from audioviz.sources.pose import (
+    PoseGraphFrame,
+    adjacency_from_edges,
+    build_pose_graph_segmentation_mask,
+)
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
 DEFAULT_OUTPUT_DIR = Path("outputs/pose_ripple_validation")
@@ -99,37 +103,11 @@ class DummyPoseExtractor:
         self.closed = True
 
     def _build_segmentation_mask(self, coords: np.ndarray) -> np.ndarray:
-        rows, cols = self._frame_shape
-        yy, xx = np.mgrid[0:rows, 0:cols]
-        xx = xx.astype(np.float32)
-        yy = yy.astype(np.float32)
-        points = np.empty_like(coords, dtype=np.float32)
-        points[:, 0] = coords[:, 0] * np.float32(cols - 1)
-        points[:, 1] = coords[:, 1] * np.float32(rows - 1)
-        radius = max(2.0, 0.06 * min(rows, cols))
-        radius2 = np.float32(radius * radius)
-        mask = np.zeros((rows, cols), dtype=bool)
-
-        for point_x, point_y in points:
-            dist2 = (xx - point_x) ** 2 + (yy - point_y) ** 2
-            mask |= dist2 <= radius2
-
-        for start, end in np.argwhere(np.triu(self._adjacency, k=1) > 0):
-            ax, ay = points[start]
-            bx, by = points[end]
-            abx = bx - ax
-            aby = by - ay
-            denom = abx * abx + aby * aby
-            if denom <= 1e-6:
-                continue
-            projection = ((xx - ax) * abx + (yy - ay) * aby) / denom
-            projection = np.clip(projection, 0.0, 1.0)
-            nearest_x = ax + projection * abx
-            nearest_y = ay + projection * aby
-            dist2 = (xx - nearest_x) ** 2 + (yy - nearest_y) ** 2
-            mask |= dist2 <= radius2
-
-        return mask.astype(np.float32)
+        return build_pose_graph_segmentation_mask(
+            coords,
+            self._adjacency,
+            self._frame_shape,
+        )
 
 
 class RecordingFieldRenderer:

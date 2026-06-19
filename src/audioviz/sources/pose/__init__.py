@@ -8,6 +8,7 @@ from audioviz.sources.pose.adjacency import (
 )
 from audioviz.sources.pose.base import PoseGraphExtractor, PoseGraphFrame
 from audioviz.sources.pose.grid_mapping import (
+    build_pose_graph_segmentation_mask,
     centered_field_rect,
     map_pose_coords_to_field_positions,
     map_pose_segmentation_to_field_mask,
@@ -25,6 +26,7 @@ __all__ = [
     "PoseGraphFrame",
     "PoseGraphState",
     "adjacency_from_edges",
+    "build_pose_graph_segmentation_mask",
     "centered_field_rect",
     "iter_adjacency_edges",
     "map_pose_coords_to_field_positions",
