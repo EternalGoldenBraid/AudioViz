@@ -439,21 +439,33 @@ class RippleEngine:
         vertical_diff = field[1:, :] - field[:-1, :]
         laplacian[:-1, :] += vertical_open * vertical_diff
         laplacian[1:, :] -= vertical_open * vertical_diff
+        vertical_closed = ~vertical_open
+        laplacian[:-1, :] -= vertical_closed * field[:-1, :]
+        laplacian[1:, :] -= vertical_closed * field[1:, :]
 
         horizontal_open = mask[:, :-1] == mask[:, 1:]
         horizontal_diff = field[:, 1:] - field[:, :-1]
         laplacian[:, :-1] += horizontal_open * horizontal_diff
         laplacian[:, 1:] -= horizontal_open * horizontal_diff
+        horizontal_closed = ~horizontal_open
+        laplacian[:, :-1] -= horizontal_closed * field[:, :-1]
+        laplacian[:, 1:] -= horizontal_closed * field[:, 1:]
 
         if self.boundary_condition is BoundaryCondition.CYCLIC:
             vertical_wrap_open = mask[-1, :] == mask[0, :]
             vertical_wrap_diff = field[0, :] - field[-1, :]
             laplacian[-1, :] += vertical_wrap_open * vertical_wrap_diff
             laplacian[0, :] -= vertical_wrap_open * vertical_wrap_diff
+            vertical_wrap_closed = ~vertical_wrap_open
+            laplacian[-1, :] -= vertical_wrap_closed * field[-1, :]
+            laplacian[0, :] -= vertical_wrap_closed * field[0, :]
 
             horizontal_wrap_open = mask[:, -1] == mask[:, 0]
             horizontal_wrap_diff = field[:, 0] - field[:, -1]
             laplacian[:, -1] += horizontal_wrap_open * horizontal_wrap_diff
             laplacian[:, 0] -= horizontal_wrap_open * horizontal_wrap_diff
+            horizontal_wrap_closed = ~horizontal_wrap_open
+            laplacian[:, -1] -= horizontal_wrap_closed * field[:, -1]
+            laplacian[:, 0] -= horizontal_wrap_closed * field[:, 0]
 
         return laplacian
