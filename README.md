@@ -63,6 +63,16 @@ uv run --group pose-demo python scripts/pose_graph_demo.py --model-path models/p
 
 The downloaded `.task` bundle is ignored by git.
 
+## Offline pose+ripple validation
+
+Run a deterministic, offscreen end-to-end validation without live camera input:
+
+```bash
+uv run python scripts/validate_pose_ripple_render.py --frames 16 --synthetic-frequency 220 --synthetic-frequency 330 --pose-graph ring --pose-nodes 5
+```
+
+This writes PNG frames under `outputs/pose_ripple_validation/` and records an animated GIF by default. The offline dummy pose graph also carries a synthetic body mask so the same internal-boundary logic is exercised without live video. Use `--no-synthetic` to confirm the embedded pose medium stays quiescent without an external source, or pass `--video-path outputs/pose_ripple_validation/demo.mp4` when OpenCV is installed.
+
 ---
 
 ## 🎛️ Interactive Controls
