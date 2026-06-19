@@ -101,7 +101,6 @@ class RippleEngine:
         self.pose_positions = None
         self.pose_valid = None
         self.body_boundary_mask = None
-        self.body_boundary_inner_ring_mask = None
 
     def _stable_dt(self) -> float:
         return (max(self.dx, self.dy) / self.speed) * 1 / np.sqrt(2)
@@ -166,13 +165,11 @@ class RippleEngine:
     def set_body_boundary_mask(self, body_boundary_mask: np.ndarray | None) -> None:
         if body_boundary_mask is None:
             self.body_boundary_mask = None
-            self.body_boundary_inner_ring_mask = None
             return
         mask = np.asarray(body_boundary_mask, dtype=bool)
         if mask.shape != self.resolution:
             raise ValueError("body_boundary_mask must match engine resolution")
         self.body_boundary_mask = mask.copy()
-        self.body_boundary_inner_ring_mask = self._compute_body_boundary_inner_ring(mask)
 
     def step(self, frequencies: np.ndarray):
         self.time += self.dt
@@ -359,8 +356,8 @@ class RippleEngine:
         )
         new_grid *= self.damping
         new_pose *= self.damping
-        if self.body_boundary_inner_ring_mask is not None:
-            new_grid[self.body_boundary_inner_ring_mask] *= np.float32(
+        if self.body_boundary_mask is not None:
+            new_grid[self.body_boundary_mask] *= np.float32(
                 1.0 - self.body_boundary_dissipation
             )
 
@@ -470,21 +467,6 @@ class RippleEngine:
             )
 
         return laplacian
-
-    def _compute_body_boundary_inner_ring(self, mask: np.ndarray) -> np.ndarray:
-        outside_neighbor = np.zeros_like(mask, dtype=bool)
-        outside_neighbor[1:, :] |= ~mask[:-1, :]
-        outside_neighbor[:-1, :] |= ~mask[1:, :]
-        outside_neighbor[:, 1:] |= ~mask[:, :-1]
-        outside_neighbor[:, :-1] |= ~mask[:, 1:]
-
-        if self.boundary_condition is BoundaryCondition.CYCLIC:
-            outside_neighbor[0, :] |= ~mask[-1, :]
-            outside_neighbor[-1, :] |= ~mask[0, :]
-            outside_neighbor[:, 0] |= ~mask[:, -1]
-            outside_neighbor[:, -1] |= ~mask[:, 0]
-
-        return mask & outside_neighbor
 
     @staticmethod
     def _validate_unit_interval(value: float, *, name: str) -> float:

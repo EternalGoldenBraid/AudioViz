@@ -81,7 +81,7 @@ def test_pose_coupled_medium_body_boundary_cuts_grid_edges():
     assert masked_engine.get_field_numpy()[2, 2] == 0.0
 
 
-def test_pose_coupled_medium_inner_boundary_dissipation_spares_interior_mask_nodes():
+def test_pose_coupled_medium_masked_interior_dissipation_damps_masked_nodes():
     engine = RippleEngine(
         resolution=(5, 5),
         plane_size_m=(1.0, 1.0),
@@ -98,12 +98,13 @@ def test_pose_coupled_medium_inner_boundary_dissipation_spares_interior_mask_nod
     body_mask = np.zeros((5, 5), dtype=bool)
     body_mask[1:4, 2:5] = True
     engine.set_body_boundary_mask(body_mask)
+    engine.set_body_boundary_dissipation(1.0)
     engine.Z[2, 3] = 1.0
     engine.Z_old[2, 3] = 1.0
 
     engine.step_pose_medium()
 
-    assert abs(engine.get_field_numpy()[2, 3]) > 0.0
+    assert engine.get_field_numpy()[2, 3] == 0.0
     assert engine.Z_old[2, 3] == 1.0
     assert engine.get_field_numpy()[2, 2] == 0.0
 
@@ -211,7 +212,7 @@ def test_pose_coupled_medium_boundary_dissipation_reduces_same_transmission_ener
     )
 
 
-def test_pose_coupled_medium_boundary_dissipation_targets_only_inner_mask_ring():
+def test_pose_coupled_medium_boundary_dissipation_targets_full_masked_interior():
     engine = RippleEngine(
         resolution=(5, 5),
         plane_size_m=(1.0, 1.0),
@@ -238,7 +239,7 @@ def test_pose_coupled_medium_boundary_dissipation_targets_only_inner_mask_ring()
     engine.step_pose_medium()
 
     assert engine.get_field_numpy()[2, 2] == 0.0
-    assert abs(engine.get_field_numpy()[2, 3]) > 0.0
+    assert engine.get_field_numpy()[2, 3] == 0.0
 
 
 def test_pose_coupled_medium_keeps_pose_graph_quiescent_under_segmentation():
