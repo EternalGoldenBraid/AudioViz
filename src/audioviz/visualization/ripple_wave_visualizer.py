@@ -100,6 +100,7 @@ class RippleWaveVisualizer(VisualizerBase):
         _ = pose_acceleration_scale, pose_max_excitation, pose_drive_scale
         self.pose_debug_view = pose_debug_view
         self.pose_debug_frame_count = 0
+        self.auto_color_levels_enabled = True
         self.pose_field_rect = centered_field_rect(
             self.resolution,
             width_fraction=pose_field_width_fraction,
@@ -173,6 +174,8 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_amplitude_changed=self._update_amplitude,
                 on_decay_alpha_changed=self._update_decay_alpha,
                 on_damping_changed=self._update_damping,
+                auto_color_levels_enabled=self.auto_color_levels_enabled,
+                on_auto_color_levels_changed=self._update_auto_color_levels,
                 source_toggles=self._build_source_toggles(),
                 source_sections=self._build_source_control_sections(),
                 on_source_control_changed=self._update_source_control,
@@ -187,6 +190,12 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _sync_after_reset(self) -> None:
         self.time = self.engine.time
+
+    def _update_auto_color_levels(self, enabled: bool) -> None:
+        self.auto_color_levels_enabled = bool(enabled)
+        set_auto_levels = getattr(self.renderer, "set_auto_percentile_levels", None)
+        if callable(set_auto_levels):
+            set_auto_levels(self.auto_color_levels_enabled)
 
     def update_visualization(self):
         freqs = self._resolve_ripple_frequencies()

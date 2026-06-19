@@ -80,8 +80,14 @@ class NumpyImageRenderer:
         *,
         title: str = "Ripple Simulation",
         colormap_name: str = "inferno",
+        auto_percentile_levels: bool = True,
+        auto_level_percentile: float = 98.0,
     ):
+        if auto_level_percentile <= 0.0 or auto_level_percentile > 100.0:
+            raise ValueError("auto_level_percentile must be in (0, 100]")
         self._auto_levels_pending = True
+        self._auto_percentile_levels = bool(auto_percentile_levels)
+        self._auto_level_percentile = float(auto_level_percentile)
         self.image_item = pg.ImageItem(axisOrder="row-major")
         colormap = cm.get_cmap(colormap_name)
         lookup_table = (colormap(np.linspace(0, 1, 256))[:, :3] * 255).astype(
@@ -104,9 +110,27 @@ class NumpyImageRenderer:
     def prepare_frame(self) -> bool:
         return True
 
+    @property
+    def auto_percentile_levels(self) -> bool:
+        return self._auto_percentile_levels
+
+    def set_auto_percentile_levels(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        self._auto_percentile_levels = enabled
+        if enabled:
+            self._auto_levels_pending = True
+
     def render(self, field_source: RippleFieldSource) -> None:
         field = field_source.get_field_numpy()
-        if self._auto_levels_pending:
+        if self._auto_percentile_levels:
+            limit = _percentile_abs_limit(
+                field,
+                percentile=self._auto_level_percentile,
+            )
+            if limit is not None:
+                self.histogram.setLevels(-limit, limit)
+            self._auto_levels_pending = False
+        elif self._auto_levels_pending:
             max_abs = np.max(np.abs(field))
             if max_abs > 0:
                 self.histogram.setLevels(-max_abs, max_abs)
@@ -231,3 +255,17 @@ class OpenGLFieldWidget(QtWidgets.QOpenGLWidget):
         gl.glBindVertexArray(vertex_array)
         gl.glBindVertexArray(0)
         return int(vertex_array)
+
+
+def _percentile_abs_limit(
+    field: np.ndarray,
+    *,
+    percentile: float,
+) -> float | None:
+    values = np.abs(np.asarray(field, dtype=np.float32))
+    finite = values[np.isfinite(values)]
+    active = finite[finite > 0.0]
+    if active.size == 0:
+        return None
+    limit = float(np.percentile(active, percentile))
+    return max(limit, 1e-9)

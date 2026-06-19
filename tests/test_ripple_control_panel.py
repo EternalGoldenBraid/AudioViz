@@ -168,3 +168,27 @@ def test_ripple_control_panel_updates_checkable_source_dropdown(ripple_panel_dep
 
     assert updates[-1] == ("audio", True)
     assert panel.source_toggle_button.text() == "Active Sources: Synthetic, Audio"
+
+
+def test_ripple_control_panel_updates_auto_color_scaling_toggle(ripple_panel_deps):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        use_gpu=False,
+    )
+    updates = []
+    panel = RippleControlPanel(
+        engine,
+        auto_color_levels_enabled=True,
+        on_auto_color_levels_changed=lambda enabled: updates.append(enabled),
+    )
+    app.processEvents()
+
+    assert panel.auto_color_levels_checkbox.isChecked() is True
+
+    panel.auto_color_levels_checkbox.setChecked(False)
+    app.processEvents()
+
+    assert updates[-1] is False

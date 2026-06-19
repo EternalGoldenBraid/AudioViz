@@ -7,6 +7,7 @@ from PyQt5 import QtWidgets
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAction,
+    QCheckBox,
     QDoubleSpinBox,
     QLabel,
     QMenu,
@@ -43,6 +44,8 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_amplitude_changed: Optional[Callable[[float], None]] = None,
         on_decay_alpha_changed: Optional[Callable[[float], None]] = None,
         on_damping_changed: Optional[Callable[[float], None]] = None,
+        auto_color_levels_enabled: bool = True,
+        on_auto_color_levels_changed: Optional[Callable[[bool], None]] = None,
         source_toggles: Sequence[SourceToggle] = (),
         source_sections: Sequence[ControlPanelSection] = (),
         on_source_control_changed: Optional[Callable[[str, str, ControlValue], None]] = None,
@@ -56,6 +59,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_amplitude_changed = on_amplitude_changed
         self.on_decay_alpha_changed = on_decay_alpha_changed
         self.on_damping_changed = on_damping_changed
+        self.on_auto_color_levels_changed = on_auto_color_levels_changed
         self.source_toggles = tuple(source_toggles)
         self.source_sections = tuple(source_sections)
         self.on_source_control_changed = on_source_control_changed
@@ -134,6 +138,17 @@ class RippleControlPanel(QtWidgets.QWidget):
             value=int(self.engine.amplitude * 100),
             on_change=lambda raw: self.update_amplitude(raw / 100.0),
         )
+
+        self.auto_color_levels_checkbox = QCheckBox(
+            "Auto Color Scaling (98th percentile)"
+        )
+        self.auto_color_levels_checkbox.setToolTip(
+            "Continuously remap the ripple colormap to the current 98th percentile "
+            "of active field magnitudes. Disable it to keep manual or fixed levels."
+        )
+        self.auto_color_levels_checkbox.setChecked(bool(auto_color_levels_enabled))
+        self.auto_color_levels_checkbox.toggled.connect(self.update_auto_color_levels)
+        group_layout.addWidget(self.auto_color_levels_checkbox)
 
         content_layout.addWidget(group)
 
@@ -226,6 +241,10 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.damping_label.setText(f"Damping: {val:.3f}")
         if self.on_damping_changed is not None:
             self.on_damping_changed(val)
+
+    def update_auto_color_levels(self, enabled: bool) -> None:
+        if self.on_auto_color_levels_changed is not None:
+            self.on_auto_color_levels_changed(enabled)
 
     def _create_number_control(
         self,

@@ -142,6 +142,14 @@ class _FakeRenderer:
         self.render_count += 1
 
 
+class _FieldSource:
+    def __init__(self, field):
+        self._field = np.asarray(field, dtype=np.float32)
+
+    def get_field_numpy(self):
+        return self._field
+
+
 class _FakeProcessor:
     def __init__(self, frequencies):
         self.current_top_k_frequencies = list(frequencies)
@@ -769,4 +777,71 @@ def test_numpy_ripple_renderer_uses_top_left_image_origin():
     assert renderer.plot.getViewBox().state["yInverted"] is True
 
     renderer.widget.close()
+    app.processEvents()
+
+
+def test_numpy_ripple_renderer_uses_percentile_auto_levels_for_sparse_fields():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    renderer = NumpyImageRenderer(auto_level_percentile=98.0)
+
+    renderer.render(_FieldSource([[0.0, 0.0, 100.0], [0.0, 1.0, 2.0]]))
+    low, high = renderer.histogram.getLevels()
+
+    assert low < 0.0
+    assert high > 0.0
+    assert high < 100.0
+
+    renderer.widget.close()
+    app.processEvents()
+
+
+def test_numpy_ripple_renderer_can_freeze_levels_when_auto_scaling_is_disabled():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    renderer = NumpyImageRenderer(auto_level_percentile=98.0)
+
+    renderer.render(_FieldSource([[0.0, 0.0, 4.0], [0.0, 1.0, 2.0]]))
+    first_levels = renderer.histogram.getLevels()
+    renderer.set_auto_percentile_levels(False)
+    renderer.render(_FieldSource([[0.0, 0.0, 200.0], [0.0, 1.0, 2.0]]))
+    second_levels = renderer.histogram.getLevels()
+
+    assert second_levels == first_levels
+
+    renderer.widget.close()
+    app.processEvents()
+
+
+def test_ripple_visualizer_control_panel_toggles_renderer_auto_color_scaling():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = NumpyImageRenderer()
+
+    visualizer.toggle_controls()
+    assert visualizer.control_panel is not None
+    assert visualizer.renderer.auto_percentile_levels is True
+
+    visualizer.control_panel.auto_color_levels_checkbox.setChecked(False)
+    app.processEvents()
+
+    assert visualizer.renderer.auto_percentile_levels is False
+
+    visualizer.control_panel.close()
+    visualizer.renderer.widget.close()
+    visualizer.close()
     app.processEvents()
