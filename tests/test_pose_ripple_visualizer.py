@@ -386,6 +386,28 @@ def test_ripple_visualizer_updates_per_source_synthetic_frequencies_from_control
     app.processEvents()
 
 
+def test_ripple_visualizer_initializes_decay_alpha_from_constructor():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        decay_alpha=3.5,
+        use_synthetic=True,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+
+    assert visualizer.decay_alpha == 3.5
+    assert visualizer.engine.decay_alpha == 3.5
+
+    visualizer.close()
+    app.processEvents()
+
+
 def test_ripple_visualizer_combines_synthetic_and_audio_sources_when_enabled():
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 

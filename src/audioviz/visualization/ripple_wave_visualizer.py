@@ -37,6 +37,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  resolution: Tuple[int, int] = (400, 400),
                  frequency: float = 440.0,
                  amplitude: float = 1.0,
+                 decay_alpha: float = 0.0,
                  speed: float = 340.0,
                  damping: float = 0.999,
                  use_synthetic: bool = True,
@@ -83,7 +84,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.frequency = float(self.synthetic_frequencies[0, 0])
         self.apply_gaussian_smoothing = apply_gaussian_smoothing
         self.amplitude = amplitude
-        self.decay_alpha = 0.0
+        self.decay_alpha = decay_alpha
         self.speed = speed
         self.damping = damping
         self.time = 0.0
@@ -121,6 +122,7 @@ class RippleWaveVisualizer(VisualizerBase):
             speed=self.speed,
             damping=damping,
             amplitude=self.amplitude,
+            decay_alpha=self.decay_alpha,
             use_gpu=self.use_gpu,
             use_shader=self.use_shader,
             boundary_condition=self.boundary_condition,

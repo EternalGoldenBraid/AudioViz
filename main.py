@@ -22,7 +22,8 @@ from audioviz.utils.guitar_profiles import GuitarProfile
 
 # --- High-level switches ---
 IS_STREAMING = True
-SHOW_SPECTROGRAM = True
+# SHOW_SPECTROGRAM = True
+SHOW_SPECTROGRAM = False
 SHOW_HELIX = False
 SHOW_RIPPLES = True
 
@@ -40,23 +41,37 @@ PLOT_WINDOW_DURATION_S = 5.0
 
 # --- Ripple config ---
 RIPPLE_CONFIG = {
-    "use_synthetic": False,
-    "n_sources": 4,
-    "plane_size_m": (0.30, 0.30),
-    # "resolution": (1440, 2560),
-    "resolution": (64, 64),
-    "frequency": 1.0,
-    "amplitude": 10.0,
+    "use_synthetic": True,
+    # "use_synthetic": False,
+    # "n_sources": 3,
+    "n_sources": 1,
+    # "plane_size_m": (50.0, 50.0),
+    "plane_size_m": (500.0, 500.0),
+    # "resolution": (640, 860),
+    # "resolution": (480, 640),
+    "resolution": (320, 320),
+    "frequency": 2.0,
+    # "amplitude": 0.002,
+    "amplitude": 1.0,
+    "decay_alpha": 0.0,
     "speed": 340.0,
-    "damping": 0.90,
+    # "damping": 0.999,
+    "damping": 0.988,
+    # "damping": 0.799,
     "use_gpu": False,
+    # "use_opengl": True,
     "use_opengl": False,
-    "use_pose_sources": False,
+    "boundary_condition": "neumann",
+    "use_pose_sources": True,
+    # "use_pose_sources": False,
     "pose_model_path": "models/pose_landmarker_lite.task",
     "pose_camera_index": 0,
-    "pose_acceleration_scale": 1e-4,
-    "pose_max_excitation": 0.02,
-    "pose_debug_view": True,
+    # "pose_acceleration_scale": 1e2,
+    # "pose_max_excitation": 0.5,
+    "pose_acceleration_scale": 0.,
+    "pose_max_excitation": 0.0,
+    # "pose_debug_view": True,
+    "pose_debug_view": False,
 }
 
 
