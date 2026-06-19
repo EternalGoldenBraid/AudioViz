@@ -30,7 +30,6 @@ class RippleEngine:
         boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
         pose_graph_stiffness: float = 0.25,
         pose_coupling_strength: float = 0.5,
-        pose_drive_scale: float = 0.1,
         use_external_opengl_context: bool = False,
     ):
         if use_gpu and use_shader:
@@ -48,7 +47,6 @@ class RippleEngine:
         self.boundary_condition = coerce_boundary_condition(boundary_condition)
         self.pose_graph_stiffness = pose_graph_stiffness
         self.pose_coupling_strength = pose_coupling_strength
-        self.pose_drive_scale = pose_drive_scale
         self.use_external_opengl_context = use_external_opengl_context
 
         self.backend = load_cupy() if use_gpu else np
@@ -94,7 +92,6 @@ class RippleEngine:
         self.pose_degree = None
         self.pose_positions = None
         self.pose_valid = None
-        self.pose_drive = None
 
     def _stable_dt(self) -> float:
         return (max(self.dx, self.dy) / self.speed) * 1 / np.sqrt(2)
@@ -274,14 +271,12 @@ class RippleEngine:
         self.pose_values_old = np.zeros(num_nodes, dtype=np.float32)
         self.pose_positions = np.zeros((num_nodes, 2), dtype=np.float32)
         self.pose_valid = np.zeros(num_nodes, dtype=bool)
-        self.pose_drive = np.zeros(num_nodes, dtype=np.float32)
 
     def update_pose_medium(
         self,
         *,
         positions: np.ndarray,
         valid: np.ndarray,
-        drive: np.ndarray,
         adjacency: np.ndarray | None = None,
     ) -> None:
         if adjacency is not None or self.pose_adjacency is None:
@@ -291,21 +286,16 @@ class RippleEngine:
 
         assert self.pose_positions is not None
         assert self.pose_valid is not None
-        assert self.pose_drive is not None
         positions_array = np.asarray(positions, dtype=np.float32)
         valid_array = np.asarray(valid, dtype=bool)
-        drive_array = np.asarray(drive, dtype=np.float32).reshape(-1)
         num_nodes = len(valid_array)
         if positions_array.shape != (num_nodes, 2):
             raise ValueError("positions must have shape (num_nodes, 2)")
-        if drive_array.shape != (num_nodes,):
-            raise ValueError("drive must have shape (num_nodes,)")
         if self.pose_positions.shape != (num_nodes, 2):
             raise ValueError("pose medium size does not match current pose graph")
 
         self.pose_positions[:] = positions_array
         self.pose_valid[:] = valid_array
-        self.pose_drive[:] = drive_array
 
     def step_pose_medium(self, frequencies: np.ndarray | None = None) -> np.ndarray:
         if not self.pose_medium_enabled:
@@ -316,14 +306,12 @@ class RippleEngine:
         assert self.pose_degree is not None
         assert self.pose_positions is not None
         assert self.pose_valid is not None
-        assert self.pose_drive is not None
 
         self.time += self.dt
         grid = self.Z
         pose = self.pose_values
         driven_grid = grid.copy()
         driven_pose = pose.copy()
-        driven_pose += self.pose_drive_scale * self.pose_drive
         if frequencies is not None:
             driven_grid += self._compute_ripple_excitation_field(self.time, frequencies)
 

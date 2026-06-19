@@ -91,14 +91,9 @@ class RippleWaveVisualizer(VisualizerBase):
         self.damping = damping
         self.time = 0.0
         self.control_panel: Optional[RippleControlPanel] = None
-        self.pose_max_excitation = pose_max_excitation
         self.pose_graph_stiffness = pose_graph_stiffness
         self.pose_coupling_strength = pose_coupling_strength
-        self.pose_drive_scale = (
-            pose_acceleration_scale
-            if pose_drive_scale == 0.1 and pose_acceleration_scale != 1.0
-            else pose_drive_scale
-        )
+        _ = pose_acceleration_scale, pose_max_excitation, pose_drive_scale
         self.pose_debug_view = pose_debug_view
         self.pose_debug_frame_count = 0
         self.pose_field_rect = centered_field_rect(
@@ -124,7 +119,6 @@ class RippleWaveVisualizer(VisualizerBase):
             boundary_condition=self.boundary_condition,
             pose_graph_stiffness=self.pose_graph_stiffness,
             pose_coupling_strength=self.pose_coupling_strength,
-            pose_drive_scale=self.pose_drive_scale,
             use_external_opengl_context=self.use_shader,
         )
         self.dt = self.engine.dt
@@ -350,8 +344,6 @@ class RippleWaveVisualizer(VisualizerBase):
             self.engine.pose_values[:] = 0
         if self.engine.pose_values_old is not None:
             self.engine.pose_values_old[:] = 0
-        if self.engine.pose_drive is not None:
-            self.engine.pose_drive[:] = 0
         if self.engine.pose_valid is not None:
             self.engine.pose_valid[:] = False
 
@@ -374,14 +366,12 @@ class RippleWaveVisualizer(VisualizerBase):
         dt = max(now - self.pose_last_update_time, 1e-6)
         self.pose_last_update_time = now
 
-        initialized_pose_state = False
         if self.pose_state is None or self.pose_state.num_nodes != len(pose.coords):
             self.pose_state = PoseGraphState(
                 len(pose.coords),
                 pose.adjacency,
                 velocity_smoothing_alpha=0.8,
             )
-            initialized_pose_state = True
         self.pose_state.update(pose.coords, dt)
 
         positions = self.pose_state.get_positions()
@@ -391,16 +381,10 @@ class RippleWaveVisualizer(VisualizerBase):
             self.resolution,
             field_rect=self.pose_field_rect,
         )
-        pose_drive = np.linalg.norm(self.pose_state.get_velocities(), axis=1).astype(np.float32)
-        if self.pose_max_excitation is not None:
-            pose_drive = np.clip(pose_drive, 0.0, self.pose_max_excitation).astype(np.float32)
-        if initialized_pose_state:
-            pose_drive = np.zeros_like(pose_drive)
 
         self.engine.update_pose_medium(
             positions=mapped_positions,
             valid=valid,
-            drive=pose_drive,
             adjacency=pose.adjacency,
         )
         self._render_pose_medium(freqs)
@@ -419,11 +403,9 @@ class RippleWaveVisualizer(VisualizerBase):
             self.renderer.render(self.engine)
             return
 
-        zero_drive = np.zeros(self.pose_state.num_nodes, dtype=np.float32)
         self.engine.update_pose_medium(
             positions=np.zeros((self.pose_state.num_nodes, 2), dtype=np.float32),
             valid=np.zeros(self.pose_state.num_nodes, dtype=bool),
-            drive=zero_drive,
             adjacency=self.pose_state.adjacency,
         )
         self._render_pose_medium(freqs)
