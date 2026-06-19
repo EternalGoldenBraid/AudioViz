@@ -33,6 +33,7 @@ from audioviz.audio_processing.audio_processor import AudioProcessor
 class RippleWaveVisualizer(VisualizerBase):
     POSE_DEBUG_MASK_COLOR = (255.0, 64.0, 208.0)
     POSE_DEBUG_MASK_ALPHA = 0.35
+    POSE_DEBUG_MASK_OUTLINE_COLOR = (255, 255, 255)
 
     def __init__(self,
                  processor: Optional[AudioProcessor] = None,
@@ -521,18 +522,12 @@ class RippleWaveVisualizer(VisualizerBase):
         rgb_frame: np.ndarray,
         segmentation_mask: np.ndarray,
     ) -> np.ndarray:
-        mask = np.asarray(segmentation_mask, dtype=np.float32)
-        if mask.ndim != 2:
-            raise ValueError("segmentation_mask must have shape (rows, cols)")
-
         height, width = rgb_frame.shape[:2]
-        row_index = np.rint(
-            np.linspace(0, mask.shape[0] - 1, height, dtype=np.float32)
-        ).astype(np.int32)
-        col_index = np.rint(
-            np.linspace(0, mask.shape[1] - 1, width, dtype=np.float32)
-        ).astype(np.int32)
-        mirrored_mask = mask[row_index][:, col_index][:, ::-1] >= np.float32(0.5)
+        mirrored_mask = self._mirrored_pose_debug_mask(
+            segmentation_mask,
+            height=height,
+            width=width,
+        )
         if not np.any(mirrored_mask):
             return rgb_frame
 
@@ -543,7 +538,40 @@ class RippleWaveVisualizer(VisualizerBase):
             overlay[mirrored_mask] * (np.float32(1.0) - alpha)
             + tint * alpha
         )
+        outline = self._pose_debug_mask_outline(mirrored_mask)
+        overlay[outline] = np.asarray(self.POSE_DEBUG_MASK_OUTLINE_COLOR, dtype=np.float32)
         return np.ascontiguousarray(np.rint(overlay).astype(np.uint8))
+
+    @staticmethod
+    def _mirrored_pose_debug_mask(
+        segmentation_mask: np.ndarray,
+        *,
+        height: int,
+        width: int,
+    ) -> np.ndarray:
+        mask = np.asarray(segmentation_mask, dtype=np.float32)
+        if mask.ndim != 2:
+            raise ValueError("segmentation_mask must have shape (rows, cols)")
+
+        row_index = np.rint(
+            np.linspace(0, mask.shape[0] - 1, height, dtype=np.float32)
+        ).astype(np.int32)
+        col_index = np.rint(
+            np.linspace(0, mask.shape[1] - 1, width, dtype=np.float32)
+        ).astype(np.int32)
+        return mask[row_index][:, col_index][:, ::-1] >= np.float32(0.5)
+
+    @staticmethod
+    def _pose_debug_mask_outline(mask: np.ndarray) -> np.ndarray:
+        padded = np.pad(mask, 1, mode="constant", constant_values=False)
+        center = padded[1:-1, 1:-1]
+        neighbors_same = (
+            padded[:-2, 1:-1]
+            & padded[2:, 1:-1]
+            & padded[1:-1, :-2]
+            & padded[1:-1, 2:]
+        )
+        return center & ~neighbors_same
 
     @staticmethod
     def _load_cv2():

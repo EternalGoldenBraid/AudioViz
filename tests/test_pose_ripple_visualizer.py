@@ -293,7 +293,7 @@ def test_pose_debug_view_overlays_segmentation_mask_with_same_mirroring():
     visualizer._update_pose_debug_view(frame, pose)
 
     expected = np.zeros((2, 4, 3), dtype=np.uint8)
-    expected[:, 2:] = [89, 22, 73]
+    expected[:, 2:] = [255, 255, 255]
     np.testing.assert_array_equal(visualizer.pose_debug_image.image, expected)
 
     visualizer.close()

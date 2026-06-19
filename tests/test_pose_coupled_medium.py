@@ -145,3 +145,30 @@ def test_pose_coupled_medium_boundary_absorbs_more_than_hard_cut():
     assert np.sum(np.abs(masked.get_field_numpy()[:, 2:])) < np.sum(
         np.abs(baseline.get_field_numpy()[:, 2:]),
     )
+
+
+def test_pose_coupled_medium_segmentation_disables_overlap_coupling_without_bridge():
+    engine = RippleEngine(
+        resolution=(6, 6),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_gpu=False,
+        pose_graph_stiffness=0.5,
+        pose_coupling_strength=1.0,
+    )
+    engine.set_source_positions(np.array([[2.5, 2.5]], dtype=np.float32))
+    engine.update_pose_medium(
+        positions=np.array([[2.5, 2.5]], dtype=np.float32),
+        valid=np.array([True]),
+        adjacency=adjacency_from_edges(1, []),
+    )
+    body_mask = np.zeros((6, 6), dtype=bool)
+    body_mask[1:5, 1:5] = True
+    engine.set_body_boundary_mask(body_mask)
+
+    engine.step_pose_medium(np.array([[1.0]], dtype=np.float32))
+
+    assert np.count_nonzero(engine.get_field_numpy()) > 0
+    assert engine.get_pose_medium_state()[0] == 0.0

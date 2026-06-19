@@ -332,14 +332,15 @@ class RippleEngine:
         grid_coupling = np.zeros_like(grid)
         pose_coupling = np.zeros_like(pose)
 
-        for node_index in np.flatnonzero(self.pose_valid):
-            x, y = self.pose_positions[node_index]
-            for row, col, weight in self._grid_bilinear_neighbors(x, y):
-                coupling = self.pose_coupling_strength * weight
-                grid_value = driven_grid[row, col]
-                pose_value = driven_pose[node_index]
-                grid_coupling[row, col] += coupling * (pose_value - grid_value)
-                pose_coupling[node_index] += coupling * (grid_value - pose_value)
+        if self.body_boundary_mask is None:
+            for node_index in np.flatnonzero(self.pose_valid):
+                x, y = self.pose_positions[node_index]
+                for row, col, weight in self._grid_bilinear_neighbors(x, y):
+                    coupling = self.pose_coupling_strength * weight
+                    grid_value = driven_grid[row, col]
+                    pose_value = driven_pose[node_index]
+                    grid_coupling[row, col] += coupling * (pose_value - grid_value)
+                    pose_coupling[node_index] += coupling * (grid_value - pose_value)
 
         new_grid = 2 * driven_grid - self.Z_old + self.propagator.c2_dt2 * (grid_laplacian + grid_coupling)
         new_pose = (
