@@ -465,6 +465,84 @@ def test_ripple_visualizer_source_dropdown_toggles_audio_and_synthetic():
     app.processEvents()
 
 
+def test_ripple_visualizer_source_dropdown_can_enable_pose_graph():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture(frame_count=1)
+    extractor = _FakeExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        n_sources=1,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        frequency=110.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+        pose_capture=capture,
+        pose_extractor=extractor,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+    visualizer.toggle_controls()
+
+    panel = visualizer.control_panel
+    assert panel is not None
+    assert visualizer.use_pose_sources is False
+
+    panel.source_toggle_actions["pose"].trigger()
+    app.processEvents()
+    visualizer.update_visualization()
+
+    assert visualizer.use_pose_sources is True
+    assert visualizer.pose_state is not None
+    assert visualizer.renderer.render_count == 1
+
+    visualizer.close_pose_sources()
+    app.processEvents()
+
+
+def test_ripple_visualizer_source_dropdown_can_disable_pose_graph():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture(frame_count=2)
+    extractor = _FakeExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        n_sources=1,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        frequency=110.0,
+        use_synthetic=False,
+        use_pose_sources=True,
+        pose_capture=capture,
+        pose_extractor=extractor,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+    visualizer.update_visualization()
+    visualizer.toggle_controls()
+
+    panel = visualizer.control_panel
+    assert panel is not None
+    assert visualizer.use_pose_sources is True
+    assert visualizer.pose_state is not None
+
+    panel.source_toggle_actions["pose"].trigger()
+    app.processEvents()
+    visualizer.update_visualization()
+
+    assert visualizer.use_pose_sources is False
+    assert visualizer.pose_state is None
+    assert visualizer.renderer.render_count == 2
+
+    visualizer.close_pose_sources()
+    app.processEvents()
+
+
 def test_ripple_visualizer_steps_without_excitation_when_all_sources_disabled():
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 

@@ -67,6 +67,8 @@ class RippleWaveVisualizer(VisualizerBase):
         self.use_audio_source = processor is not None and not use_synthetic
         self.use_gpu = use_gpu
         self.use_shader = use_shader
+        self.pose_model_path = pose_model_path
+        self.pose_camera_index = pose_camera_index
         self.boundary_condition = boundary_condition
         self.use_pose_sources = use_pose_sources
         if self.use_pose_sources and (self.use_gpu or self.use_shader):
@@ -109,12 +111,6 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_extractor = pose_extractor
         self.pose_capture = pose_capture
 
-        if self.use_pose_sources:
-            self._ensure_pose_source(
-                model_path=pose_model_path,
-                camera_index=pose_camera_index,
-            )
-
         self.engine = RippleEngine(
             resolution=self.resolution,
             plane_size_m=self.plane_size_m,
@@ -140,6 +136,9 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_debug_image = None
         self.pose_debug_edges = None
         self.pose_debug_points = None
+
+        if self.use_pose_sources:
+            self._set_pose_sources_enabled(True)
 
         layout = QtWidgets.QVBoxLayout(self)
         if self.pose_debug_view:
@@ -281,6 +280,12 @@ class RippleWaveVisualizer(VisualizerBase):
                 enabled=self.use_audio_source,
                 available=self.processor is not None,
             ),
+            SourceToggle(
+                key="pose",
+                label="Pose Graph",
+                enabled=self.use_pose_sources,
+                available=not (self.use_gpu or self.use_shader),
+            ),
         )
 
     def _update_source_control(
@@ -304,7 +309,25 @@ class RippleWaveVisualizer(VisualizerBase):
                 raise RuntimeError("Audio source toggles require an audio processor.")
             self.use_audio_source = enabled
             return
+        if source_key == "pose":
+            self._set_pose_sources_enabled(enabled)
+            return
         raise KeyError(f"Unknown source toggle: {source_key}")
+
+    def _set_pose_sources_enabled(self, enabled: bool) -> None:
+        if enabled:
+            if self.use_gpu or self.use_shader:
+                raise NotImplementedError(
+                    "Pose-medium coupling currently requires the CPU ripple backend."
+                )
+            self._ensure_pose_source(
+                model_path=self.pose_model_path,
+                camera_index=self.pose_camera_index,
+            )
+            self.pose_last_update_time = time.monotonic()
+        self.use_pose_sources = enabled
+        self.pose_state = None
+        self._clear_pose_medium_state()
 
     def _ensure_pose_source(
         self,
@@ -321,6 +344,16 @@ class RippleWaveVisualizer(VisualizerBase):
                 self.pose_extractor.close()
                 self.pose_extractor = None
                 raise RuntimeError(f"Failed to open pose camera index {camera_index}")
+
+    def _clear_pose_medium_state(self) -> None:
+        if self.engine.pose_values is not None:
+            self.engine.pose_values[:] = 0
+        if self.engine.pose_values_old is not None:
+            self.engine.pose_values_old[:] = 0
+        if self.engine.pose_drive is not None:
+            self.engine.pose_drive[:] = 0
+        if self.engine.pose_valid is not None:
+            self.engine.pose_valid[:] = False
 
     def _update_pose_visualization(self, freqs: np.ndarray | None) -> None:
         if self.pose_capture is None or self.pose_extractor is None:
