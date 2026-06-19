@@ -37,6 +37,7 @@ class MediaPipePoseExtractor(PoseGraphExtractor):
                 static_image_mode=static_image_mode,
                 min_detection_confidence=min_detection_confidence,
                 min_tracking_confidence=min_tracking_confidence,
+                enable_segmentation=True,
             )
         else:
             if model_path is None:
@@ -61,6 +62,11 @@ class MediaPipePoseExtractor(PoseGraphExtractor):
             landmarks = (
                 results.pose_landmarks.landmark if results.pose_landmarks else None
             )
+            segmentation_mask = (
+                np.asarray(results.segmentation_mask, dtype=np.float32)
+                if getattr(results, "segmentation_mask", None) is not None
+                else None
+            )
         else:
             image = self._mp.Image(
                 image_format=self._mp.ImageFormat.SRGB,
@@ -68,12 +74,15 @@ class MediaPipePoseExtractor(PoseGraphExtractor):
             )
             results = self._pose.detect(image)
             landmarks = results.pose_landmarks[0] if results.pose_landmarks else None
+            segmentation_mask = None
 
         if not landmarks:
             self._frame.clear()
+            self._frame.set_segmentation_mask(segmentation_mask)
             return self._frame
 
         self._frame.update_xy(landmarks)
+        self._frame.set_segmentation_mask(segmentation_mask)
         return self._frame
 
     def close(self) -> None:

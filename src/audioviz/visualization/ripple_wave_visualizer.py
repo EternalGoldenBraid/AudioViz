@@ -13,6 +13,7 @@ from audioviz.sources.pose import (
     PoseGraphState,
     centered_field_rect,
     map_pose_coords_to_field_positions,
+    map_pose_segmentation_to_field_mask,
     pose_coords_in_image_support,
     pose_graph_state_to_ripple_sources,
 )
@@ -322,6 +323,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.use_pose_sources = enabled
         self.pose_state = None
         self._clear_pose_medium_state()
+        self.engine.set_body_boundary_mask(None)
 
     def _ensure_pose_source(
         self,
@@ -356,6 +358,15 @@ class RippleWaveVisualizer(VisualizerBase):
             return
 
         pose = self.pose_extractor.extract(frame)
+        self.engine.set_body_boundary_mask(
+            map_pose_segmentation_to_field_mask(
+                pose.segmentation_mask,
+                self.resolution,
+                field_rect=self.pose_field_rect,
+            )
+            if pose.segmentation_mask is not None
+            else None
+        )
         if self.pose_debug_view:
             self._update_pose_debug_view(frame, pose)
         if not pose.coords.size:

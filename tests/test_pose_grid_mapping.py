@@ -5,6 +5,7 @@ from audioviz.engine import RippleEngine
 from audioviz.sources.pose import (
     PoseGraphState,
     centered_field_rect,
+    map_pose_segmentation_to_field_mask,
     normalized_pose_coords_to_source_positions,
     pose_coords_in_image_support,
     pose_graph_state_to_ripple_sources,
@@ -67,6 +68,48 @@ def test_pose_coords_in_image_support_marks_only_in_frame_landmarks():
     )
 
     np.testing.assert_array_equal(mask, [True, True, False, False, False])
+
+
+def test_pose_segmentation_mask_maps_to_field_with_horizontal_mirroring():
+    field_mask = map_pose_segmentation_to_field_mask(
+        np.array(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+            ],
+            dtype=np.float32,
+        ),
+        resolution=(4, 6),
+    )
+
+    expected = np.array(
+        [
+            [False, False, False, True, True, True],
+            [False, False, False, True, True, True],
+            [True, True, True, False, False, False],
+            [True, True, True, False, False, False],
+        ],
+        dtype=bool,
+    )
+    np.testing.assert_array_equal(field_mask, expected)
+
+
+def test_pose_segmentation_mask_can_map_into_centered_field_rect():
+    field_mask = map_pose_segmentation_to_field_mask(
+        np.array([[0.0, 1.0]], dtype=np.float32),
+        resolution=(4, 6),
+        field_rect=(1.0, 1.0, 4.0, 2.0),
+    )
+
+    expected = np.zeros((4, 6), dtype=bool)
+    expected[1:3, 1:5] = np.array(
+        [
+            [True, True, False, False],
+            [True, True, False, False],
+        ],
+        dtype=bool,
+    )
+    np.testing.assert_array_equal(field_mask, expected)
 
 
 def test_normalized_pose_mapping_filters_landmarks_outside_field_support():

@@ -92,6 +92,7 @@ class RippleEngine:
         self.pose_degree = None
         self.pose_positions = None
         self.pose_valid = None
+        self.body_boundary_mask = None
 
     def _stable_dt(self) -> float:
         return (max(self.dx, self.dy) / self.speed) * 1 / np.sqrt(2)
@@ -140,6 +141,15 @@ class RippleEngine:
         if self.pose_values_old is not None:
             self.pose_values_old[:] = 0
         self.time = 0.0
+
+    def set_body_boundary_mask(self, body_boundary_mask: np.ndarray | None) -> None:
+        if body_boundary_mask is None:
+            self.body_boundary_mask = None
+            return
+        mask = np.asarray(body_boundary_mask, dtype=bool)
+        if mask.shape != self.resolution:
+            raise ValueError("body_boundary_mask must match engine resolution")
+        self.body_boundary_mask = mask.copy()
 
     def step(self, frequencies: np.ndarray):
         self.time += self.dt
@@ -315,11 +325,7 @@ class RippleEngine:
         if frequencies is not None:
             driven_grid += self._compute_ripple_excitation_field(self.time, frequencies)
 
-        grid_laplacian = (
-            _laplacian_periodic(np, driven_grid)
-            if self.boundary_condition is BoundaryCondition.CYCLIC
-            else _laplacian_neumann(np, driven_grid)
-        )
+        grid_laplacian = self._grid_laplacian_with_internal_boundaries(driven_grid)
         pose_laplacian = self.pose_adjacency @ driven_pose - self.pose_degree * driven_pose
         pose_laplacian *= self.pose_graph_stiffness
 
@@ -417,3 +423,37 @@ class RippleEngine:
             phases - 2 * xp.pi * r / wavelengths
         )
         return ripple.sum(axis=(0, 1))
+
+    def _grid_laplacian_with_internal_boundaries(self, field: np.ndarray) -> np.ndarray:
+        if self.body_boundary_mask is None:
+            return (
+                _laplacian_periodic(np, field)
+                if self.boundary_condition is BoundaryCondition.CYCLIC
+                else _laplacian_neumann(np, field)
+            )
+
+        mask = self.body_boundary_mask
+        laplacian = np.zeros_like(field)
+
+        vertical_open = mask[:-1, :] == mask[1:, :]
+        vertical_diff = field[1:, :] - field[:-1, :]
+        laplacian[:-1, :] += vertical_open * vertical_diff
+        laplacian[1:, :] -= vertical_open * vertical_diff
+
+        horizontal_open = mask[:, :-1] == mask[:, 1:]
+        horizontal_diff = field[:, 1:] - field[:, :-1]
+        laplacian[:, :-1] += horizontal_open * horizontal_diff
+        laplacian[:, 1:] -= horizontal_open * horizontal_diff
+
+        if self.boundary_condition is BoundaryCondition.CYCLIC:
+            vertical_wrap_open = mask[-1, :] == mask[0, :]
+            vertical_wrap_diff = field[0, :] - field[-1, :]
+            laplacian[-1, :] += vertical_wrap_open * vertical_wrap_diff
+            laplacian[0, :] -= vertical_wrap_open * vertical_wrap_diff
+
+            horizontal_wrap_open = mask[:, -1] == mask[:, 0]
+            horizontal_wrap_diff = field[:, 0] - field[:, -1]
+            laplacian[:, -1] += horizontal_wrap_open * horizontal_wrap_diff
+            laplacian[:, 0] -= horizontal_wrap_open * horizontal_wrap_diff
+
+        return laplacian

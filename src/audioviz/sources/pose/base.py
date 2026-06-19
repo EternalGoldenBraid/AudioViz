@@ -12,6 +12,7 @@ class PoseGraphFrame:
         self,
         coords: np.ndarray | None = None,
         adjacency: np.ndarray | None = None,
+        segmentation_mask: np.ndarray | None = None,
         *,
         max_nodes: int | None = None,
         array_module=np,
@@ -32,14 +33,18 @@ class PoseGraphFrame:
         self._coords = self._xp.zeros((max_nodes, 2), dtype=dtype)
         self._adjacency = self._xp.zeros((max_nodes, max_nodes), dtype=dtype)
         self._num_nodes = 0
+        self._segmentation_mask: np.ndarray | None = None
 
         if coords is not None:
-            self.update(coords, adjacency)
+            self.update(coords, adjacency, segmentation_mask=segmentation_mask)
         elif adjacency is not None:
             adjacency_array = self._xp.asarray(adjacency, dtype=dtype)
             if adjacency_array.shape != (max_nodes, max_nodes):
                 raise ValueError("adjacency shape must match max_nodes")
             self._adjacency[...] = adjacency_array
+            self.set_segmentation_mask(segmentation_mask)
+        elif segmentation_mask is not None:
+            self.set_segmentation_mask(segmentation_mask)
 
     @classmethod
     def empty(
@@ -81,13 +86,20 @@ class PoseGraphFrame:
     def adjacency_buffer(self) -> np.ndarray:
         return self._adjacency
 
+    @property
+    def segmentation_mask(self) -> np.ndarray | None:
+        return self._segmentation_mask
+
     def clear(self) -> None:
         self._num_nodes = 0
+        self._segmentation_mask = None
 
     def update(
         self,
         coords: np.ndarray,
         adjacency: np.ndarray | None = None,
+        *,
+        segmentation_mask: np.ndarray | None = None,
     ) -> None:
         coords_array = self._xp.asarray(coords, dtype=self._dtype)
         if coords_array.ndim != 2 or coords_array.shape[1] != 2:
@@ -104,6 +116,7 @@ class PoseGraphFrame:
             if adjacency_array.shape != (num_nodes, num_nodes):
                 raise ValueError("adjacency shape must match coords")
             self._adjacency[:num_nodes, :num_nodes] = adjacency_array
+        self.set_segmentation_mask(segmentation_mask)
 
     def update_xy(self, points: object) -> None:
         num_nodes = len(points)  # type: ignore[arg-type]
@@ -114,8 +127,20 @@ class PoseGraphFrame:
             self._coords[index, 1] = point.y
         self._num_nodes = num_nodes
 
+    def set_segmentation_mask(self, segmentation_mask: np.ndarray | None) -> None:
+        if segmentation_mask is None:
+            self._segmentation_mask = None
+            return
+        mask_array = self._xp.asarray(segmentation_mask, dtype=self._dtype)
+        if mask_array.ndim != 2:
+            raise ValueError("segmentation_mask must have shape (rows, cols)")
+        self._segmentation_mask = np.array(mask_array, copy=True)
+
     def as_dict(self) -> dict[str, np.ndarray]:
-        return {"coords": self.coords, "adjacency": self.adjacency}
+        result = {"coords": self.coords, "adjacency": self.adjacency}
+        if self._segmentation_mask is not None:
+            result["segmentation_mask"] = self._segmentation_mask
+        return result
 
 
 class PoseGraphExtractor(ABC):

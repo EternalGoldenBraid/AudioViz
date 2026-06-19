@@ -84,6 +84,30 @@ class _OutOfFrameExtractor:
         self.closed = True
 
 
+class _MaskedExtractor:
+    def __init__(self):
+        self.frames = [
+            PoseGraphFrame(
+                coords=np.array([[0.25, 0.25], [0.75, 0.75]], dtype=np.float32),
+                adjacency=adjacency_from_edges(2, [(0, 1)]),
+                segmentation_mask=np.array(
+                    [
+                        [0.0, 1.0],
+                        [0.0, 1.0],
+                    ],
+                    dtype=np.float32,
+                ),
+            ),
+        ]
+        self.closed = False
+
+    def extract(self, _frame):
+        return self.frames.pop(0)
+
+    def close(self):
+        self.closed = True
+
+
 class _FakeRenderer:
     def __init__(self):
         self.render_count = 0
@@ -308,6 +332,43 @@ def test_ripple_visualizer_filters_out_of_frame_pose_landmarks_without_resetting
         [[14.25, 2.25]],
     )
     assert len(visualizer.pose_debug_points.points()) == 1
+
+
+def test_ripple_visualizer_maps_segmentation_mask_into_engine_boundary_mask():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture(frame_count=1)
+    extractor = _MaskedExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(4, 6),
+        plane_size_m=(1.0, 1.0),
+        use_synthetic=False,
+        use_pose_sources=True,
+        pose_capture=capture,
+        pose_extractor=extractor,
+        pose_debug_view=False,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    visualizer.update_visualization()
+
+    expected = np.array(
+        [
+            [True, True, True, False, False, False],
+            [True, True, True, False, False, False],
+            [True, True, True, False, False, False],
+            [True, True, True, False, False, False],
+        ],
+        dtype=bool,
+    )
+    np.testing.assert_array_equal(visualizer.engine.body_boundary_mask, expected)
+
+    visualizer.close_pose_sources()
+    app.processEvents()
 
 
 def test_ripple_visualizer_keeps_synthetic_source_when_pose_coupling_is_enabled():

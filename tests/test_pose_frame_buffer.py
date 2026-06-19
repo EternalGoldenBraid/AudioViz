@@ -11,11 +11,17 @@ from audioviz.sources.pose.mediapipe_pose_source import MediaPipePoseExtractor
 def test_pose_graph_frame_preserves_constructor_behavior():
     coords = np.array([[0.25, 0.5], [0.75, 1.0]], dtype=np.float32)
     adjacency = adjacency_from_edges(2, [(0, 1)])
+    segmentation_mask = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32)
 
-    frame = PoseGraphFrame(coords=coords, adjacency=adjacency)
+    frame = PoseGraphFrame(
+        coords=coords,
+        adjacency=adjacency,
+        segmentation_mask=segmentation_mask,
+    )
 
     np.testing.assert_allclose(frame.coords, coords)
     np.testing.assert_array_equal(frame.adjacency, adjacency)
+    np.testing.assert_array_equal(frame.segmentation_mask, segmentation_mask)
     assert frame.as_dict()["coords"].shape == (2, 2)
 
 
@@ -73,6 +79,8 @@ def test_pose_graph_frame_validates_capacity_and_shapes():
         frame.update(np.zeros((1, 3), dtype=np.float32))
     with pytest.raises(ValueError, match="adjacency shape"):
         frame.update(np.zeros((1, 2), dtype=np.float32), np.zeros((2, 2), dtype=np.float32))
+    with pytest.raises(ValueError, match="segmentation_mask"):
+        frame.set_segmentation_mask(np.zeros((1, 2, 3), dtype=np.float32))
 
 
 def test_mediapipe_extractor_reuses_frame_for_repeated_extracts():
@@ -81,15 +89,21 @@ def test_mediapipe_extractor_reuses_frame_for_repeated_extracts():
     extractor._frame = PoseGraphFrame.empty(33, adjacency=mediapipe_pose_adjacency(33))
     extractor._pose = _FakePose(
         [
-            [
-                SimpleNamespace(x=0.1, y=0.2),
-                SimpleNamespace(x=0.3, y=0.4),
-            ],
-            [
-                SimpleNamespace(x=0.5, y=0.6),
-                SimpleNamespace(x=0.7, y=0.8),
-            ],
-            [],
+            (
+                [
+                    SimpleNamespace(x=0.1, y=0.2),
+                    SimpleNamespace(x=0.3, y=0.4),
+                ],
+                np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
+            ),
+            (
+                [
+                    SimpleNamespace(x=0.5, y=0.6),
+                    SimpleNamespace(x=0.7, y=0.8),
+                ],
+                np.array([[1.0, 1.0], [0.0, 0.0]], dtype=np.float32),
+            ),
+            ([], None),
         ]
     )
 
@@ -98,14 +112,17 @@ def test_mediapipe_extractor_reuses_frame_for_repeated_extracts():
     coords_buffer = first.coords_buffer
     adjacency_buffer = first.adjacency_buffer
     second = extractor.extract(frame)
+    second_segmentation_mask = np.array(second.segmentation_mask, copy=True)
     empty = extractor.extract(frame)
 
     assert first is second is empty
     assert second.coords_buffer is coords_buffer
     assert second.adjacency_buffer is adjacency_buffer
     np.testing.assert_allclose(coords_buffer[:2], [[0.5, 0.6], [0.7, 0.8]])
+    np.testing.assert_array_equal(second_segmentation_mask, [[1.0, 1.0], [0.0, 0.0]])
     assert empty.coords.shape == (0, 2)
     assert empty.adjacency.shape == (0, 0)
+    assert empty.segmentation_mask is None
 
 
 class _FakePose:
@@ -113,8 +130,11 @@ class _FakePose:
         self._landmark_batches = iter(landmark_batches)
 
     def process(self, _frame):
-        landmarks = next(self._landmark_batches)
+        landmarks, segmentation_mask = next(self._landmark_batches)
         pose_landmarks = None
         if landmarks:
             pose_landmarks = SimpleNamespace(landmark=landmarks)
-        return SimpleNamespace(pose_landmarks=pose_landmarks)
+        return SimpleNamespace(
+            pose_landmarks=pose_landmarks,
+            segmentation_mask=segmentation_mask,
+        )

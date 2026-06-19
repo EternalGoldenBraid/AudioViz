@@ -96,6 +96,44 @@ def pose_coords_in_image_support(coords: np.ndarray) -> np.ndarray:
     )
 
 
+def map_pose_segmentation_to_field_mask(
+    segmentation_mask: np.ndarray,
+    resolution: tuple[int, int],
+    *,
+    field_rect: FieldRect | None = None,
+    threshold: float = 0.5,
+) -> np.ndarray:
+    rows, cols = _validate_resolution(resolution)
+    if threshold < 0.0 or threshold > 1.0:
+        raise ValueError("threshold must be between 0 and 1")
+    mask = np.asarray(segmentation_mask, dtype=np.float32)
+    if mask.ndim != 2:
+        raise ValueError("segmentation_mask must have shape (rows, cols)")
+
+    if field_rect is None:
+        field_rect = (0.0, 0.0, float(cols), float(rows))
+    x, y, width, height = _validate_field_rect(field_rect, rows=rows, cols=cols)
+    x0 = int(round(x))
+    y0 = int(round(y))
+    x1 = int(round(x + width))
+    y1 = int(round(y + height))
+    target_width = max(1, x1 - x0)
+    target_height = max(1, y1 - y0)
+
+    row_index = np.rint(
+        np.linspace(0, mask.shape[0] - 1, target_height, dtype=np.float32)
+    ).astype(np.int32)
+    col_index = np.rint(
+        np.linspace(0, mask.shape[1] - 1, target_width, dtype=np.float32)
+    ).astype(np.int32)
+    resized = mask[row_index][:, col_index] >= np.float32(threshold)
+    resized = resized[:, ::-1]
+
+    field_mask = np.zeros((rows, cols), dtype=bool)
+    field_mask[y0:y1, x0:x1] = resized
+    return field_mask
+
+
 def pose_graph_state_to_ripple_sources(
     state,
     resolution: tuple[int, int],

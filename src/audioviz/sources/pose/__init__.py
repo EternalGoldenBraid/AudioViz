@@ -10,6 +10,7 @@ from audioviz.sources.pose.base import PoseGraphExtractor, PoseGraphFrame
 from audioviz.sources.pose.grid_mapping import (
     centered_field_rect,
     map_pose_coords_to_field_positions,
+    map_pose_segmentation_to_field_mask,
     normalized_pose_coords_to_source_positions,
     pose_coords_in_image_support,
     pose_graph_state_to_ripple_sources,
@@ -27,6 +28,7 @@ __all__ = [
     "centered_field_rect",
     "iter_adjacency_edges",
     "map_pose_coords_to_field_positions",
+    "map_pose_segmentation_to_field_mask",
     "mediapipe_pose_adjacency",
     "normalized_pose_coords_to_source_positions",
     "pose_coords_in_image_support",
