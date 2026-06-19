@@ -33,6 +33,8 @@ def test_ripple_control_panel_updates_wave_physics(ripple_panel_deps):
     panel.speed_slider.setValue(20)
     panel.amplitude_slider.setValue(250)
     panel.decay_slider.setValue(42)
+    panel.boundary_transmission_slider.setValue(25)
+    panel.boundary_dissipation_slider.setValue(60)
     app.processEvents()
 
     assert engine.damping == 0.5
@@ -41,6 +43,8 @@ def test_ripple_control_panel_updates_wave_physics(ripple_panel_deps):
     assert engine.propagator.c == 20.0
     assert engine.amplitude == 2.5
     assert engine.decay_alpha == 4.2
+    assert engine.body_boundary_transmission == 0.25
+    assert engine.body_boundary_dissipation == 0.6
 
 
 def test_ripple_control_panel_amplitude_slider_covers_initial_value(ripple_panel_deps):
@@ -192,3 +196,33 @@ def test_ripple_control_panel_updates_auto_color_scaling_toggle(ripple_panel_dep
     app.processEvents()
 
     assert updates[-1] is False
+
+
+def test_ripple_control_panel_emits_boundary_control_updates(ripple_panel_deps):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        use_gpu=False,
+    )
+    updates = []
+    panel = RippleControlPanel(
+        engine,
+        on_boundary_transmission_changed=lambda value: updates.append(
+            ("transmission", value)
+        ),
+        on_boundary_dissipation_changed=lambda value: updates.append(
+            ("dissipation", value)
+        ),
+    )
+    app.processEvents()
+
+    panel.boundary_transmission_slider.setValue(40)
+    panel.boundary_dissipation_slider.setValue(75)
+    app.processEvents()
+
+    assert updates[-2:] == [
+        ("transmission", pytest.approx(0.4)),
+        ("dissipation", pytest.approx(0.75)),
+    ]

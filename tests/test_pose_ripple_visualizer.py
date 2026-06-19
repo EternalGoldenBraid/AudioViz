@@ -845,3 +845,31 @@ def test_ripple_visualizer_control_panel_toggles_renderer_auto_color_scaling():
     visualizer.renderer.widget.close()
     visualizer.close()
     app.processEvents()
+
+
+def test_ripple_visualizer_control_panel_updates_boundary_parameters():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+
+    visualizer.toggle_controls()
+    assert visualizer.control_panel is not None
+
+    visualizer.control_panel.boundary_transmission_slider.setValue(35)
+    visualizer.control_panel.boundary_dissipation_slider.setValue(80)
+    app.processEvents()
+
+    assert np.isclose(visualizer.engine.body_boundary_transmission, 0.35)
+    assert np.isclose(visualizer.engine.body_boundary_dissipation, 0.8)
+
+    visualizer.control_panel.close()
+    visualizer.close()
+    app.processEvents()

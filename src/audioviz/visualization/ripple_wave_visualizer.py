@@ -57,6 +57,8 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_acceleration_scale: float = 1.0,
                  pose_max_excitation: float | None = None,
                  pose_graph_stiffness: float = 0.25,
+                 body_boundary_transmission: float = 0.0,
+                 body_boundary_dissipation: float = 1.0,
                  pose_drive_scale: float = 0.1,
                  pose_field_width_fraction: float = 1.0,
                  pose_field_height_fraction: float = 1.0,
@@ -101,6 +103,8 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_debug_view = pose_debug_view
         self.pose_debug_frame_count = 0
         self.auto_color_levels_enabled = True
+        self.body_boundary_transmission = float(body_boundary_transmission)
+        self.body_boundary_dissipation = float(body_boundary_dissipation)
         self.pose_field_rect = centered_field_rect(
             self.resolution,
             width_fraction=pose_field_width_fraction,
@@ -123,6 +127,8 @@ class RippleWaveVisualizer(VisualizerBase):
             use_shader=self.use_shader,
             boundary_condition=self.boundary_condition,
             pose_graph_stiffness=self.pose_graph_stiffness,
+            body_boundary_transmission=self.body_boundary_transmission,
+            body_boundary_dissipation=self.body_boundary_dissipation,
             use_external_opengl_context=self.use_shader,
         )
         self.dt = self.engine.dt
@@ -174,6 +180,8 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_amplitude_changed=self._update_amplitude,
                 on_decay_alpha_changed=self._update_decay_alpha,
                 on_damping_changed=self._update_damping,
+                on_boundary_transmission_changed=self._update_boundary_transmission,
+                on_boundary_dissipation_changed=self._update_boundary_dissipation,
                 auto_color_levels_enabled=self.auto_color_levels_enabled,
                 on_auto_color_levels_changed=self._update_auto_color_levels,
                 source_toggles=self._build_source_toggles(),
@@ -190,6 +198,14 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _sync_after_reset(self) -> None:
         self.time = self.engine.time
+
+    def _update_boundary_transmission(self, val: float) -> None:
+        self.body_boundary_transmission = float(val)
+        self.engine.set_body_boundary_transmission(val)
+
+    def _update_boundary_dissipation(self, val: float) -> None:
+        self.body_boundary_dissipation = float(val)
+        self.engine.set_body_boundary_dissipation(val)
 
     def _update_auto_color_levels(self, enabled: bool) -> None:
         self.auto_color_levels_enabled = bool(enabled)

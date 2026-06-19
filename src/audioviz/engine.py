@@ -29,6 +29,8 @@ class RippleEngine:
         use_shader: bool = False,
         boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
         pose_graph_stiffness: float = 0.25,
+        body_boundary_transmission: float = 0.0,
+        body_boundary_dissipation: float = 1.0,
         use_external_opengl_context: bool = False,
     ):
         if use_gpu and use_shader:
@@ -45,6 +47,14 @@ class RippleEngine:
         self.use_shader = use_shader
         self.boundary_condition = coerce_boundary_condition(boundary_condition)
         self.pose_graph_stiffness = pose_graph_stiffness
+        self.body_boundary_transmission = self._validate_unit_interval(
+            body_boundary_transmission,
+            name="body_boundary_transmission",
+        )
+        self.body_boundary_dissipation = self._validate_unit_interval(
+            body_boundary_dissipation,
+            name="body_boundary_dissipation",
+        )
         self.use_external_opengl_context = use_external_opengl_context
 
         self.backend = load_cupy() if use_gpu else np
@@ -130,6 +140,18 @@ class RippleEngine:
     def set_damping(self, damping: float) -> None:
         self.damping = damping
         self.propagator.damping = damping
+
+    def set_body_boundary_transmission(self, transmission: float) -> None:
+        self.body_boundary_transmission = self._validate_unit_interval(
+            transmission,
+            name="body_boundary_transmission",
+        )
+
+    def set_body_boundary_dissipation(self, dissipation: float) -> None:
+        self.body_boundary_dissipation = self._validate_unit_interval(
+            dissipation,
+            name="body_boundary_dissipation",
+        )
 
     def reset(self) -> None:
         self.propagator.reset()
@@ -397,22 +419,32 @@ class RippleEngine:
 
         mask = self.body_boundary_mask
         laplacian = np.zeros_like(field)
+        transmission = np.float32(self.body_boundary_transmission)
+        dissipation = np.float32(self.body_boundary_dissipation)
 
         vertical_open = mask[:-1, :] == mask[1:, :]
         vertical_diff = field[1:, :] - field[:-1, :]
         laplacian[:-1, :] += vertical_open * vertical_diff
         laplacian[1:, :] -= vertical_open * vertical_diff
         vertical_closed = ~vertical_open
-        laplacian[:-1, :] -= vertical_closed * field[:-1, :]
-        laplacian[1:, :] -= vertical_closed * field[1:, :]
+        laplacian[:-1, :] += vertical_closed * (
+            transmission * vertical_diff - dissipation * field[:-1, :]
+        )
+        laplacian[1:, :] += vertical_closed * (
+            -transmission * vertical_diff - dissipation * field[1:, :]
+        )
 
         horizontal_open = mask[:, :-1] == mask[:, 1:]
         horizontal_diff = field[:, 1:] - field[:, :-1]
         laplacian[:, :-1] += horizontal_open * horizontal_diff
         laplacian[:, 1:] -= horizontal_open * horizontal_diff
         horizontal_closed = ~horizontal_open
-        laplacian[:, :-1] -= horizontal_closed * field[:, :-1]
-        laplacian[:, 1:] -= horizontal_closed * field[:, 1:]
+        laplacian[:, :-1] += horizontal_closed * (
+            transmission * horizontal_diff - dissipation * field[:, :-1]
+        )
+        laplacian[:, 1:] += horizontal_closed * (
+            -transmission * horizontal_diff - dissipation * field[:, 1:]
+        )
 
         if self.boundary_condition is BoundaryCondition.CYCLIC:
             vertical_wrap_open = mask[-1, :] == mask[0, :]
@@ -420,15 +452,30 @@ class RippleEngine:
             laplacian[-1, :] += vertical_wrap_open * vertical_wrap_diff
             laplacian[0, :] -= vertical_wrap_open * vertical_wrap_diff
             vertical_wrap_closed = ~vertical_wrap_open
-            laplacian[-1, :] -= vertical_wrap_closed * field[-1, :]
-            laplacian[0, :] -= vertical_wrap_closed * field[0, :]
+            laplacian[-1, :] += vertical_wrap_closed * (
+                transmission * vertical_wrap_diff - dissipation * field[-1, :]
+            )
+            laplacian[0, :] += vertical_wrap_closed * (
+                -transmission * vertical_wrap_diff - dissipation * field[0, :]
+            )
 
             horizontal_wrap_open = mask[:, -1] == mask[:, 0]
             horizontal_wrap_diff = field[:, 0] - field[:, -1]
             laplacian[:, -1] += horizontal_wrap_open * horizontal_wrap_diff
             laplacian[:, 0] -= horizontal_wrap_open * horizontal_wrap_diff
             horizontal_wrap_closed = ~horizontal_wrap_open
-            laplacian[:, -1] -= horizontal_wrap_closed * field[:, -1]
-            laplacian[:, 0] -= horizontal_wrap_closed * field[:, 0]
+            laplacian[:, -1] += horizontal_wrap_closed * (
+                transmission * horizontal_wrap_diff - dissipation * field[:, -1]
+            )
+            laplacian[:, 0] += horizontal_wrap_closed * (
+                -transmission * horizontal_wrap_diff - dissipation * field[:, 0]
+            )
 
         return laplacian
+
+    @staticmethod
+    def _validate_unit_interval(value: float, *, name: str) -> float:
+        scalar = float(value)
+        if scalar < 0.0 or scalar > 1.0:
+            raise ValueError(f"{name} must be between 0 and 1")
+        return scalar

@@ -142,6 +142,75 @@ def test_pose_coupled_medium_boundary_absorbs_more_than_hard_cut():
     )
 
 
+def test_pose_coupled_medium_boundary_transmission_allows_crossing_signal():
+    def build_engine() -> RippleEngine:
+        engine = RippleEngine(
+            resolution=(5, 5),
+            plane_size_m=(1.0, 1.0),
+            speed=1.0,
+            damping=1.0,
+            amplitude=1.0,
+            use_gpu=False,
+        )
+        engine.update_pose_medium(
+            positions=np.array([[4.0, 2.0]], dtype=np.float32),
+            valid=np.array([False]),
+            adjacency=adjacency_from_edges(1, []),
+        )
+        body_mask = np.zeros((5, 5), dtype=bool)
+        body_mask[:, 2:] = True
+        engine.set_body_boundary_mask(body_mask)
+        engine.Z[2, 1] = 1.0
+        return engine
+
+    hard_cut = build_engine()
+    transmissive = build_engine()
+    transmissive.set_body_boundary_transmission(0.5)
+    transmissive.set_body_boundary_dissipation(0.0)
+
+    hard_cut.step_pose_medium()
+    transmissive.step_pose_medium()
+
+    assert hard_cut.get_field_numpy()[2, 2] == 0.0
+    assert transmissive.get_field_numpy()[2, 2] > 0.0
+
+
+def test_pose_coupled_medium_boundary_dissipation_reduces_same_transmission_energy():
+    def build_engine() -> RippleEngine:
+        engine = RippleEngine(
+            resolution=(5, 5),
+            plane_size_m=(1.0, 1.0),
+            speed=1.0,
+            damping=1.0,
+            amplitude=1.0,
+            use_gpu=False,
+            body_boundary_transmission=0.5,
+        )
+        engine.update_pose_medium(
+            positions=np.array([[4.0, 2.0]], dtype=np.float32),
+            valid=np.array([False]),
+            adjacency=adjacency_from_edges(1, []),
+        )
+        body_mask = np.zeros((5, 5), dtype=bool)
+        body_mask[:, 2:] = True
+        engine.set_body_boundary_mask(body_mask)
+        engine.Z[2, 1] = 1.0
+        return engine
+
+    low_loss = build_engine()
+    high_loss = build_engine()
+    low_loss.set_body_boundary_dissipation(0.0)
+    high_loss.set_body_boundary_dissipation(1.0)
+
+    for _ in range(3):
+        low_loss.step_pose_medium()
+        high_loss.step_pose_medium()
+
+    assert np.sum(np.abs(high_loss.get_field_numpy())) < np.sum(
+        np.abs(low_loss.get_field_numpy())
+    )
+
+
 def test_pose_coupled_medium_keeps_pose_graph_quiescent_under_segmentation():
     engine = RippleEngine(
         resolution=(6, 6),
