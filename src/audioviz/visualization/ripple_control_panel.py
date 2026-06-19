@@ -161,13 +161,14 @@ class RippleControlPanel(QtWidgets.QWidget):
 
         self.boundary_dissipation_label, self.boundary_dissipation_slider = self._add_slider(
             group_layout,
-            title="Boundary Dissipation",
+            title="Inner Boundary Dissipation",
             tooltip=(
-                "Controls how much energy is lost when a wave crosses the "
-                "segmentation boundary."
+                "Controls how strongly the first masked node ring just inside the "
+                "segmentation boundary is damped."
             ),
             value_label=(
-                f"Boundary Dissipation: {self.engine.body_boundary_dissipation:.2f}"
+                "Inner Boundary Dissipation: "
+                f"{self.engine.body_boundary_dissipation:.2f}"
             ),
             minimum=0,
             maximum=100,
@@ -290,7 +291,9 @@ class RippleControlPanel(QtWidgets.QWidget):
 
     def update_boundary_dissipation(self, val: float) -> None:
         self.engine.set_body_boundary_dissipation(val)
-        self.boundary_dissipation_label.setText(f"Boundary Dissipation: {val:.2f}")
+        self.boundary_dissipation_label.setText(
+            f"Inner Boundary Dissipation: {val:.2f}"
+        )
         if self.on_boundary_dissipation_changed is not None:
             self.on_boundary_dissipation_changed(val)
 
