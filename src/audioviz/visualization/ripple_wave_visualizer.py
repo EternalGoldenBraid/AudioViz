@@ -56,7 +56,6 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_acceleration_scale: float = 1.0,
                  pose_max_excitation: float | None = None,
                  pose_graph_stiffness: float = 0.25,
-                 pose_coupling_strength: float = 0.5,
                  pose_drive_scale: float = 0.1,
                  pose_field_width_fraction: float = 1.0,
                  pose_field_height_fraction: float = 1.0,
@@ -97,7 +96,6 @@ class RippleWaveVisualizer(VisualizerBase):
         self.time = 0.0
         self.control_panel: Optional[RippleControlPanel] = None
         self.pose_graph_stiffness = pose_graph_stiffness
-        self.pose_coupling_strength = pose_coupling_strength
         _ = pose_acceleration_scale, pose_max_excitation, pose_drive_scale
         self.pose_debug_view = pose_debug_view
         self.pose_debug_frame_count = 0
@@ -123,7 +121,6 @@ class RippleWaveVisualizer(VisualizerBase):
             use_shader=self.use_shader,
             boundary_condition=self.boundary_condition,
             pose_graph_stiffness=self.pose_graph_stiffness,
-            pose_coupling_strength=self.pose_coupling_strength,
             use_external_opengl_context=self.use_shader,
         )
         self.dt = self.engine.dt

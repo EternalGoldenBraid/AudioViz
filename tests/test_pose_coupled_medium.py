@@ -4,7 +4,7 @@ from audioviz.engine import RippleEngine
 from audioviz.sources.pose import adjacency_from_edges
 
 
-def test_pose_coupled_medium_updates_grid_and_pose_states():
+def test_pose_coupled_medium_updates_grid_state_without_exciting_pose_graph():
     engine = RippleEngine(
         resolution=(6, 6),
         plane_size_m=(1.0, 1.0),
@@ -13,7 +13,6 @@ def test_pose_coupled_medium_updates_grid_and_pose_states():
         amplitude=1.0,
         use_gpu=False,
         pose_graph_stiffness=0.5,
-        pose_coupling_strength=1.0,
     )
     adjacency = adjacency_from_edges(1, [])
     engine.set_source_positions(np.array([[2.5, 2.5]], dtype=np.float32))
@@ -26,7 +25,7 @@ def test_pose_coupled_medium_updates_grid_and_pose_states():
     engine.step_pose_medium(np.array([[1.0]], dtype=np.float32))
 
     assert np.count_nonzero(engine.get_field_numpy()) > 0
-    assert engine.get_pose_medium_state()[0] > 0.0
+    assert engine.get_pose_medium_state()[0] == 0.0
     np.testing.assert_allclose(engine.get_pose_medium_positions(valid_only=True), [[2.5, 2.5]])
 
 
@@ -38,7 +37,6 @@ def test_pose_coupled_medium_ignores_invalid_pose_nodes():
         damping=1.0,
         amplitude=1.0,
         use_gpu=False,
-        pose_coupling_strength=1.0,
     )
     adjacency = adjacency_from_edges(2, [(0, 1)])
     engine.update_pose_medium(
@@ -61,7 +59,6 @@ def test_pose_coupled_medium_body_boundary_cuts_grid_edges():
             damping=1.0,
             amplitude=1.0,
             use_gpu=False,
-            pose_coupling_strength=0.0,
         )
         engine.update_pose_medium(
             positions=np.array([[4.0, 2.0]], dtype=np.float32),
@@ -92,7 +89,6 @@ def test_pose_coupled_medium_body_boundary_absorbs_only_at_boundary_edges():
         damping=1.0,
         amplitude=1.0,
         use_gpu=False,
-        pose_coupling_strength=0.0,
     )
     engine.update_pose_medium(
         positions=np.array([[4.0, 2.0]], dtype=np.float32),
@@ -121,7 +117,6 @@ def test_pose_coupled_medium_boundary_absorbs_more_than_hard_cut():
             damping=1.0,
             amplitude=1.0,
             use_gpu=False,
-            pose_coupling_strength=0.0,
         )
         engine.update_pose_medium(
             positions=np.array([[4.0, 2.0]], dtype=np.float32),
@@ -147,7 +142,7 @@ def test_pose_coupled_medium_boundary_absorbs_more_than_hard_cut():
     )
 
 
-def test_pose_coupled_medium_segmentation_disables_overlap_coupling_without_bridge():
+def test_pose_coupled_medium_keeps_pose_graph_quiescent_under_segmentation():
     engine = RippleEngine(
         resolution=(6, 6),
         plane_size_m=(1.0, 1.0),
@@ -156,7 +151,6 @@ def test_pose_coupled_medium_segmentation_disables_overlap_coupling_without_brid
         amplitude=1.0,
         use_gpu=False,
         pose_graph_stiffness=0.5,
-        pose_coupling_strength=1.0,
     )
     engine.set_source_positions(np.array([[2.5, 2.5]], dtype=np.float32))
     engine.update_pose_medium(

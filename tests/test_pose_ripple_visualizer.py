@@ -408,7 +408,7 @@ def test_ripple_visualizer_maps_segmentation_mask_into_engine_boundary_mask():
     app.processEvents()
 
 
-def test_ripple_visualizer_keeps_synthetic_source_when_pose_coupling_is_enabled():
+def test_ripple_visualizer_keeps_synthetic_source_when_pose_boundary_is_enabled():
     from PyQt5 import QtWidgets
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 

@@ -29,7 +29,6 @@ class RippleEngine:
         use_shader: bool = False,
         boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
         pose_graph_stiffness: float = 0.25,
-        pose_coupling_strength: float = 0.5,
         use_external_opengl_context: bool = False,
     ):
         if use_gpu and use_shader:
@@ -46,7 +45,6 @@ class RippleEngine:
         self.use_shader = use_shader
         self.boundary_condition = coerce_boundary_condition(boundary_condition)
         self.pose_graph_stiffness = pose_graph_stiffness
-        self.pose_coupling_strength = pose_coupling_strength
         self.use_external_opengl_context = use_external_opengl_context
 
         self.backend = load_cupy() if use_gpu else np
@@ -328,25 +326,11 @@ class RippleEngine:
         grid_laplacian = self._grid_laplacian_with_internal_boundaries(driven_grid)
         pose_laplacian = self.pose_adjacency @ driven_pose - self.pose_degree * driven_pose
         pose_laplacian *= self.pose_graph_stiffness
-
-        grid_coupling = np.zeros_like(grid)
-        pose_coupling = np.zeros_like(pose)
-
-        if self.body_boundary_mask is None:
-            for node_index in np.flatnonzero(self.pose_valid):
-                x, y = self.pose_positions[node_index]
-                for row, col, weight in self._grid_bilinear_neighbors(x, y):
-                    coupling = self.pose_coupling_strength * weight
-                    grid_value = driven_grid[row, col]
-                    pose_value = driven_pose[node_index]
-                    grid_coupling[row, col] += coupling * (pose_value - grid_value)
-                    pose_coupling[node_index] += coupling * (grid_value - pose_value)
-
-        new_grid = 2 * driven_grid - self.Z_old + self.propagator.c2_dt2 * (grid_laplacian + grid_coupling)
+        new_grid = 2 * driven_grid - self.Z_old + self.propagator.c2_dt2 * grid_laplacian
         new_pose = (
             2 * driven_pose
             - self.pose_values_old
-            + self.propagator.c2_dt2 * (pose_laplacian + pose_coupling)
+            + self.propagator.c2_dt2 * pose_laplacian
         )
         new_grid *= self.damping
         new_pose *= self.damping
@@ -368,28 +352,6 @@ class RippleEngine:
         if not valid_only or self.pose_valid is None:
             return self.pose_positions.copy()
         return self.pose_positions[self.pose_valid].copy()
-
-    @staticmethod
-    def _grid_bilinear_neighbors(x: float, y: float) -> list[tuple[int, int, float]]:
-        x0 = int(np.floor(x))
-        y0 = int(np.floor(y))
-        x1 = x0 + 1
-        y1 = y0 + 1
-        wx = float(x - x0)
-        wy = float(y - y0)
-        weights = [
-            (y0, x0, (1.0 - wx) * (1.0 - wy)),
-            (y0, x1, wx * (1.0 - wy)),
-            (y1, x0, (1.0 - wx) * wy),
-            (y1, x1, wx * wy),
-        ]
-        merged: dict[tuple[int, int], float] = {}
-        for row, col, weight in weights:
-            if weight <= 0.0:
-                continue
-            key = (row, col)
-            merged[key] = merged.get(key, 0.0) + weight
-        return [(row, col, weight) for (row, col), weight in merged.items()]
 
     def _compute_ripple_excitation_field(self, t: float, frequencies: np.ndarray) -> np.ndarray:
         xp = self.backend
