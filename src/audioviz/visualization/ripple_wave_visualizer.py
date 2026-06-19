@@ -31,6 +31,9 @@ from audioviz.audio_processing.audio_processor import AudioProcessor
 
 
 class RippleWaveVisualizer(VisualizerBase):
+    POSE_DEBUG_MASK_COLOR = (255.0, 64.0, 208.0)
+    POSE_DEBUG_MASK_ALPHA = 0.35
+
     def __init__(self,
                  processor: Optional[AudioProcessor] = None,
                  n_sources: int = 1,
@@ -480,6 +483,11 @@ class RippleWaveVisualizer(VisualizerBase):
             return
 
         rgb_frame = np.ascontiguousarray(frame[:, ::-1, ::-1])
+        if pose.segmentation_mask is not None:
+            rgb_frame = self._overlay_pose_debug_mask(
+                rgb_frame,
+                pose.segmentation_mask,
+            )
         self.pose_debug_image.setImage(rgb_frame, autoLevels=False)
         self.pose_debug_frame_count += 1
 
@@ -507,6 +515,35 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.pose_debug_edges.setData(edge_xs, edge_ys)
         self.pose_debug_points.setData(coords_px[valid, 0], coords_px[valid, 1])
+
+    def _overlay_pose_debug_mask(
+        self,
+        rgb_frame: np.ndarray,
+        segmentation_mask: np.ndarray,
+    ) -> np.ndarray:
+        mask = np.asarray(segmentation_mask, dtype=np.float32)
+        if mask.ndim != 2:
+            raise ValueError("segmentation_mask must have shape (rows, cols)")
+
+        height, width = rgb_frame.shape[:2]
+        row_index = np.rint(
+            np.linspace(0, mask.shape[0] - 1, height, dtype=np.float32)
+        ).astype(np.int32)
+        col_index = np.rint(
+            np.linspace(0, mask.shape[1] - 1, width, dtype=np.float32)
+        ).astype(np.int32)
+        mirrored_mask = mask[row_index][:, col_index][:, ::-1] >= np.float32(0.5)
+        if not np.any(mirrored_mask):
+            return rgb_frame
+
+        overlay = rgb_frame.astype(np.float32, copy=True)
+        tint = np.asarray(self.POSE_DEBUG_MASK_COLOR, dtype=np.float32)
+        alpha = np.float32(self.POSE_DEBUG_MASK_ALPHA)
+        overlay[mirrored_mask] = (
+            overlay[mirrored_mask] * (np.float32(1.0) - alpha)
+            + tint * alpha
+        )
+        return np.ascontiguousarray(np.rint(overlay).astype(np.uint8))
 
     @staticmethod
     def _load_cv2():

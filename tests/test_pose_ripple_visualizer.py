@@ -263,6 +263,43 @@ def test_pose_debug_view_mirrors_frame_and_graph_horizontally():
     app.processEvents()
 
 
+def test_pose_debug_view_overlays_segmentation_mask_with_same_mirroring():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        use_pose_sources=False,
+        pose_debug_view=True,
+    )
+    visualizer.timer.stop()
+
+    frame = np.zeros((2, 4, 3), dtype=np.uint8)
+    pose = PoseGraphFrame(
+        coords=np.array([[0.5, 0.5]], dtype=np.float32),
+        adjacency=adjacency_from_edges(1, []),
+        segmentation_mask=np.array(
+            [
+                [1.0, 0.0],
+                [1.0, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+    visualizer._update_pose_debug_view(frame, pose)
+
+    expected = np.zeros((2, 4, 3), dtype=np.uint8)
+    expected[:, 2:] = [89, 22, 73]
+    np.testing.assert_array_equal(visualizer.pose_debug_image.image, expected)
+
+    visualizer.close()
+    app.processEvents()
+
+
 def test_pose_debug_view_omits_out_of_frame_landmarks_and_edges():
     from PyQt5 import QtWidgets
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
