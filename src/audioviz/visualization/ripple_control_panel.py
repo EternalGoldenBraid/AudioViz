@@ -8,6 +8,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QAction,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QLabel,
     QMenu,
@@ -48,6 +49,8 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_boundary_dissipation_changed: Optional[Callable[[float], None]] = None,
         auto_color_levels_enabled: bool = True,
         on_auto_color_levels_changed: Optional[Callable[[bool], None]] = None,
+        auto_color_floor: float = 0.1,
+        on_auto_color_floor_changed: Optional[Callable[[float], None]] = None,
         source_toggles: Sequence[SourceToggle] = (),
         source_sections: Sequence[ControlPanelSection] = (),
         on_source_control_changed: Optional[Callable[[str, str, ControlValue], None]] = None,
@@ -64,13 +67,14 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_boundary_transmission_changed = on_boundary_transmission_changed
         self.on_boundary_dissipation_changed = on_boundary_dissipation_changed
         self.on_auto_color_levels_changed = on_auto_color_levels_changed
+        self.on_auto_color_floor_changed = on_auto_color_floor_changed
         self.source_toggles = tuple(source_toggles)
         self.source_sections = tuple(source_sections)
         self.on_source_control_changed = on_source_control_changed
         self.on_source_toggle_changed = on_source_toggle_changed
         self.before_reset = before_reset
         self.on_reset = on_reset
-        self.source_control_widgets: dict[tuple[str, str], QDoubleSpinBox] = {}
+        self.source_control_widgets: dict[tuple[str, str], QtWidgets.QWidget] = {}
         self.source_toggle_actions: dict[str, QAction] = {}
 
         self.setWindowTitle("Ripple Controls")
@@ -187,6 +191,20 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.auto_color_levels_checkbox.toggled.connect(self.update_auto_color_levels)
         group_layout.addWidget(self.auto_color_levels_checkbox)
 
+        self.auto_color_floor_label, self.auto_color_floor_slider = self._add_slider(
+            group_layout,
+            title="Auto Color Floor",
+            tooltip=(
+                "Lower bound for auto color scaling. Tiny field magnitudes below this "
+                "floor will not be contrast-expanded into looking large."
+            ),
+            value_label=f"Auto Color Floor: {auto_color_floor:.2f}",
+            minimum=0,
+            maximum=200,
+            value=int(round(auto_color_floor * 100)),
+            on_change=lambda raw: self.update_auto_color_floor(raw / 100.0),
+        )
+
         content_layout.addWidget(group)
 
         source_controls_group = QtWidgets.QGroupBox("Source Controls")
@@ -204,11 +222,7 @@ class RippleControlPanel(QtWidgets.QWidget):
                 source_group = QtWidgets.QGroupBox(section.title)
                 source_group_layout = QtWidgets.QFormLayout(source_group)
                 for control in section.controls:
-                    if control.kind != "number":
-                        raise NotImplementedError(
-                            f"Unsupported source control kind: {control.kind!r}"
-                        )
-                    widget = self._create_number_control(section.key, control)
+                    widget = self._create_source_control_widget(section.key, control)
                     source_group_layout.addRow(control.label, widget)
                     self.source_control_widgets[(section.key, control.key)] = widget
                 source_controls_layout.addWidget(source_group)
@@ -283,6 +297,11 @@ class RippleControlPanel(QtWidgets.QWidget):
         if self.on_auto_color_levels_changed is not None:
             self.on_auto_color_levels_changed(enabled)
 
+    def update_auto_color_floor(self, val: float) -> None:
+        self.auto_color_floor_label.setText(f"Auto Color Floor: {val:.2f}")
+        if self.on_auto_color_floor_changed is not None:
+            self.on_auto_color_floor_changed(val)
+
     def update_boundary_transmission(self, val: float) -> None:
         self.engine.set_body_boundary_transmission(val)
         self.boundary_transmission_label.setText(f"Boundary Transmission: {val:.2f}")
@@ -296,6 +315,19 @@ class RippleControlPanel(QtWidgets.QWidget):
         )
         if self.on_boundary_dissipation_changed is not None:
             self.on_boundary_dissipation_changed(val)
+
+    def _create_source_control_widget(
+        self,
+        section_key: str,
+        control: SourceControl,
+    ) -> QtWidgets.QWidget:
+        if control.kind == "number":
+            return self._create_number_control(section_key, control)
+        if control.kind == "choice":
+            return self._create_choice_control(section_key, control)
+        if control.kind == "text":
+            return self._create_text_control(control)
+        raise NotImplementedError(f"Unsupported source control kind: {control.kind!r}")
 
     def _create_number_control(
         self,
@@ -317,6 +349,31 @@ class RippleControlPanel(QtWidgets.QWidget):
         )
         return widget
 
+    def _create_choice_control(
+        self,
+        section_key: str,
+        control: SourceControl,
+    ) -> QComboBox:
+        widget = QComboBox()
+        for choice in control.choices:
+            widget.addItem(str(choice), choice)
+        default = str(control.default)
+        index = widget.findText(default)
+        if index >= 0:
+            widget.setCurrentIndex(index)
+        widget.currentTextChanged.connect(
+            lambda value, section_key=section_key, control_key=control.key: self._emit_source_control_change(
+                section_key, control_key, str(value)
+            )
+        )
+        return widget
+
+    @staticmethod
+    def _create_text_control(control: SourceControl) -> QLabel:
+        widget = QLabel(str(control.default))
+        widget.setWordWrap(True)
+        return widget
+
     @staticmethod
     def _decimals_for_step(step: float | None) -> int:
         if step is None or step >= 1.0:
@@ -334,6 +391,32 @@ class RippleControlPanel(QtWidgets.QWidget):
     ) -> None:
         if self.on_source_control_changed is not None:
             self.on_source_control_changed(section_key, control_key, value)
+
+    def set_source_control_value(
+        self,
+        section_key: str,
+        control_key: str,
+        value: ControlValue,
+    ) -> None:
+        widget = self.source_control_widgets.get((section_key, control_key))
+        if widget is None:
+            raise KeyError(f"Unknown source control widget: {section_key}.{control_key}")
+        if isinstance(widget, QLabel):
+            widget.setText(str(value))
+            return
+        if isinstance(widget, QComboBox):
+            index = widget.findText(str(value))
+            if index >= 0 and index != widget.currentIndex():
+                widget.blockSignals(True)
+                widget.setCurrentIndex(index)
+                widget.blockSignals(False)
+            return
+        if isinstance(widget, QDoubleSpinBox):
+            widget.blockSignals(True)
+            widget.setValue(float(value))
+            widget.blockSignals(False)
+            return
+        raise TypeError(f"Unsupported source control widget type: {type(widget)!r}")
 
     def _populate_source_toggle_menu(self) -> None:
         self.source_toggle_menu.clear()

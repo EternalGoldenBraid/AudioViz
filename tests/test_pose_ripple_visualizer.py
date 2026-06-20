@@ -83,6 +83,17 @@ class _FakeProcessor:
     def __init__(self, current_top_k_frequencies, current_signal_level=1.0):
         self.current_top_k_frequencies = current_top_k_frequencies
         self.current_signal_level = current_signal_level
+        self.minimum_frequency_peak_magnitude = 0.1
+        self.minimum_frequency_peak_to_median_ratio = 5.0
+        self.minimum_signal_level = 0.05
+        self.num_top_frequencies = len(current_top_k_frequencies)
+
+    def set_num_top_frequencies(self, count):
+        count = int(count)
+        self.num_top_frequencies = count
+        values = [value for value in self.current_top_k_frequencies if value is not None][:count]
+        values.extend([None] * (count - len(values)))
+        self.current_top_k_frequencies = values
 
 
 def test_ripple_visualizer_pose_medium_overlay_smoke():
@@ -338,5 +349,45 @@ def test_ripple_visualizer_scales_audio_only_excitation_by_signal_level():
     )
 
     assert amplitude == 0.5
+
+    app.processEvents()
+
+
+def test_ripple_visualizer_audio_source_controls_update_processor_and_mapping():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    processor = _FakeProcessor([440.0, 880.0, None], current_signal_level=0.25)
+    visualizer = RippleWaveVisualizer(
+        processor=processor,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=2.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    visualizer._update_source_control("audio-source", "signal_gate_threshold", 0.2)
+    visualizer._update_source_control("audio-source", "drive_amplitude", 1.5)
+    visualizer._update_source_control("audio-source", "minimum_peak_magnitude", 0.3)
+    visualizer._update_source_control("audio-source", "peak_prominence_ratio", 7.0)
+    visualizer._update_source_control("audio-source", "top_k_count", 2)
+    visualizer._update_source_control("audio-source", "mapping_mode", "linear")
+    visualizer._update_source_control("audio-source", "linear_scale", 0.1)
+
+    assert visualizer.audio_signal_gate_threshold == 0.2
+    assert processor.minimum_signal_level == 0.2
+    assert visualizer.audio_drive_amplitude == 1.5
+    assert processor.minimum_frequency_peak_magnitude == 0.3
+    assert processor.minimum_frequency_peak_to_median_ratio == 7.0
+    assert processor.num_top_frequencies == 2
+    assert visualizer.audio_visual_mapping_mode == "linear"
+    assert visualizer.audio_visual_linear_scale == 0.1
 
     app.processEvents()

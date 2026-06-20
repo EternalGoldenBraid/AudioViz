@@ -1,4 +1,5 @@
 from audioviz.source_controls import (
+    AudioSourceControls,
     SourceControl,
     SourceControlProvider,
     SourceControls,
@@ -10,4 +11,5 @@ __all__ = [
     "SourceControlProvider",
     "SourceControls",
     "SyntheticFrequencySource",
+    "AudioSourceControls",
 ]

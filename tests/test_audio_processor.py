@@ -64,3 +64,17 @@ def test_audio_processor_signal_level_tracks_rms_strength():
     loud_level = processor.current_signal_level
 
     assert 0.0 <= quiet_level < loud_level <= 1.0
+
+
+def test_audio_processor_signal_gate_blocks_frequency_detection():
+    processor = _make_processor()
+    processor.minimum_signal_level = 0.9
+
+    sr = int(processor.sr)
+    time = np.arange(2048, dtype=np.float32) / sr
+    signal = (0.02 * np.sin(2.0 * np.pi * 440.0 * time)).reshape(-1, 1).astype(
+        np.float32
+    )
+    processor.process_audio(signal)
+
+    assert processor.current_top_k_frequencies == [None, None, None]

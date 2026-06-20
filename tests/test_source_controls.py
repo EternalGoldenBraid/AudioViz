@@ -2,6 +2,7 @@ import numpy as np
 
 import audioviz
 from audioviz.source_controls import (
+    AudioSourceControls,
     SourceControl,
     SourceControlProvider,
     SyntheticFrequencySource,
@@ -40,3 +41,14 @@ def test_synthetic_frequency_source_exposes_frequency_control_and_matrix():
     assert controls[0].unit == "Hz"
     assert freqs.dtype == np.float32
     np.testing.assert_array_equal(freqs, np.full((3, 1), 440.0, dtype=np.float32))
+
+
+def test_audio_source_controls_expose_gate_mapping_and_readout_controls():
+    controls = AudioSourceControls().get_controls()
+    keys = {control.key: control for control in controls}
+
+    assert keys["signal_level"].kind == "text"
+    assert keys["mapping_mode"].kind == "choice"
+    assert keys["mapping_mode"].choices == ("legacy", "linear")
+    assert keys["signal_gate_threshold"].kind == "number"
+    assert keys["drive_amplitude"].default == 1.0

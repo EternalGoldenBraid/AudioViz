@@ -5,6 +5,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
 from audioviz.source_controls import SyntheticFrequencySource
+from audioviz.source_controls import AudioSourceControls
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources.pose import (
@@ -56,6 +57,12 @@ def normalize_pose_render_mode(mode: str | None) -> str:
     return resolved
 
 
+def _format_frequency_readout(frequencies: tuple[float, ...]) -> str:
+    if not frequencies:
+        return "—"
+    return ", ".join(f"{value:.1f}" for value in frequencies)
+
+
 class RippleWaveVisualizer(VisualizerBase):
     POSE_DEBUG_MASK_COLOR = (255.0, 64.0, 208.0)
     POSE_DEBUG_MASK_ALPHA = 0.35
@@ -85,6 +92,9 @@ class RippleWaveVisualizer(VisualizerBase):
                  audio_visual_mapping_fc: float = 2000.0,
                  audio_visual_linear_scale: float = 0.05,
                  audio_visual_linear_offset: float = 0.0,
+                 audio_signal_gate_threshold: float = 0.05,
+                 audio_drive_amplitude: float = 1.0,
+                 auto_color_floor: float = 0.1,
                  pose_model_path: str | None = None,
                  pose_camera_index: int = 0,
                  pose_acceleration_scale: float = 1.0,
@@ -120,6 +130,9 @@ class RippleWaveVisualizer(VisualizerBase):
         self.audio_visual_mapping_fc = float(audio_visual_mapping_fc)
         self.audio_visual_linear_scale = float(audio_visual_linear_scale)
         self.audio_visual_linear_offset = float(audio_visual_linear_offset)
+        self.audio_signal_gate_threshold = float(audio_signal_gate_threshold)
+        self.audio_drive_amplitude = float(audio_drive_amplitude)
+        self.auto_color_floor = float(auto_color_floor)
         if self.use_pose_sources and (self.use_gpu or self.use_shader):
             raise NotImplementedError(
                 "Pose-medium coupling currently requires the CPU ripple backend."
@@ -161,6 +174,8 @@ class RippleWaveVisualizer(VisualizerBase):
         self._latest_pose_coords = np.zeros((0, 2), dtype=np.float32)
         self._latest_pose_adjacency = np.zeros((0, 0), dtype=np.float32)
         self._latest_pose_segmentation_mask: np.ndarray | None = None
+        if self.processor is not None:
+            self.processor.minimum_signal_level = self.audio_signal_gate_threshold
 
         self.engine = RippleEngine(
             resolution=self.resolution,
@@ -181,7 +196,9 @@ class RippleWaveVisualizer(VisualizerBase):
         self.dt = self.engine.dt
 
         self.renderer = (
-            OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer()
+            OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer(
+                auto_level_floor=self.auto_color_floor
+            )
         )
         self.pose_debug_widget = None
         self.pose_debug_image = None
@@ -232,6 +249,8 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_boundary_dissipation_changed=self._update_boundary_dissipation,
                 auto_color_levels_enabled=self.auto_color_levels_enabled,
                 on_auto_color_levels_changed=self._update_auto_color_levels,
+                auto_color_floor=self.auto_color_floor,
+                on_auto_color_floor_changed=self._update_auto_color_floor,
                 source_toggles=self._build_source_toggles(),
                 source_sections=self._build_source_control_sections(),
                 on_source_control_changed=self._update_source_control,
@@ -266,6 +285,12 @@ class RippleWaveVisualizer(VisualizerBase):
         if callable(set_auto_levels):
             set_auto_levels(self.auto_color_levels_enabled)
 
+    def _update_auto_color_floor(self, val: float) -> None:
+        self.auto_color_floor = float(val)
+        set_auto_level_floor = getattr(self.renderer, "set_auto_level_floor", None)
+        if callable(set_auto_level_floor):
+            set_auto_level_floor(self.auto_color_floor)
+
     def update_visualization(self):
         freqs = self._resolve_ripple_frequencies()
         self.engine.amplitude = self._current_excitation_amplitude(freqs)
@@ -280,6 +305,7 @@ class RippleWaveVisualizer(VisualizerBase):
             self.engine.step_without_excitation()
             self.time = self.engine.time
             self.renderer.render(self.engine)
+            self._sync_audio_control_panel(freqs)
             return
 
         if not self.renderer.prepare_frame():
@@ -288,6 +314,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.engine.step(freqs)
         self.time = self.engine.time
         self.renderer.render(self.engine)
+        self._sync_audio_control_panel(freqs)
 
     def _current_excitation_amplitude(self, freqs: np.ndarray | None) -> float:
         if (
@@ -300,7 +327,7 @@ class RippleWaveVisualizer(VisualizerBase):
         signal_level = float(getattr(self.processor, "current_signal_level", 0.0))
         if not np.isfinite(signal_level):
             return self.base_amplitude
-        return self.base_amplitude * max(signal_level, 0.0)
+        return self.base_amplitude * self.audio_drive_amplitude * max(signal_level, 0.0)
 
     def _resolve_ripple_frequencies(self) -> np.ndarray | None:
         frequency_groups: list[np.ndarray] = []
@@ -315,6 +342,9 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _resolve_audio_frequencies(self) -> np.ndarray | None:
         if not self.use_audio_source or self.processor is None:
+            return None
+        signal_level = float(getattr(self.processor, "current_signal_level", 0.0))
+        if signal_level < self.audio_signal_gate_threshold:
             return None
         top_k = self.processor.current_top_k_frequencies
         top_k = [f for f in top_k if f is not None and np.isfinite(f)]
@@ -351,6 +381,39 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _build_source_control_sections(self) -> tuple[ControlPanelSection, ...]:
         sections: list[ControlPanelSection] = []
+        if self.processor is not None:
+            controls = AudioSourceControls(
+                signal_gate_threshold=self.audio_signal_gate_threshold,
+                drive_amplitude=self.audio_drive_amplitude,
+                minimum_peak_magnitude=float(
+                    getattr(
+                        self.processor,
+                        "minimum_frequency_peak_magnitude",
+                        0.1,
+                    )
+                ),
+                peak_prominence_ratio=float(
+                    getattr(
+                        self.processor,
+                        "minimum_frequency_peak_to_median_ratio",
+                        5.0,
+                    )
+                ),
+                top_k_count=int(getattr(self.processor, "num_top_frequencies", 3)),
+                mapping_mode=self.audio_visual_mapping_mode,
+                mapping_alpha=self.audio_visual_mapping_alpha,
+                mapping_f0=self.audio_visual_mapping_f0,
+                mapping_fc=self.audio_visual_mapping_fc,
+                linear_scale=self.audio_visual_linear_scale,
+                linear_offset=self.audio_visual_linear_offset,
+            ).get_controls()
+            sections.append(
+                ControlPanelSection(
+                    key="audio-source",
+                    title="Audio Source",
+                    controls=controls,
+                )
+            )
         for index, frequency_hz in enumerate(self.synthetic_frequencies[:, 0]):
             sections.append(
                 ControlPanelSection(
@@ -392,11 +455,100 @@ class RippleWaveVisualizer(VisualizerBase):
         control_key: str,
         value: float | bool | int | str,
     ) -> None:
+        if section_key == "audio-source":
+            self._update_audio_source_control(control_key, value)
+            return
         if control_key != "frequency_hz" or not section_key.startswith("synthetic-source-"):
             raise KeyError(f"Unknown source control: {section_key}.{control_key}")
         index = int(section_key.removeprefix("synthetic-source-"))
         self.synthetic_frequencies[index, 0] = float(value)
         self.frequency = float(self.synthetic_frequencies[0, 0])
+
+    def _update_audio_source_control(
+        self,
+        control_key: str,
+        value: float | bool | int | str,
+    ) -> None:
+        if self.processor is None:
+            raise RuntimeError("Audio source controls require an audio processor.")
+        if control_key == "signal_gate_threshold":
+            self.audio_signal_gate_threshold = float(value)
+            self.processor.minimum_signal_level = float(value)
+            return
+        if control_key == "drive_amplitude":
+            self.audio_drive_amplitude = float(value)
+            return
+        if control_key == "minimum_peak_magnitude":
+            self.processor.minimum_frequency_peak_magnitude = float(value)
+            return
+        if control_key == "peak_prominence_ratio":
+            self.processor.minimum_frequency_peak_to_median_ratio = float(value)
+            return
+        if control_key == "top_k_count":
+            self.processor.set_num_top_frequencies(int(round(float(value))))
+            return
+        if control_key == "mapping_mode":
+            self.audio_visual_mapping_mode = normalize_audio_visual_mapping_mode(str(value))
+            return
+        if control_key == "mapping_alpha":
+            self.audio_visual_mapping_alpha = float(value)
+            return
+        if control_key == "mapping_f0":
+            self.audio_visual_mapping_f0 = float(value)
+            return
+        if control_key == "mapping_fc":
+            self.audio_visual_mapping_fc = float(value)
+            return
+        if control_key == "linear_scale":
+            self.audio_visual_linear_scale = float(value)
+            return
+        if control_key == "linear_offset":
+            self.audio_visual_linear_offset = float(value)
+            return
+        if control_key in {
+            "signal_level",
+            "gate_open",
+            "detected_frequencies",
+            "mapped_frequencies",
+        }:
+            return
+        raise KeyError(f"Unknown audio source control: {control_key}")
+
+    def _sync_audio_control_panel(self, freqs: np.ndarray | None) -> None:
+        if self.control_panel is None or self.processor is None:
+            return
+        gate_open = (
+            self.use_audio_source
+            and float(getattr(self.processor, "current_signal_level", 0.0))
+            >= self.audio_signal_gate_threshold
+            and freqs is not None
+        )
+        detected = tuple(
+            float(freq)
+            for freq in getattr(self.processor, "current_top_k_frequencies", [])
+            if freq is not None and np.isfinite(freq)
+        )
+        mapped = () if freqs is None else tuple(float(freq) for freq in freqs[0])
+        self.control_panel.set_source_control_value(
+            "audio-source",
+            "signal_level",
+            f"{float(getattr(self.processor, 'current_signal_level', 0.0)):.2f}",
+        )
+        self.control_panel.set_source_control_value(
+            "audio-source",
+            "gate_open",
+            "open" if gate_open else "closed",
+        )
+        self.control_panel.set_source_control_value(
+            "audio-source",
+            "detected_frequencies",
+            _format_frequency_readout(detected),
+        )
+        self.control_panel.set_source_control_value(
+            "audio-source",
+            "mapped_frequencies",
+            _format_frequency_readout(mapped),
+        )
 
     def _update_source_toggle(self, source_key: str, enabled: bool) -> None:
         if source_key == "synthetic":

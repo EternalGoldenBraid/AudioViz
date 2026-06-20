@@ -82,12 +82,16 @@ class NumpyImageRenderer:
         colormap_name: str = "inferno",
         auto_percentile_levels: bool = True,
         auto_level_percentile: float = 98.0,
+        auto_level_floor: float = 0.1,
     ):
         if auto_level_percentile <= 0.0 or auto_level_percentile > 100.0:
             raise ValueError("auto_level_percentile must be in (0, 100]")
+        if auto_level_floor < 0.0:
+            raise ValueError("auto_level_floor must be non-negative")
         self._auto_levels_pending = True
         self._auto_percentile_levels = bool(auto_percentile_levels)
         self._auto_level_percentile = float(auto_level_percentile)
+        self._auto_level_floor = float(auto_level_floor)
         self.image_item = pg.ImageItem(axisOrder="row-major")
         colormap = cm.get_cmap(colormap_name)
         lookup_table = (colormap(np.linspace(0, 1, 256))[:, :3] * 255).astype(
@@ -121,6 +125,14 @@ class NumpyImageRenderer:
         if enabled:
             self._auto_levels_pending = True
 
+    def set_auto_level_floor(self, floor: float) -> None:
+        floor = float(floor)
+        if floor < 0.0:
+            raise ValueError("auto_level_floor must be non-negative")
+        self._auto_level_floor = floor
+        if self._auto_percentile_levels:
+            self._auto_levels_pending = True
+
     def reset_view(self) -> None:
         self._auto_levels_pending = True
         self.histogram.setLevels(0.0, 0.0)
@@ -131,6 +143,7 @@ class NumpyImageRenderer:
             limit = _percentile_abs_limit(
                 field,
                 percentile=self._auto_level_percentile,
+                floor=self._auto_level_floor,
             )
             if limit is not None:
                 self.histogram.setLevels(-limit, limit)
@@ -273,6 +286,7 @@ def _percentile_abs_limit(
     field: np.ndarray,
     *,
     percentile: float,
+    floor: float = 0.0,
 ) -> float | None:
     values = np.abs(np.asarray(field, dtype=np.float32))
     finite = values[np.isfinite(values)]
@@ -280,4 +294,4 @@ def _percentile_abs_limit(
     if active.size == 0:
         return None
     limit = float(np.percentile(active, percentile))
-    return max(limit, 1e-9)
+    return max(limit, float(floor), 1e-9)

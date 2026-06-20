@@ -31,6 +31,7 @@ class AudioProcessor:
     MINIMUM_FREQUENCY_PEAK_TO_MEDIAN_RATIO = 5.0
     SIGNAL_LEVEL_DBFS_FLOOR = -60.0
     SIGNAL_LEVEL_DBFS_CEILING = -20.0
+    MINIMUM_SIGNAL_LEVEL = 0.05
 
     def __init__(self,
                  sr: int,
@@ -87,6 +88,13 @@ class AudioProcessor:
         self.snapshot_queue: deque[Tuple[np.ndarray, List[np.ndarray]]] = deque(maxlen=5)
         self.num_top_frequencies: int = 3
         self.current_top_k_frequencies: list[float] = [None] * self.num_top_frequencies
+        self.minimum_frequency_peak_magnitude = float(
+            self.MINIMUM_FREQUENCY_PEAK_MAGNITUDE
+        )
+        self.minimum_frequency_peak_to_median_ratio = float(
+            self.MINIMUM_FREQUENCY_PEAK_TO_MEDIAN_RATIO
+        )
+        self.minimum_signal_level = float(self.MINIMUM_SIGNAL_LEVEL)
         self.freq_bins = np.fft.rfftfreq(self.analysis_fft_size, d=1/self.sr)[
             : self.n_spec_bins
         ]
@@ -164,7 +172,7 @@ class AudioProcessor:
         # Average over last `window_frames` frames
         averaged_frame = np.mean(self.spectrogram_buffers[channel_idx][:, -window_frames:], axis=1)
         peak_magnitude = float(np.max(averaged_frame))
-        if peak_magnitude < self.MINIMUM_FREQUENCY_PEAK_MAGNITUDE:
+        if peak_magnitude < self.minimum_frequency_peak_magnitude:
             return None
 
         positive_bins = averaged_frame[averaged_frame > 0.0]
@@ -177,12 +185,12 @@ class AudioProcessor:
             return None
 
         prominence_ratio = peak_magnitude / median_magnitude
-        if prominence_ratio < self.MINIMUM_FREQUENCY_PEAK_TO_MEDIAN_RATIO:
+        if prominence_ratio < self.minimum_frequency_peak_to_median_ratio:
             return None
 
         dominant_mask = (
             averaged_frame
-            >= median_magnitude * self.MINIMUM_FREQUENCY_PEAK_TO_MEDIAN_RATIO
+            >= median_magnitude * self.minimum_frequency_peak_to_median_ratio
         )
         dominant_idxs = np.flatnonzero(dominant_mask)
         if dominant_idxs.size == 0:
@@ -222,6 +230,15 @@ class AudioProcessor:
 
         self.update_spectrogram_buffer(indata)
 
+        if self.current_signal_level < self.minimum_signal_level:
+            self.current_top_k_frequencies[:] = [None] * self.num_top_frequencies
+            self.snapshot_queue.append((
+                self.audio_buffer.copy(),
+                [spec.copy() for spec in self.spectrogram_buffers]
+            ))
+            self.frame_counter += 1
+            return
+
         dominant = self.get_smoothed_top_k_peak_frequency(
             window_frames=10, k=self.num_top_frequencies, channel_idx=0
         )
@@ -258,6 +275,17 @@ class AudioProcessor:
             / (cls.SIGNAL_LEVEL_DBFS_CEILING - cls.SIGNAL_LEVEL_DBFS_FLOOR)
         )
         return float(np.clip(normalized, 0.0, 1.0))
+
+    def set_num_top_frequencies(self, count: int) -> None:
+        resolved = max(1, int(count))
+        if resolved == self.num_top_frequencies:
+            return
+        existing = [
+            value for value in self.current_top_k_frequencies if value is not None
+        ][:resolved]
+        existing.extend([None] * (resolved - len(existing)))
+        self.num_top_frequencies = resolved
+        self.current_top_k_frequencies = existing
 
     def process_pending_audio(self):
         while self.raw_input_queue:
