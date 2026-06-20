@@ -80,8 +80,9 @@ class _StandingRendererWithCallableLut(_FakeRenderer):
 
 
 class _FakeProcessor:
-    def __init__(self, current_top_k_frequencies):
+    def __init__(self, current_top_k_frequencies, current_signal_level=1.0):
         self.current_top_k_frequencies = current_top_k_frequencies
+        self.current_signal_level = current_signal_level
 
 
 def test_ripple_visualizer_pose_medium_overlay_smoke():
@@ -271,5 +272,34 @@ def test_ripple_visualizer_maps_audio_frequencies_before_ripple_drive():
     ).astype(np.float32)
     assert resolved is not None
     np.testing.assert_allclose(resolved, expected.reshape(1, -1))
+
+    app.processEvents()
+
+
+def test_ripple_visualizer_scales_audio_only_excitation_by_signal_level():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    processor = _FakeProcessor([440.0], current_signal_level=0.25)
+    visualizer = RippleWaveVisualizer(
+        processor=processor,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=2.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    amplitude = visualizer._current_excitation_amplitude(
+        np.asarray([[1.0]], dtype=np.float32)
+    )
+
+    assert amplitude == 0.5
 
     app.processEvents()

@@ -116,6 +116,7 @@ class RippleWaveVisualizer(VisualizerBase):
             n_sources=self.n_sources,
         )
         self.frequency = float(self.synthetic_frequencies[0, 0])
+        self.base_amplitude = float(amplitude)
         self.apply_gaussian_smoothing = apply_gaussian_smoothing
         self.amplitude = amplitude
         self.decay_alpha = decay_alpha
@@ -193,6 +194,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.dt = self.engine.dt
 
     def _update_amplitude(self, val: float):
+        self.base_amplitude = val
         self.amplitude = val
 
     def _update_decay_alpha(self, val: float):
@@ -249,6 +251,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def update_visualization(self):
         freqs = self._resolve_ripple_frequencies()
+        self.engine.amplitude = self._current_excitation_amplitude(freqs)
 
         if self.use_pose_sources:
             self._update_pose_visualization(freqs)
@@ -268,6 +271,19 @@ class RippleWaveVisualizer(VisualizerBase):
         self.engine.step(freqs)
         self.time = self.engine.time
         self.renderer.render(self.engine)
+
+    def _current_excitation_amplitude(self, freqs: np.ndarray | None) -> float:
+        if (
+            freqs is None
+            or self.processor is None
+            or not self.use_audio_source
+            or self.use_synthetic
+        ):
+            return self.base_amplitude
+        signal_level = float(getattr(self.processor, "current_signal_level", 0.0))
+        if not np.isfinite(signal_level):
+            return self.base_amplitude
+        return self.base_amplitude * max(signal_level, 0.0)
 
     def _resolve_ripple_frequencies(self) -> np.ndarray | None:
         frequency_groups: list[np.ndarray] = []

@@ -29,6 +29,8 @@ def get_mel_spectrogram(segment: np.ndarray,
 class AudioProcessor:
     MINIMUM_FREQUENCY_PEAK_MAGNITUDE = 0.1
     MINIMUM_FREQUENCY_PEAK_TO_MEDIAN_RATIO = 5.0
+    SIGNAL_LEVEL_DBFS_FLOOR = -60.0
+    SIGNAL_LEVEL_DBFS_CEILING = -20.0
 
     def __init__(self,
                  sr: int,
@@ -111,6 +113,7 @@ class AudioProcessor:
         self.current_time: float = 0.0  # in seconds
         self.frame_counter: int = 0
         self.input_overflow_count: int = 0
+        self.current_signal_level: float = 0.0
 
         if output_device_index != -1:
             logger.info(f"Using output device index: {output_device_index}")
@@ -215,6 +218,7 @@ class AudioProcessor:
 
         self.audio_buffer = np.roll(self.audio_buffer, -frames, axis=0)
         self.audio_buffer[-frames:] = indata
+        self.current_signal_level = self._compute_signal_level(indata)
 
         self.update_spectrogram_buffer(indata)
 
@@ -239,6 +243,21 @@ class AudioProcessor:
             print(f"Top {self.num_top_frequencies} frequencies: {self.current_top_k_frequencies}")
 
         self.frame_counter += 1
+
+    @classmethod
+    def _compute_signal_level(cls, indata: np.ndarray) -> float:
+        samples = np.asarray(indata, dtype=np.float32)
+        if samples.size == 0:
+            return 0.0
+        rms = float(np.sqrt(np.mean(np.square(samples), dtype=np.float32)))
+        if not np.isfinite(rms) or rms <= 0.0:
+            return 0.0
+        dbfs = 20.0 * np.log10(rms + 1e-12)
+        normalized = (
+            (dbfs - cls.SIGNAL_LEVEL_DBFS_FLOOR)
+            / (cls.SIGNAL_LEVEL_DBFS_CEILING - cls.SIGNAL_LEVEL_DBFS_FLOOR)
+        )
+        return float(np.clip(normalized, 0.0, 1.0))
 
     def process_pending_audio(self):
         while self.raw_input_queue:

@@ -50,3 +50,17 @@ def test_audio_processor_detects_dominant_tone():
 
     assert detected
     assert min(abs(freq - tone_hz) for freq in detected) < 80.0
+
+
+def test_audio_processor_signal_level_tracks_rms_strength():
+    processor = _make_processor()
+
+    quiet = np.full((2048, 1), 0.001, dtype=np.float32)
+    loud = np.full((2048, 1), 0.05, dtype=np.float32)
+
+    processor.process_audio(quiet)
+    quiet_level = processor.current_signal_level
+    processor.process_audio(loud)
+    loud_level = processor.current_signal_level
+
+    assert 0.0 <= quiet_level < loud_level <= 1.0
