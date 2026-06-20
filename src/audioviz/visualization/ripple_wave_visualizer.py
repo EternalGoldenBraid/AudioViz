@@ -563,13 +563,26 @@ class RippleWaveVisualizer(VisualizerBase):
         limit = np.max(np.abs(values))
         limit = max(float(limit), 1e-6)
         normalized = np.clip((values / limit + 1.0) * 0.5, 0.0, 1.0)
-        image_item = getattr(self.renderer, "image_item", None)
-        lookup = None if image_item is None else getattr(image_item, "lut", None)
+        lookup = self._renderer_lookup_table()
         if lookup is None:
             gray = np.rint(normalized * 255.0).astype(np.uint8)
             return np.repeat(gray[..., None], 3, axis=2)
         index = np.rint(normalized * (len(lookup) - 1)).astype(np.int32)
         return np.ascontiguousarray(lookup[index])
+
+    def _renderer_lookup_table(self) -> np.ndarray | None:
+        image_item = getattr(self.renderer, "image_item", None)
+        if image_item is None:
+            return None
+        lookup = getattr(image_item, "lut", None)
+        if callable(lookup):
+            lookup = lookup()
+        if lookup is None:
+            return None
+        lookup = np.asarray(lookup, dtype=np.uint8)
+        if lookup.ndim != 2 or lookup.shape[0] == 0:
+            return None
+        return lookup
 
     def _project_floor_to_perspective(self, floor_rgb: np.ndarray) -> np.ndarray:
         rows, cols = floor_rgb.shape[:2]

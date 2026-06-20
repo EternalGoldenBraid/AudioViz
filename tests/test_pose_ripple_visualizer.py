@@ -60,6 +60,24 @@ class _StandingRenderer(_FakeRenderer):
         self.rgb_frame = np.asarray(rgb_frame)
 
 
+class _StandingRendererWithCallableLut(_FakeRenderer):
+    def __init__(self):
+        super().__init__()
+        self.rgb_frame = None
+        self._lut = np.stack(
+            [np.arange(256), np.arange(256), np.arange(256)],
+            axis=1,
+        ).astype(np.uint8)
+        self.image_item = type(
+            "DummyImageItem",
+            (),
+            {"lut": lambda item: item._lut, "_lut": self._lut},
+        )()
+
+    def render_rgb_frame(self, rgb_frame):
+        self.rgb_frame = np.asarray(rgb_frame)
+
+
 def test_ripple_visualizer_pose_medium_overlay_smoke():
     from PyQt5 import QtWidgets
 
@@ -131,6 +149,44 @@ def test_ripple_visualizer_pose_medium_standing_body_smoke():
     )
     visualizer.timer.stop()
     visualizer.renderer = _StandingRenderer()
+
+    visualizer.update_visualization()
+
+    assert visualizer.renderer.render_count == 1
+    assert visualizer.renderer.rgb_frame is not None
+    assert visualizer.renderer.rgb_frame.shape == (24, 32, 3)
+    assert np.count_nonzero(visualizer.renderer.rgb_frame) > 0
+
+    visualizer.close_pose_sources()
+    assert capture.released
+    assert extractor.closed
+    app.processEvents()
+
+
+def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture()
+    extractor = _FakeExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=True,
+        pose_capture=capture,
+        pose_extractor=extractor,
+        pose_debug_view=False,
+        pose_render_mode="standing-body",
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _StandingRendererWithCallableLut()
 
     visualizer.update_visualization()
 
