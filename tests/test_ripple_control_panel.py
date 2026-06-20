@@ -57,8 +57,11 @@ def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_d
     )
     source_events = []
     auto_floor_values = []
+    auto_threshold_values = []
     panel = RippleControlPanel(
         engine,
+        auto_color_activation_threshold=0.1,
+        on_auto_color_activation_threshold_changed=auto_threshold_values.append,
         auto_color_floor=0.1,
         on_auto_color_floor_changed=auto_floor_values.append,
         source_sections=(
@@ -90,9 +93,11 @@ def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_d
     combo = panel.source_control_widgets[("audio-source", "mapping_mode")]
     combo.setCurrentText("linear")
     panel.set_source_control_value("audio-source", "signal_level", "0.42")
+    panel.auto_color_threshold_slider.setValue(30)
     panel.auto_color_floor_slider.setValue(25)
     app.processEvents()
 
     assert source_events[-1] == ("audio-source", "mapping_mode", "linear")
     assert panel.source_control_widgets[("audio-source", "signal_level")].text() == "0.42"
+    assert auto_threshold_values[-1] == 0.3
     assert auto_floor_values[-1] == 0.25

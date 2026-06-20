@@ -83,15 +83,19 @@ class NumpyImageRenderer:
         auto_percentile_levels: bool = True,
         auto_level_percentile: float = 98.0,
         auto_level_floor: float = 0.1,
+        auto_level_activation_threshold: float = 0.1,
     ):
         if auto_level_percentile <= 0.0 or auto_level_percentile > 100.0:
             raise ValueError("auto_level_percentile must be in (0, 100]")
         if auto_level_floor < 0.0:
             raise ValueError("auto_level_floor must be non-negative")
+        if auto_level_activation_threshold < 0.0:
+            raise ValueError("auto_level_activation_threshold must be non-negative")
         self._auto_levels_pending = True
         self._auto_percentile_levels = bool(auto_percentile_levels)
         self._auto_level_percentile = float(auto_level_percentile)
         self._auto_level_floor = float(auto_level_floor)
+        self._auto_level_activation_threshold = float(auto_level_activation_threshold)
         self.image_item = pg.ImageItem(axisOrder="row-major")
         colormap = cm.get_cmap(colormap_name)
         lookup_table = (colormap(np.linspace(0, 1, 256))[:, :3] * 255).astype(
@@ -133,6 +137,14 @@ class NumpyImageRenderer:
         if self._auto_percentile_levels:
             self._auto_levels_pending = True
 
+    def set_auto_level_activation_threshold(self, threshold: float) -> None:
+        threshold = float(threshold)
+        if threshold < 0.0:
+            raise ValueError("auto_level_activation_threshold must be non-negative")
+        self._auto_level_activation_threshold = threshold
+        if self._auto_percentile_levels:
+            self._auto_levels_pending = True
+
     def reset_view(self) -> None:
         self._auto_levels_pending = True
         self.histogram.setLevels(0.0, 0.0)
@@ -140,9 +152,13 @@ class NumpyImageRenderer:
     def render(self, field_source: RippleFieldSource) -> None:
         field = field_source.get_field_numpy()
         if self._auto_percentile_levels:
-            limit = _percentile_abs_limit(
+            active_limit = _percentile_abs_limit(
                 field,
                 percentile=self._auto_level_percentile,
+            )
+            limit = _resolve_auto_level_limit(
+                active_limit,
+                activation_threshold=self._auto_level_activation_threshold,
                 floor=self._auto_level_floor,
             )
             if limit is not None:
@@ -286,7 +302,6 @@ def _percentile_abs_limit(
     field: np.ndarray,
     *,
     percentile: float,
-    floor: float = 0.0,
 ) -> float | None:
     values = np.abs(np.asarray(field, dtype=np.float32))
     finite = values[np.isfinite(values)]
@@ -294,4 +309,15 @@ def _percentile_abs_limit(
     if active.size == 0:
         return None
     limit = float(np.percentile(active, percentile))
-    return max(limit, float(floor), 1e-9)
+    return max(limit, 1e-9)
+
+
+def _resolve_auto_level_limit(
+    active_limit: float | None,
+    *,
+    activation_threshold: float,
+    floor: float,
+) -> float | None:
+    if active_limit is None or active_limit < activation_threshold:
+        return max(float(floor), 1e-9)
+    return max(float(active_limit), 1e-9)

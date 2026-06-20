@@ -94,6 +94,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  audio_visual_linear_offset: float = 0.0,
                  audio_signal_gate_threshold: float = 0.05,
                  audio_drive_amplitude: float = 1.0,
+                 auto_color_activation_threshold: float = 0.1,
                  auto_color_floor: float = 0.1,
                  pose_model_path: str | None = None,
                  pose_camera_index: int = 0,
@@ -132,6 +133,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.audio_visual_linear_offset = float(audio_visual_linear_offset)
         self.audio_signal_gate_threshold = float(audio_signal_gate_threshold)
         self.audio_drive_amplitude = float(audio_drive_amplitude)
+        self.auto_color_activation_threshold = float(auto_color_activation_threshold)
         self.auto_color_floor = float(auto_color_floor)
         if self.use_pose_sources and (self.use_gpu or self.use_shader):
             raise NotImplementedError(
@@ -197,7 +199,8 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.renderer = (
             OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer(
-                auto_level_floor=self.auto_color_floor
+                auto_level_floor=self.auto_color_floor,
+                auto_level_activation_threshold=self.auto_color_activation_threshold,
             )
         )
         self.pose_debug_widget = None
@@ -249,6 +252,8 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_boundary_dissipation_changed=self._update_boundary_dissipation,
                 auto_color_levels_enabled=self.auto_color_levels_enabled,
                 on_auto_color_levels_changed=self._update_auto_color_levels,
+                auto_color_activation_threshold=self.auto_color_activation_threshold,
+                on_auto_color_activation_threshold_changed=self._update_auto_color_activation_threshold,
                 auto_color_floor=self.auto_color_floor,
                 on_auto_color_floor_changed=self._update_auto_color_floor,
                 source_toggles=self._build_source_toggles(),
@@ -284,6 +289,12 @@ class RippleWaveVisualizer(VisualizerBase):
         set_auto_levels = getattr(self.renderer, "set_auto_percentile_levels", None)
         if callable(set_auto_levels):
             set_auto_levels(self.auto_color_levels_enabled)
+
+    def _update_auto_color_activation_threshold(self, val: float) -> None:
+        self.auto_color_activation_threshold = float(val)
+        setter = getattr(self.renderer, "set_auto_level_activation_threshold", None)
+        if callable(setter):
+            setter(self.auto_color_activation_threshold)
 
     def _update_auto_color_floor(self, val: float) -> None:
         self.auto_color_floor = float(val)

@@ -49,6 +49,8 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_boundary_dissipation_changed: Optional[Callable[[float], None]] = None,
         auto_color_levels_enabled: bool = True,
         on_auto_color_levels_changed: Optional[Callable[[bool], None]] = None,
+        auto_color_activation_threshold: float = 0.1,
+        on_auto_color_activation_threshold_changed: Optional[Callable[[float], None]] = None,
         auto_color_floor: float = 0.1,
         on_auto_color_floor_changed: Optional[Callable[[float], None]] = None,
         source_toggles: Sequence[SourceToggle] = (),
@@ -67,6 +69,9 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_boundary_transmission_changed = on_boundary_transmission_changed
         self.on_boundary_dissipation_changed = on_boundary_dissipation_changed
         self.on_auto_color_levels_changed = on_auto_color_levels_changed
+        self.on_auto_color_activation_threshold_changed = (
+            on_auto_color_activation_threshold_changed
+        )
         self.on_auto_color_floor_changed = on_auto_color_floor_changed
         self.source_toggles = tuple(source_toggles)
         self.source_sections = tuple(source_sections)
@@ -191,14 +196,36 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.auto_color_levels_checkbox.toggled.connect(self.update_auto_color_levels)
         group_layout.addWidget(self.auto_color_levels_checkbox)
 
+        (
+            self.auto_color_threshold_label,
+            self.auto_color_threshold_slider,
+        ) = self._add_slider(
+            group_layout,
+            title="Auto Scale Activation Threshold",
+            tooltip=(
+                "Adaptive color scaling only activates once the current field energy "
+                "exceeds this threshold. Below it, the display stays on the fixed "
+                "low-level reference scale."
+            ),
+            value_label=(
+                "Auto Scale Threshold: "
+                f"{auto_color_activation_threshold:.2f}"
+            ),
+            minimum=0,
+            maximum=200,
+            value=int(round(auto_color_activation_threshold * 100)),
+            on_change=lambda raw: self.update_auto_color_activation_threshold(raw / 100.0),
+        )
+
         self.auto_color_floor_label, self.auto_color_floor_slider = self._add_slider(
             group_layout,
-            title="Auto Color Floor",
+            title="Low-Level Reference Scale",
             tooltip=(
-                "Lower bound for auto color scaling. Tiny field magnitudes below this "
-                "floor will not be contrast-expanded into looking large."
+                "Fixed display scale used while the field stays below the auto-scale "
+                "activation threshold. Lower values make subtle fields more visible; "
+                "higher values keep weak fields visually subtle."
             ),
-            value_label=f"Auto Color Floor: {auto_color_floor:.2f}",
+            value_label=f"Reference Scale: {auto_color_floor:.2f}",
             minimum=0,
             maximum=200,
             value=int(round(auto_color_floor * 100)),
@@ -297,8 +324,13 @@ class RippleControlPanel(QtWidgets.QWidget):
         if self.on_auto_color_levels_changed is not None:
             self.on_auto_color_levels_changed(enabled)
 
+    def update_auto_color_activation_threshold(self, val: float) -> None:
+        self.auto_color_threshold_label.setText(f"Auto Scale Threshold: {val:.2f}")
+        if self.on_auto_color_activation_threshold_changed is not None:
+            self.on_auto_color_activation_threshold_changed(val)
+
     def update_auto_color_floor(self, val: float) -> None:
-        self.auto_color_floor_label.setText(f"Auto Color Floor: {val:.2f}")
+        self.auto_color_floor_label.setText(f"Reference Scale: {val:.2f}")
         if self.on_auto_color_floor_changed is not None:
             self.on_auto_color_floor_changed(val)
 
