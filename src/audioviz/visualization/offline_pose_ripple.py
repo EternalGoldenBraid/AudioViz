@@ -117,6 +117,7 @@ class DummyPoseExtractor:
 class RecordingFieldRenderer:
     def __init__(self):
         self.fields: list[np.ndarray] = []
+        self.rgb_frames: list[np.ndarray] = []
 
     @property
     def widget(self):  # pragma: no cover - only for renderer interface compatibility.
@@ -127,6 +128,9 @@ class RecordingFieldRenderer:
 
     def render(self, field_source) -> None:
         self.fields.append(field_source.get_field_numpy().copy())
+
+    def render_rgb_frame(self, rgb_frame: np.ndarray) -> None:
+        self.rgb_frames.append(np.ascontiguousarray(rgb_frame))
 
 
 def resolve_pose_edges(
@@ -230,6 +234,7 @@ def run_offline_pose_ripple(
 
     frame_paths = _write_render_artifacts(
         renderer.fields,
+        rgb_frames=renderer.rgb_frames if renderer.rgb_frames else None,
         output_dir=resolved_output_dir,
         video_path=resolved_video_path,
         fps=fps,
@@ -248,6 +253,7 @@ def run_offline_pose_ripple(
 def _write_render_artifacts(
     fields: list[np.ndarray],
     *,
+    rgb_frames: list[np.ndarray] | None,
     output_dir: Path,
     video_path: Path,
     fps: float,
@@ -255,9 +261,10 @@ def _write_render_artifacts(
     output_dir.mkdir(parents=True, exist_ok=True)
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    limit = max((float(np.max(np.abs(field))) for field in fields), default=1e-9)
-    limit = max(limit, 1e-9)
-    rgb_frames = [_field_to_rgb(field, limit=limit) for field in fields]
+    if rgb_frames is None:
+        limit = max((float(np.max(np.abs(field))) for field in fields), default=1e-9)
+        limit = max(limit, 1e-9)
+        rgb_frames = [_field_to_rgb(field, limit=limit) for field in fields]
 
     frame_paths = []
     for index, rgb_frame in enumerate(rgb_frames, start=1):

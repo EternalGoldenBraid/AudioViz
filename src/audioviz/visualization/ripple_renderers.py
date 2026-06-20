@@ -141,6 +141,13 @@ class NumpyImageRenderer:
             self._auto_levels_pending = False
         self.image_item.setImage(field, autoLevels=False)
 
+    def render_rgb_frame(self, rgb_frame: np.ndarray) -> None:
+        self.image_item.setImage(
+            np.ascontiguousarray(rgb_frame),
+            autoLevels=False,
+            levels=(0, 255),
+        )
+
 
 class OpenGLFieldRenderer:
     """Render shader-owned ripple textures without NumPy readback."""
