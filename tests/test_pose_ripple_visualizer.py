@@ -199,3 +199,40 @@ def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut():
     assert capture.released
     assert extractor.closed
     app.processEvents()
+
+
+def test_ripple_visualizer_pose_medium_standing_body_with_numpy_renderer_smoke():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    capture = _FakeCapture()
+    extractor = _FakeExtractor()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=True,
+        pose_capture=capture,
+        pose_extractor=extractor,
+        pose_debug_view=False,
+        pose_render_mode="standing-body",
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = NumpyImageRenderer()
+
+    visualizer.update_visualization()
+
+    assert visualizer.renderer.image_item.image is not None
+    assert visualizer.renderer.image_item.image.shape == (24, 32, 3)
+
+    visualizer.close_pose_sources()
+    assert capture.released
+    assert extractor.closed
+    app.processEvents()

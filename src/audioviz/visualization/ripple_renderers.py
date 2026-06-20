@@ -93,7 +93,8 @@ class NumpyImageRenderer:
         lookup_table = (colormap(np.linspace(0, 1, 256))[:, :3] * 255).astype(
             np.uint8
         )
-        self.image_item.setLookupTable(lookup_table)
+        self.lookup_table = np.ascontiguousarray(lookup_table)
+        self.image_item.setLookupTable(self.lookup_table)
 
         self.plot = pg.PlotItem()
         self.plot.setTitle(title)

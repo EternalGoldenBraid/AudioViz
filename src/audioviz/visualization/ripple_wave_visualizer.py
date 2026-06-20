@@ -571,12 +571,20 @@ class RippleWaveVisualizer(VisualizerBase):
         return np.ascontiguousarray(lookup[index])
 
     def _renderer_lookup_table(self) -> np.ndarray | None:
+        renderer_lookup = getattr(self.renderer, "lookup_table", None)
+        if renderer_lookup is not None:
+            lookup = np.asarray(renderer_lookup, dtype=np.uint8)
+            if lookup.ndim == 2 and lookup.shape[0] > 0:
+                return lookup
         image_item = getattr(self.renderer, "image_item", None)
         if image_item is None:
             return None
         lookup = getattr(image_item, "lut", None)
         if callable(lookup):
-            lookup = lookup()
+            try:
+                lookup = lookup()
+            except AttributeError:
+                return None
         if lookup is None:
             return None
         lookup = np.asarray(lookup, dtype=np.uint8)
