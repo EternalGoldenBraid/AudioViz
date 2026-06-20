@@ -12,6 +12,10 @@ from audioviz.visualization.offline_pose_ripple import (
     OfflinePoseRippleResult,
     run_offline_pose_ripple,
 )
+from audioviz.visualization.ripple_wave_visualizer import (
+    POSE_RENDER_MODE_OVERLAY,
+    SUPPORTED_POSE_RENDER_MODES,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -59,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
         "--pose-edges",
         help="Custom pose graph edges like '0-1,1-2,2-3'. Overrides --pose-graph.",
     )
+    parser.add_argument(
+        "--pose-render-mode",
+        choices=SUPPORTED_POSE_RENDER_MODES,
+        default=POSE_RENDER_MODE_OVERLAY,
+        help="Pose render mode plumbing hook for future non-overlay body layouts.",
+    )
     args = parser.parse_args(argv)
 
     if args.no_synthetic and args.synthetic_frequencies:
@@ -78,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         pose_nodes=args.pose_nodes,
         pose_graph=args.pose_graph,
         pose_edges=args.pose_edges,
+        pose_render_mode=args.pose_render_mode,
         fps=args.fps,
     )
     _print_summary(result)

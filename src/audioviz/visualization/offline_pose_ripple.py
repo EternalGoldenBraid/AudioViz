@@ -11,7 +11,11 @@ from audioviz.sources.pose import (
     adjacency_from_edges,
     build_pose_graph_segmentation_mask,
 )
-from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+from audioviz.visualization.ripple_wave_visualizer import (
+    POSE_RENDER_MODE_OVERLAY,
+    RippleWaveVisualizer,
+    normalize_pose_render_mode,
+)
 
 DEFAULT_OUTPUT_DIR = Path("outputs/pose_ripple_validation")
 DEFAULT_VIDEO_NAME = "pose_ripple_validation.gif"
@@ -156,12 +160,14 @@ def run_offline_pose_ripple(
     pose_nodes: int = 4,
     pose_graph: str = "chain",
     pose_edges: str | None = None,
+    pose_render_mode: str = POSE_RENDER_MODE_OVERLAY,
     fps: float = 12.0,
 ) -> OfflinePoseRippleResult:
     if frame_count < 2:
         raise ValueError("frame_count must be at least 2 for pose-motion validation")
     if fps <= 0:
         raise ValueError("fps must be positive")
+    resolved_pose_render_mode = normalize_pose_render_mode(pose_render_mode)
 
     resolved_output_dir = Path(output_dir)
     resolved_video_path = Path(video_path) if video_path is not None else resolved_output_dir / DEFAULT_VIDEO_NAME
@@ -198,6 +204,7 @@ def run_offline_pose_ripple(
         frequency=list(synthetic_frequencies) if synthetic_frequencies else 440.0,
         use_synthetic=bool(synthetic_frequencies),
         use_pose_sources=True,
+        pose_render_mode=resolved_pose_render_mode,
         pose_capture=capture,
         pose_extractor=extractor,
     )

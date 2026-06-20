@@ -30,6 +30,23 @@ from audioviz.visualization.ripple_control_panel import (
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
 
+POSE_RENDER_MODE_OVERLAY = "overlay"
+SUPPORTED_POSE_RENDER_MODES = (POSE_RENDER_MODE_OVERLAY,)
+
+
+def normalize_pose_render_mode(mode: str | None) -> str:
+    resolved = (
+        POSE_RENDER_MODE_OVERLAY
+        if mode is None
+        else str(mode).strip().lower()
+    )
+    if resolved not in SUPPORTED_POSE_RENDER_MODES:
+        raise ValueError(
+            "Unsupported pose_render_mode "
+            f"{mode!r}. Expected one of {SUPPORTED_POSE_RENDER_MODES}."
+        )
+    return resolved
+
 
 class RippleWaveVisualizer(VisualizerBase):
     POSE_DEBUG_MASK_COLOR = (255.0, 64.0, 208.0)
@@ -59,6 +76,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_graph_stiffness: float = 0.25,
                  body_boundary_transmission: float = 0.0,
                  body_boundary_dissipation: float = 1.0,
+                 pose_render_mode: str = POSE_RENDER_MODE_OVERLAY,
                  pose_drive_scale: float = 0.1,
                  pose_field_width_fraction: float = 1.0,
                  pose_field_height_fraction: float = 1.0,
@@ -100,6 +118,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.control_panel: Optional[RippleControlPanel] = None
         self.pose_graph_stiffness = pose_graph_stiffness
         _ = pose_acceleration_scale, pose_max_excitation, pose_drive_scale
+        self.pose_render_mode = normalize_pose_render_mode(pose_render_mode)
         self.pose_debug_view = pose_debug_view
         self.pose_debug_frame_count = 0
         self.auto_color_levels_enabled = True
@@ -381,6 +400,32 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.engine.pose_valid is not None:
             self.engine.pose_valid[:] = False
 
+    def _map_pose_segmentation_to_render_mask(
+        self,
+        segmentation_mask: np.ndarray | None,
+    ) -> np.ndarray | None:
+        if segmentation_mask is None:
+            return None
+        if self.pose_render_mode == POSE_RENDER_MODE_OVERLAY:
+            return map_pose_segmentation_to_field_mask(
+                segmentation_mask,
+                self.resolution,
+                field_rect=self.pose_field_rect,
+            )
+        raise AssertionError(f"Unhandled pose_render_mode {self.pose_render_mode!r}")
+
+    def _map_pose_positions_to_render_positions(
+        self,
+        positions: np.ndarray,
+    ) -> np.ndarray:
+        if self.pose_render_mode == POSE_RENDER_MODE_OVERLAY:
+            return map_pose_coords_to_field_positions(
+                positions,
+                self.resolution,
+                field_rect=self.pose_field_rect,
+            )
+        raise AssertionError(f"Unhandled pose_render_mode {self.pose_render_mode!r}")
+
     def _update_pose_visualization(self, freqs: np.ndarray | None) -> None:
         if self.pose_capture is None or self.pose_extractor is None:
             return
@@ -392,13 +437,7 @@ class RippleWaveVisualizer(VisualizerBase):
         pose = self.pose_extractor.extract(frame)
         segmentation_mask = self._resolve_pose_segmentation_mask(frame, pose)
         self.engine.set_body_boundary_mask(
-            map_pose_segmentation_to_field_mask(
-                segmentation_mask,
-                self.resolution,
-                field_rect=self.pose_field_rect,
-            )
-            if segmentation_mask is not None
-            else None
+            self._map_pose_segmentation_to_render_mask(segmentation_mask)
         )
         if self.pose_debug_view:
             self._update_pose_debug_view(frame, pose, segmentation_mask=segmentation_mask)
@@ -420,11 +459,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
         positions = self.pose_state.get_positions()
         valid = pose_coords_in_image_support(positions)
-        mapped_positions = map_pose_coords_to_field_positions(
-            positions,
-            self.resolution,
-            field_rect=self.pose_field_rect,
-        )
+        mapped_positions = self._map_pose_positions_to_render_positions(positions)
 
         self.engine.update_pose_medium(
             positions=mapped_positions,
