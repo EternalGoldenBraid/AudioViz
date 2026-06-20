@@ -6,6 +6,14 @@ plt.style.use('dark_background')
 from matplotlib.animation import FuncAnimation
 
 
+AUDIO_VISUAL_MAPPING_MODE_LEGACY = "legacy"
+AUDIO_VISUAL_MAPPING_MODE_LINEAR = "linear"
+SUPPORTED_AUDIO_VISUAL_MAPPING_MODES = (
+    AUDIO_VISUAL_MAPPING_MODE_LEGACY,
+    AUDIO_VISUAL_MAPPING_MODE_LINEAR,
+)
+
+
 # Function to compute the mel spectrogram for a segment
 def compute_mel_segment(start_idx: int, data: np.ndarray,
                         sr: int, n_fft: int, hop_length: int,
@@ -18,10 +26,30 @@ def compute_mel_segment(start_idx: int, data: np.ndarray,
     mel_spectrogram = np.dot(mel_filters, stft)
     return mel_spectrogram
 
-def map_audio_freq_to_visual_freq(f_audio: np.ndarray,
-                                  alpha: float = 50.0,
-                                  f0: float = 50.0,
-                                  fc: float = 2000.0) -> np.ndarray:
+def normalize_audio_visual_mapping_mode(mode: str | None) -> str:
+    resolved = (
+        AUDIO_VISUAL_MAPPING_MODE_LEGACY
+        if mode is None
+        else str(mode).strip().lower()
+    )
+    if resolved not in SUPPORTED_AUDIO_VISUAL_MAPPING_MODES:
+        raise ValueError(
+            f"Unsupported audio_visual_mapping_mode {mode!r}. "
+            f"Expected one of {SUPPORTED_AUDIO_VISUAL_MAPPING_MODES}."
+        )
+    return resolved
+
+
+def map_audio_freq_to_visual_freq(
+    f_audio: np.ndarray,
+    alpha: float = 50.0,
+    f0: float = 50.0,
+    fc: float = 2000.0,
+    *,
+    mode: str = AUDIO_VISUAL_MAPPING_MODE_LEGACY,
+    linear_scale: float = 0.05,
+    linear_offset: float = 0.0,
+) -> np.ndarray:
     """
     Map audio frequency (Hz) to visual frequency (Hz) for spatial ripple rendering.
 
@@ -30,11 +58,21 @@ def map_audio_freq_to_visual_freq(f_audio: np.ndarray,
         alpha (float): Overall output scaling factor.
         f0 (float): Pivot frequency for log compression.
         fc (float): Cutoff frequency for exponential damping (viscosity).
+        mode (str): Mapping mode. "legacy" keeps the historic nonlinear map;
+            "linear" applies a direct affine mapping.
+        linear_scale (float): Linear mapping scale from audio Hz to ripple Hz.
+        linear_offset (float): Linear mapping offset added after scaling.
 
     Returns:
         np.ndarray: Mapped visual frequencies (Hz).
     """
+    resolved_mode = normalize_audio_visual_mapping_mode(mode)
     f_audio = np.clip(f_audio, 1e-3, None)
+    if resolved_mode == AUDIO_VISUAL_MAPPING_MODE_LINEAR:
+        return np.maximum(
+            linear_offset + linear_scale * f_audio,
+            np.float32(1e-3),
+        )
     log_scaled = np.log10(1 + f_audio / f0)
     damping = np.exp(-f_audio / fc)
     return alpha * log_scaled * damping

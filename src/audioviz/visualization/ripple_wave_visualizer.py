@@ -29,7 +29,10 @@ from audioviz.visualization.ripple_control_panel import (
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
-from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
+from audioviz.utils.signal_processing import (
+    map_audio_freq_to_visual_freq,
+    normalize_audio_visual_mapping_mode,
+)
 
 POSE_RENDER_MODE_OVERLAY = "overlay"
 POSE_RENDER_MODE_STANDING_BODY = "standing-body"
@@ -76,9 +79,12 @@ class RippleWaveVisualizer(VisualizerBase):
                  use_shader: bool = False,
                  boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
                  use_pose_sources: bool = False,
+                 audio_visual_mapping_mode: str = "legacy",
                  audio_visual_mapping_alpha: float = 50.0,
                  audio_visual_mapping_f0: float = 50.0,
                  audio_visual_mapping_fc: float = 2000.0,
+                 audio_visual_linear_scale: float = 0.05,
+                 audio_visual_linear_offset: float = 0.0,
                  pose_model_path: str | None = None,
                  pose_camera_index: int = 0,
                  pose_acceleration_scale: float = 1.0,
@@ -106,9 +112,14 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_camera_index = pose_camera_index
         self.boundary_condition = boundary_condition
         self.use_pose_sources = use_pose_sources
+        self.audio_visual_mapping_mode = normalize_audio_visual_mapping_mode(
+            audio_visual_mapping_mode
+        )
         self.audio_visual_mapping_alpha = float(audio_visual_mapping_alpha)
         self.audio_visual_mapping_f0 = float(audio_visual_mapping_f0)
         self.audio_visual_mapping_fc = float(audio_visual_mapping_fc)
+        self.audio_visual_linear_scale = float(audio_visual_linear_scale)
+        self.audio_visual_linear_offset = float(audio_visual_linear_offset)
         if self.use_pose_sources and (self.use_gpu or self.use_shader):
             raise NotImplementedError(
                 "Pose-medium coupling currently requires the CPU ripple backend."
@@ -311,9 +322,12 @@ class RippleWaveVisualizer(VisualizerBase):
             return None
         visual_frequencies = map_audio_freq_to_visual_freq(
             np.asarray(top_k, dtype=np.float32),
+            mode=self.audio_visual_mapping_mode,
             alpha=self.audio_visual_mapping_alpha,
             f0=self.audio_visual_mapping_f0,
             fc=self.audio_visual_mapping_fc,
+            linear_scale=self.audio_visual_linear_scale,
+            linear_offset=self.audio_visual_linear_offset,
         ).astype(np.float32, copy=False)
         return np.tile(visual_frequencies, (self.n_sources, 1))
 
