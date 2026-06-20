@@ -27,6 +27,9 @@ def get_mel_spectrogram(segment: np.ndarray,
     return spectrogram
 
 class AudioProcessor:
+    MINIMUM_FREQUENCY_PEAK_MAGNITUDE = 0.1
+    MINIMUM_FREQUENCY_PEAK_TO_MEDIAN_RATIO = 5.0
+
     def __init__(self,
                  sr: int,
                  n_fft: int,
@@ -65,6 +68,11 @@ class AudioProcessor:
             (num_samples_in_buffer, input_channels), dtype=np.float32
         )
         self.n_spec_bins: int = n_mels if n_mels is not None else n_fft // 2 + 1
+        self.analysis_fft_size = (
+            int(stft_window.shape[0])
+            if hasattr(stft_window, "shape") and len(stft_window.shape) > 0
+            else int(n_fft)
+        )
         n_spec_frames: int = num_samples_in_buffer // hop_length
         # self.spectrogram_buffer: np.ndarray = np.zeros(
         #     (self.n_spec_bins, n_spec_frames), dtype=np.float32
@@ -77,7 +85,9 @@ class AudioProcessor:
         self.snapshot_queue: deque[Tuple[np.ndarray, List[np.ndarray]]] = deque(maxlen=5)
         self.num_top_frequencies: int = 3
         self.current_top_k_frequencies: list[float] = [None] * self.num_top_frequencies
-        self.freq_bins = np.fft.rfftfreq(self.n_fft, d=1/self.sr)
+        self.freq_bins = np.fft.rfftfreq(self.analysis_fft_size, d=1/self.sr)[
+            : self.n_spec_bins
+        ]
 
         self.raw_input_queue: deque[np.ndarray] = deque(maxlen=32)
 
@@ -150,10 +160,34 @@ class AudioProcessor:
 
         # Average over last `window_frames` frames
         averaged_frame = np.mean(self.spectrogram_buffers[channel_idx][:, -window_frames:], axis=1)
+        peak_magnitude = float(np.max(averaged_frame))
+        if peak_magnitude < self.MINIMUM_FREQUENCY_PEAK_MAGNITUDE:
+            return None
 
-        freq_bins = np.fft.rfftfreq(self.n_fft, d=1/self.sr)
-        top_k_idxs = np.argsort(averaged_frame)[-k:]
-        return top_k_idxs.tolist(), freq_bins[top_k_idxs].tolist()
+        positive_bins = averaged_frame[averaged_frame > 0.0]
+        median_magnitude = (
+            float(np.median(positive_bins))
+            if positive_bins.size > 0
+            else 0.0
+        )
+        if median_magnitude <= 0.0:
+            return None
+
+        prominence_ratio = peak_magnitude / median_magnitude
+        if prominence_ratio < self.MINIMUM_FREQUENCY_PEAK_TO_MEDIAN_RATIO:
+            return None
+
+        dominant_mask = (
+            averaged_frame
+            >= median_magnitude * self.MINIMUM_FREQUENCY_PEAK_TO_MEDIAN_RATIO
+        )
+        dominant_idxs = np.flatnonzero(dominant_mask)
+        if dominant_idxs.size == 0:
+            return None
+        dominant_magnitudes = averaged_frame[dominant_idxs]
+        sort_order = np.argsort(dominant_magnitudes)[-k:]
+        top_k_idxs = dominant_idxs[sort_order]
+        return top_k_idxs.tolist(), self.freq_bins[top_k_idxs].tolist()
 
     def update_spectrogram_buffer(self, indata: np.ndarray) -> None:
         for channel_idx in range(indata.shape[1]):
@@ -184,8 +218,16 @@ class AudioProcessor:
 
         self.update_spectrogram_buffer(indata)
 
-        idxs_, self.current_top_k_frequencies[:] = self.get_smoothed_top_k_peak_frequency(
-            window_frames=10, k=self.num_top_frequencies, channel_idx=0)
+        dominant = self.get_smoothed_top_k_peak_frequency(
+            window_frames=10, k=self.num_top_frequencies, channel_idx=0
+        )
+        if dominant is None:
+            self.current_top_k_frequencies[:] = [None] * self.num_top_frequencies
+        else:
+            _, top_frequencies = dominant
+            padded = [float(freq) for freq in top_frequencies]
+            padded.extend([None] * (self.num_top_frequencies - len(padded)))
+            self.current_top_k_frequencies[:] = padded[:self.num_top_frequencies]
 
         self.snapshot_queue.append((
             self.audio_buffer.copy(),
