@@ -78,6 +78,7 @@ def test_ripple_control_panel_resets_field(ripple_panel_deps):
     )
     panel = RippleControlPanel(engine)
     engine.Z[:] = 1
+    engine.Z_old[:] = 2
     engine.propagator.add_excitation(np.ones(engine.resolution, dtype=np.float32))
     engine.time = 3.0
 
@@ -86,6 +87,7 @@ def test_ripple_control_panel_resets_field(ripple_panel_deps):
 
     assert engine.time == 0.0
     assert np.all(engine.Z == 0)
+    assert np.all(engine.Z_old == 0)
     assert np.all(engine.propagator.Z == 0)
 
 

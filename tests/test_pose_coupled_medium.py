@@ -276,6 +276,33 @@ def test_pose_coupled_medium_frequency_sources_respect_boundary_transmission():
     assert np.sum(np.abs(open_boundary.get_field_numpy()[:, 4:])) > 0.0
 
 
+def test_pose_coupled_medium_remains_finite_on_live_like_rectangular_grid():
+    engine = RippleEngine(
+        resolution=(120, 120),
+        plane_size_m=(0.36, 0.62),
+        speed=340.0,
+        damping=0.999,
+        amplitude=1.0,
+        use_gpu=False,
+        body_boundary_transmission=1.0,
+        body_boundary_dissipation=0.0,
+    )
+    engine.set_source_positions(np.array([[60.0, 60.0]], dtype=np.float32))
+    engine.update_pose_medium(
+        positions=np.array([[60.0, 60.0]], dtype=np.float32),
+        valid=np.array([False]),
+        adjacency=adjacency_from_edges(1, []),
+    )
+    body_mask = np.zeros((120, 120), dtype=bool)
+    body_mask[:, 70:] = True
+    engine.set_body_boundary_mask(body_mask)
+
+    for _ in range(200):
+        engine.step_pose_medium(np.array([[375.0, 187.5, 0.0]], dtype=np.float32))
+
+    assert np.isfinite(engine.get_field_numpy()).all()
+
+
 def test_pose_coupled_medium_keeps_pose_graph_quiescent_under_segmentation():
     engine = RippleEngine(
         resolution=(6, 6),

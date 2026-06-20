@@ -60,9 +60,10 @@ class RippleEngine:
         self.backend = load_cupy() if use_gpu else np
         self.dx = self.plane_size_m[0] / self.resolution[0]
         self.dy = self.plane_size_m[1] / self.resolution[1]
+        self.grid_spacing = min(self.dx, self.dy)
         self.dt = self._stable_dt()
         self.time = 0.0
-        self.max_frequency = self.speed / (2 * max(self.dx, self.dy))
+        self.max_frequency = self.speed / (2 * self.grid_spacing)
 
         self.source_positions = self._make_source_positions()
         self.xs, self.ys = self.backend.meshgrid(
@@ -72,7 +73,7 @@ class RippleEngine:
 
         propagator_kwargs = {
             "shape": self.resolution,
-            "dx": self.dx,
+            "dx": self.grid_spacing,
             "dt": self.dt,
             "speed": self.speed,
             "damping": self.damping,
@@ -103,7 +104,7 @@ class RippleEngine:
         self.body_boundary_mask = None
 
     def _stable_dt(self) -> float:
-        return (max(self.dx, self.dy) / self.speed) * 1 / np.sqrt(2)
+        return (self.grid_spacing / self.speed) * 1 / np.sqrt(2)
 
     def _make_source_positions(self):
         rng = np.random.default_rng(42)
@@ -134,8 +135,8 @@ class RippleEngine:
         self.dt = self._stable_dt()
         self.propagator.dt = self.dt
         self.propagator.c = self.speed
-        self.propagator.c2_dt2 = (self.speed * self.dt / self.dx) ** 2
-        self.max_frequency = self.speed / (2 * max(self.dx, self.dy))
+        self.propagator.c2_dt2 = (self.speed * self.dt / self.grid_spacing) ** 2
+        self.max_frequency = self.speed / (2 * self.grid_spacing)
 
     def set_damping(self, damping: float) -> None:
         self.damping = damping
@@ -156,6 +157,7 @@ class RippleEngine:
     def reset(self) -> None:
         self.propagator.reset()
         self.Z[:] = 0
+        self.Z_old[:] = 0
         if self.pose_values is not None:
             self.pose_values[:] = 0
         if self.pose_values_old is not None:
@@ -240,7 +242,7 @@ class RippleEngine:
         ys = self.ys[None, :, :]
 
         r_pixels = xp.sqrt((xs - x0) ** 2 + (ys - y0) ** 2)
-        r_meters = r_pixels * self.dx
+        r_meters = r_pixels * self.grid_spacing
         decay = xp.exp(-self.decay_alpha * r_meters)
 
         frequencies = xp.clip(frequencies, 1e-3, self.max_frequency)
@@ -384,7 +386,7 @@ class RippleEngine:
         ys = self.ys[None, :, :]
 
         r_pixels = xp.sqrt((xs - x0) ** 2 + (ys - y0) ** 2)
-        r_meters = r_pixels * self.dx
+        r_meters = r_pixels * self.grid_spacing
         decay = xp.exp(-self.decay_alpha * r_meters)
 
         frequencies = xp.clip(frequencies, 1e-3, self.max_frequency)
