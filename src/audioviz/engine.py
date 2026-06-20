@@ -260,21 +260,9 @@ class RippleEngine:
         self.propagator.step()
 
     def _add_source_excitation(self, source_excitations: np.ndarray) -> None:
-        xp = self.backend
-        values = xp.asarray(source_excitations, dtype=xp.float32).reshape(-1)
-        if len(values) != self.n_sources:
-            raise ValueError(
-                f"Expected {self.n_sources} source excitations, got {len(values)}."
-            )
-
-        rows, cols = self.resolution
-        positions = xp.asarray(self.source_positions, dtype=xp.float32)
-        xs = xp.clip(xp.rint(positions[:, 0]).astype(xp.int32), 0, cols - 1)
-        ys = xp.clip(xp.rint(positions[:, 1]).astype(xp.int32), 0, rows - 1)
-
-        excitation = xp.zeros(self.resolution, dtype=xp.float32)
-        xp.add.at(excitation, (ys, xs), values * self.amplitude)
-        self.propagator.add_excitation(excitation)
+        self.propagator.add_excitation(
+            self._source_excitations_to_grid(source_excitations)
+        )
 
     def configure_pose_medium(self, adjacency: np.ndarray) -> None:
         if self.use_gpu or self.use_shader:
@@ -343,7 +331,7 @@ class RippleEngine:
         driven_grid = grid.copy()
         driven_pose = pose.copy()
         if frequencies is not None:
-            driven_grid += self._compute_ripple_excitation_field(self.time, frequencies)
+            driven_grid += self._compute_source_excitation_grid(self.time, frequencies)
 
         grid_laplacian = self._grid_laplacian_with_internal_boundaries(driven_grid)
         pose_laplacian = self.pose_adjacency @ driven_pose - self.pose_degree * driven_pose
@@ -412,6 +400,49 @@ class RippleEngine:
             phases - 2 * xp.pi * r / wavelengths
         )
         return ripple.sum(axis=(0, 1))
+
+    def _compute_source_excitation_grid(
+        self,
+        t: float,
+        frequencies: np.ndarray,
+    ) -> np.ndarray:
+        phases = self._compute_source_phase_amplitudes(t, frequencies)
+        return self._source_excitations_to_grid(phases)
+
+    def _compute_source_phase_amplitudes(
+        self,
+        t: float,
+        frequencies: np.ndarray,
+    ) -> np.ndarray:
+        values = np.asarray(frequencies, dtype=np.float32)
+        if values.ndim != 2:
+            raise ValueError("frequencies must have shape (n_sources, n_frequencies)")
+        n_sources, _ = values.shape
+        if n_sources != self.n_sources:
+            raise ValueError(
+                f"Expected {self.n_sources} source rows, got {n_sources}."
+            )
+
+        clipped = np.clip(values, 1e-3, self.max_frequency)
+        phases = 2.0 * np.pi * clipped * np.float32(t)
+        return np.sin(phases).sum(axis=1).astype(np.float32)
+
+    def _source_excitations_to_grid(self, source_excitations: np.ndarray) -> np.ndarray:
+        xp = self.backend
+        values = xp.asarray(source_excitations, dtype=xp.float32).reshape(-1)
+        if len(values) != self.n_sources:
+            raise ValueError(
+                f"Expected {self.n_sources} source excitations, got {len(values)}."
+            )
+
+        rows, cols = self.resolution
+        positions = xp.asarray(self.source_positions, dtype=xp.float32)
+        xs = xp.clip(xp.rint(positions[:, 0]).astype(xp.int32), 0, cols - 1)
+        ys = xp.clip(xp.rint(positions[:, 1]).astype(xp.int32), 0, rows - 1)
+
+        excitation = xp.zeros(self.resolution, dtype=xp.float32)
+        xp.add.at(excitation, (ys, xs), values * self.amplitude)
+        return excitation
 
     def _grid_laplacian_with_internal_boundaries(self, field: np.ndarray) -> np.ndarray:
         if self.body_boundary_mask is None:

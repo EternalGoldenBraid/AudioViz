@@ -537,6 +537,7 @@ def test_ripple_visualizer_keeps_synthetic_source_when_pose_boundary_is_enabled(
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
     visualizer.engine.set_source_positions(np.array([[10.0, 5.0]], dtype=np.float32))
+    visualizer.engine.set_body_boundary_dissipation(0.0)
 
     visualizer.update_visualization()
 
@@ -871,5 +872,37 @@ def test_ripple_visualizer_control_panel_updates_boundary_parameters():
     assert np.isclose(visualizer.engine.body_boundary_dissipation, 0.8)
 
     visualizer.control_panel.close()
+    visualizer.close()
+    app.processEvents()
+
+
+def test_ripple_visualizer_reset_field_resets_histogram_levels():
+    from PyQt5 import QtWidgets
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = NumpyImageRenderer()
+    visualizer.engine.Z[5, 10] = 10.0
+    visualizer.renderer.render(visualizer.engine)
+    low, high = visualizer.renderer.histogram.getLevels()
+    assert high > 0.0 or low < 0.0
+
+    visualizer.toggle_controls()
+    assert visualizer.control_panel is not None
+    visualizer.control_panel.reset_field()
+    app.processEvents()
+
+    assert visualizer.renderer.histogram.getLevels() == (0.0, 0.0)
+
+    visualizer.control_panel.close()
+    visualizer.renderer.widget.close()
     visualizer.close()
     app.processEvents()

@@ -242,6 +242,40 @@ def test_pose_coupled_medium_boundary_dissipation_targets_full_masked_interior()
     assert engine.get_field_numpy()[2, 3] == 0.0
 
 
+def test_pose_coupled_medium_frequency_sources_respect_boundary_transmission():
+    def build_engine(transmission: float) -> RippleEngine:
+        engine = RippleEngine(
+            resolution=(7, 7),
+            plane_size_m=(1.0, 1.0),
+            speed=1.0,
+            damping=1.0,
+            amplitude=1.0,
+            use_gpu=False,
+            body_boundary_transmission=transmission,
+            body_boundary_dissipation=0.0,
+        )
+        engine.set_source_positions(np.array([[1.0, 3.0]], dtype=np.float32))
+        engine.update_pose_medium(
+            positions=np.array([[1.0, 3.0]], dtype=np.float32),
+            valid=np.array([False]),
+            adjacency=adjacency_from_edges(1, []),
+        )
+        body_mask = np.zeros((7, 7), dtype=bool)
+        body_mask[:, 4:] = True
+        engine.set_body_boundary_mask(body_mask)
+        return engine
+
+    blocked = build_engine(0.0)
+    open_boundary = build_engine(1.0)
+
+    for _ in range(12):
+        blocked.step_pose_medium(np.array([[1.0]], dtype=np.float32))
+        open_boundary.step_pose_medium(np.array([[1.0]], dtype=np.float32))
+
+    assert np.sum(np.abs(blocked.get_field_numpy()[:, 4:])) == 0.0
+    assert np.sum(np.abs(open_boundary.get_field_numpy()[:, 4:])) > 0.0
+
+
 def test_pose_coupled_medium_keeps_pose_graph_quiescent_under_segmentation():
     engine = RippleEngine(
         resolution=(6, 6),
@@ -261,6 +295,7 @@ def test_pose_coupled_medium_keeps_pose_graph_quiescent_under_segmentation():
     body_mask = np.zeros((6, 6), dtype=bool)
     body_mask[1:5, 1:5] = True
     engine.set_body_boundary_mask(body_mask)
+    engine.set_body_boundary_dissipation(0.0)
 
     engine.step_pose_medium(np.array([[1.0]], dtype=np.float32))
 

@@ -198,6 +198,11 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _sync_after_reset(self) -> None:
         self.time = self.engine.time
+        reset_view = getattr(self.renderer, "reset_view", None)
+        if callable(reset_view):
+            reset_view()
+        if self.renderer.prepare_frame():
+            self.renderer.render(self.engine)
 
     def _update_boundary_transmission(self, val: float) -> None:
         self.body_boundary_transmission = float(val)

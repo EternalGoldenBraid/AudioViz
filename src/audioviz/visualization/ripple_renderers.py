@@ -120,6 +120,10 @@ class NumpyImageRenderer:
         if enabled:
             self._auto_levels_pending = True
 
+    def reset_view(self) -> None:
+        self._auto_levels_pending = True
+        self.histogram.setLevels(0.0, 0.0)
+
     def render(self, field_source: RippleFieldSource) -> None:
         field = field_source.get_field_numpy()
         if self._auto_percentile_levels:
