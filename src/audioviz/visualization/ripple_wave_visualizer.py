@@ -29,6 +29,7 @@ from audioviz.visualization.ripple_control_panel import (
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
+from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
 
 POSE_RENDER_MODE_OVERLAY = "overlay"
 POSE_RENDER_MODE_STANDING_BODY = "standing-body"
@@ -286,7 +287,10 @@ class RippleWaveVisualizer(VisualizerBase):
         top_k = [f for f in top_k if f is not None and np.isfinite(f)]
         if len(top_k) == 0:
             return None
-        return np.tile(np.asarray(top_k, dtype=np.float32), (self.n_sources, 1))
+        visual_frequencies = map_audio_freq_to_visual_freq(
+            np.asarray(top_k, dtype=np.float32)
+        ).astype(np.float32, copy=False)
+        return np.tile(visual_frequencies, (self.n_sources, 1))
 
     @staticmethod
     def _coerce_synthetic_frequencies(

@@ -1,6 +1,7 @@
 import numpy as np
 
 from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
+from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
 
 
 class _FakeCapture:
@@ -76,6 +77,11 @@ class _StandingRendererWithCallableLut(_FakeRenderer):
 
     def render_rgb_frame(self, rgb_frame):
         self.rgb_frame = np.asarray(rgb_frame)
+
+
+class _FakeProcessor:
+    def __init__(self, current_top_k_frequencies):
+        self.current_top_k_frequencies = current_top_k_frequencies
 
 
 def test_ripple_visualizer_pose_medium_overlay_smoke():
@@ -235,4 +241,35 @@ def test_ripple_visualizer_pose_medium_standing_body_with_numpy_renderer_smoke()
     visualizer.close_pose_sources()
     assert capture.released
     assert extractor.closed
+    app.processEvents()
+
+
+def test_ripple_visualizer_maps_audio_frequencies_before_ripple_drive():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    processor = _FakeProcessor([440.0, 880.0, None])
+    visualizer = RippleWaveVisualizer(
+        processor=processor,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    resolved = visualizer._resolve_audio_frequencies()
+
+    expected = map_audio_freq_to_visual_freq(
+        np.asarray([440.0, 880.0], dtype=np.float32)
+    ).astype(np.float32)
+    assert resolved is not None
+    np.testing.assert_allclose(resolved, expected.reshape(1, -1))
+
     app.processEvents()
