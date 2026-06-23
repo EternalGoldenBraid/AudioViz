@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 
 from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
@@ -39,6 +41,12 @@ class _FakeCv2:
 
     def VideoCapture(self, _camera_index):
         return self.capture
+
+
+class _NoisyFakeCv2(_FakeCv2):
+    def VideoCapture(self, camera_index):
+        os.write(2, b"noisy native camera backend\n")
+        return super().VideoCapture(camera_index)
 
 
 class _FakeExtractor:
@@ -238,14 +246,14 @@ def test_ripple_visualizer_camera_source_updates_field_and_releases_capture():
     app.processEvents()
 
 
-def test_ripple_visualizer_releases_failed_camera_capture():
+def test_ripple_visualizer_releases_failed_camera_capture(capfd):
     import pytest
     from PyQt5 import QtWidgets
 
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    fake_cv2 = _FakeCv2()
+    fake_cv2 = _NoisyFakeCv2()
     visualizer = RippleWaveVisualizer(
         processor=None,
         resolution=(6, 8),
@@ -264,6 +272,7 @@ def test_ripple_visualizer_releases_failed_camera_capture():
 
     assert fake_cv2.capture.released
     assert visualizer.camera_capture is None
+    assert "noisy native camera backend" not in capfd.readouterr().err
     app.processEvents()
 
 
