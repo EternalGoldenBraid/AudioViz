@@ -3,6 +3,7 @@ import numpy as np
 import audioviz
 from audioviz.source_controls import (
     AudioSourceControls,
+    CameraFrameSourceControls,
     SourceControl,
     SourceControlProvider,
     SyntheticFrequencySource,
@@ -52,3 +53,12 @@ def test_audio_source_controls_expose_gate_mapping_and_readout_controls():
     assert keys["mapping_mode"].choices == ("legacy", "linear")
     assert keys["signal_gate_threshold"].kind == "number"
     assert keys["drive_amplitude"].default == 1.0
+
+
+def test_camera_frame_source_controls_expose_gain_control():
+    controls = CameraFrameSourceControls(gain=2.0).get_controls()
+
+    assert controls[0].key == "gain"
+    assert controls[0].label == "Camera Excitation Gain"
+    assert controls[0].default == 2.0
+    assert controls[0].minimum == 0.0

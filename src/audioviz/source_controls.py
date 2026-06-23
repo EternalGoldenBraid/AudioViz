@@ -186,3 +186,20 @@ class AudioSourceControls(SourceControlProvider):
                 step=0.1,
             ),
         )
+
+
+@dataclass
+class CameraFrameSourceControls(SourceControlProvider):
+    gain: float = 1.0
+
+    def get_controls(self) -> Sequence[SourceControl]:
+        return (
+            SourceControl(
+                key="gain",
+                label="Camera Excitation Gain",
+                default=self.gain,
+                minimum=0.0,
+                maximum=10.0,
+                step=0.05,
+            ),
+        )

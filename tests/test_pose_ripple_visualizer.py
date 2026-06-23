@@ -5,8 +5,12 @@ from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
 
 
 class _FakeCapture:
-    def __init__(self, frame_count: int = 2):
-        self.frames = [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(frame_count)]
+    def __init__(self, frame_count: int = 2, frames: list[np.ndarray] | None = None):
+        self.frames = (
+            [np.array(frame, copy=True) for frame in frames]
+            if frames is not None
+            else [np.zeros((4, 4, 3), dtype=np.uint8) for _ in range(frame_count)]
+        )
         self.released = False
 
     def read(self):
@@ -140,6 +144,102 @@ def test_ripple_visualizer_pose_medium_overlay_smoke():
     visualizer.close_pose_sources()
     assert capture.released
     assert extractor.closed
+    app.processEvents()
+
+
+def test_ripple_visualizer_camera_frame_maps_to_excitation_grid():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(2, 3),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+        camera_source_gain=2.0,
+    )
+    visualizer.timer.stop()
+    frame = np.array(
+        [
+            [[0, 0, 0], [255, 255, 255]],
+            [[255, 0, 0], [0, 255, 0]],
+        ],
+        dtype=np.uint8,
+    )
+
+    grid = visualizer._camera_frame_to_excitation_grid(frame)
+
+    expected = np.array(
+        [
+            [0.0, 0.0, 2.0],
+            [0.228, 0.228, 1.174],
+        ],
+        dtype=np.float32,
+    )
+    np.testing.assert_allclose(grid, expected, atol=1e-6)
+    app.processEvents()
+
+
+def test_ripple_visualizer_camera_source_updates_field_and_releases_capture():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    frame = np.full((4, 4, 3), 255, dtype=np.uint8)
+    capture = _FakeCapture(frames=[frame])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(6, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+        use_camera_source=True,
+        camera_capture=capture,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+
+    visualizer.update_visualization()
+
+    assert visualizer.renderer.render_count == 1
+    assert np.count_nonzero(visualizer.engine.get_field_numpy()) > 0
+
+    visualizer.close_camera_source()
+    assert capture.released
+    app.processEvents()
+
+
+def test_ripple_visualizer_camera_source_gain_control_updates_mapping():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(2, 2),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+
+    visualizer._update_source_control("camera-source", "gain", 3.0)
+
+    assert visualizer.camera_source_gain == 3.0
     app.processEvents()
 
 

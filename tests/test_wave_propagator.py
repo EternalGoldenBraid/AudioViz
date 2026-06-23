@@ -65,6 +65,43 @@ def test_ripple_engine_rejects_unknown_boundary_condition():
         )
 
 
+def test_ripple_engine_steps_full_grid_excitation_once():
+    engine = RippleEngine(
+        resolution=(4, 5),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=2.0,
+        use_gpu=False,
+        boundary_condition="neumann",
+    )
+    excitation = np.zeros((4, 5), dtype=np.float32)
+    excitation[1, 2] = 0.5
+
+    field = engine.step_grid_excitation(excitation)
+
+    assert engine.time == pytest.approx(engine.dt)
+    assert np.count_nonzero(field) == 5
+    assert field[0, 2] == pytest.approx(0.5)
+    assert field[1, 1] == pytest.approx(0.5)
+    assert field[1, 3] == pytest.approx(0.5)
+    assert field[2, 2] == pytest.approx(0.5)
+    assert field[1, 2] == pytest.approx(0.0)
+
+
+def test_ripple_engine_rejects_grid_excitation_shape_mismatch():
+    engine = RippleEngine(
+        resolution=(4, 5),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        use_gpu=False,
+    )
+
+    with pytest.raises(ValueError, match="excitation_grid"):
+        engine.step_grid_excitation(np.zeros((4, 4), dtype=np.float32))
+
+
 def test_neumann_boundary_uses_reduced_edge_degree():
     propagator = WavePropagatorCPU(
         shape=(3, 3),

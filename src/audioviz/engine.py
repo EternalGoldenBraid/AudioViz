@@ -176,6 +176,7 @@ class RippleEngine:
     def step(self, frequencies: np.ndarray):
         self.time += self.dt
         self._add_ripple_excitation(self.time, frequencies)
+        self.propagator.step()
         if self.use_shader:
             return self.Z
         if hasattr(self.propagator, "Z_old"):
@@ -186,6 +187,23 @@ class RippleEngine:
     def step_source_excitations(self, source_excitations: np.ndarray):
         self.time += self.dt
         self._add_source_excitation(source_excitations)
+        self.propagator.step()
+        if self.use_shader:
+            return self.Z
+        if hasattr(self.propagator, "Z_old"):
+            self.Z_old = np.array(self.propagator.Z_old, copy=True)
+        self.Z[:] = self.propagator.get_state()
+        return self.Z
+
+    def step_grid_excitation(
+        self,
+        excitation_grid: np.ndarray,
+        frequencies: np.ndarray | None = None,
+    ):
+        self.time += self.dt
+        self._add_grid_excitation(excitation_grid)
+        if frequencies is not None:
+            self._add_ripple_excitation(self.time, frequencies)
         self.propagator.step()
         if self.use_shader:
             return self.Z
@@ -257,9 +275,7 @@ class RippleEngine:
         ripple = self.amplitude * decay * xp.sin(
             phases - 2 * xp.pi * r / wavelengths
         )
-
         self.propagator.add_excitation(ripple.sum(axis=(0, 1)))
-        self.propagator.step()
 
     def _add_source_excitation(self, source_excitations: np.ndarray) -> None:
         self.propagator.add_excitation(
@@ -317,7 +333,11 @@ class RippleEngine:
         self.pose_positions[:] = positions_array
         self.pose_valid[:] = valid_array
 
-    def step_pose_medium(self, frequencies: np.ndarray | None = None) -> np.ndarray:
+    def step_pose_medium(
+        self,
+        frequencies: np.ndarray | None = None,
+        grid_excitation: np.ndarray | None = None,
+    ) -> np.ndarray:
         if not self.pose_medium_enabled:
             raise RuntimeError("Pose medium has not been configured.")
         assert self.pose_values is not None
@@ -334,6 +354,10 @@ class RippleEngine:
         driven_pose = pose.copy()
         if frequencies is not None:
             driven_grid += self._compute_source_excitation_grid(self.time, frequencies)
+        if grid_excitation is not None:
+            driven_grid += self._coerce_grid_excitation(grid_excitation) * np.float32(
+                self.amplitude
+            )
 
         grid_laplacian = self._grid_laplacian_with_internal_boundaries(driven_grid)
         pose_laplacian = self.pose_adjacency @ driven_pose - self.pose_degree * driven_pose
@@ -444,6 +468,18 @@ class RippleEngine:
 
         excitation = xp.zeros(self.resolution, dtype=xp.float32)
         xp.add.at(excitation, (ys, xs), values * self.amplitude)
+        return excitation
+
+    def _add_grid_excitation(self, excitation_grid: np.ndarray) -> None:
+        self.propagator.add_excitation(
+            self._coerce_grid_excitation(excitation_grid) * self.amplitude
+        )
+
+    def _coerce_grid_excitation(self, excitation_grid: np.ndarray):
+        xp = self.backend
+        excitation = xp.asarray(excitation_grid, dtype=xp.float32)
+        if excitation.shape != self.resolution:
+            raise ValueError("excitation_grid must match engine resolution")
         return excitation
 
     def _grid_laplacian_with_internal_boundaries(self, field: np.ndarray) -> np.ndarray:

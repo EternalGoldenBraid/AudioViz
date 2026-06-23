@@ -4,8 +4,11 @@ from typing import Optional, Tuple
 import numpy as np
 import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
-from audioviz.source_controls import SyntheticFrequencySource
-from audioviz.source_controls import AudioSourceControls
+from audioviz.source_controls import (
+    AudioSourceControls,
+    CameraFrameSourceControls,
+    SyntheticFrequencySource,
+)
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources.pose import (
@@ -86,6 +89,9 @@ class RippleWaveVisualizer(VisualizerBase):
                  use_shader: bool = False,
                  boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
                  use_pose_sources: bool = False,
+                 use_camera_source: bool = False,
+                 camera_source_index: int = 0,
+                 camera_source_gain: float = 1.0,
                  audio_visual_mapping_mode: str = "legacy",
                  audio_visual_mapping_alpha: float = 50.0,
                  audio_visual_mapping_f0: float = 50.0,
@@ -110,6 +116,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_debug_view: bool = False,
                  pose_extractor: PoseGraphExtractor | None = None,
                  pose_capture=None,
+                 camera_capture=None,
                  **kwargs):
 
         super().__init__(processor, **kwargs)
@@ -123,6 +130,10 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_camera_index = pose_camera_index
         self.boundary_condition = boundary_condition
         self.use_pose_sources = use_pose_sources
+        self.use_camera_source = bool(use_camera_source)
+        self.camera_source_index = int(camera_source_index)
+        self.camera_source_gain = float(camera_source_gain)
+        self.camera_capture = camera_capture
         self.audio_visual_mapping_mode = normalize_audio_visual_mapping_mode(
             audio_visual_mapping_mode
         )
@@ -138,6 +149,10 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.use_pose_sources and (self.use_gpu or self.use_shader):
             raise NotImplementedError(
                 "Pose-medium coupling currently requires the CPU ripple backend."
+            )
+        if self.use_camera_source and self.use_shader:
+            raise NotImplementedError(
+                "Camera-frame source currently requires the CPU/GPU ripple backend."
             )
 
         self.n_sources = n_sources
@@ -210,6 +225,8 @@ class RippleWaveVisualizer(VisualizerBase):
 
         if self.use_pose_sources:
             self._set_pose_sources_enabled(True)
+        if self.use_camera_source:
+            self._ensure_camera_source(camera_index=self.camera_source_index)
 
         layout = QtWidgets.QVBoxLayout(self)
         if self.pose_debug_view:
@@ -304,13 +321,14 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def update_visualization(self):
         freqs = self._resolve_ripple_frequencies()
+        camera_excitation = self._resolve_camera_frame_excitation()
         self.engine.amplitude = self._current_excitation_amplitude(freqs)
 
         if self.use_pose_sources:
-            self._update_pose_visualization(freqs)
+            self._update_pose_visualization(freqs, camera_excitation=camera_excitation)
             return
 
-        if freqs is None:
+        if freqs is None and camera_excitation is None:
             if not self.renderer.prepare_frame():
                 return
             self.engine.step_without_excitation()
@@ -322,7 +340,10 @@ class RippleWaveVisualizer(VisualizerBase):
         if not self.renderer.prepare_frame():
             return
 
-        self.engine.step(freqs)
+        if camera_excitation is not None:
+            self.engine.step_grid_excitation(camera_excitation, frequencies=freqs)
+        else:
+            self.engine.step(freqs)
         self.time = self.engine.time
         self.renderer.render(self.engine)
         self._sync_audio_control_panel(freqs)
@@ -425,6 +446,15 @@ class RippleWaveVisualizer(VisualizerBase):
                     controls=controls,
                 )
             )
+        sections.append(
+            ControlPanelSection(
+                key="camera-source",
+                title="Camera Source",
+                controls=CameraFrameSourceControls(
+                    gain=self.camera_source_gain,
+                ).get_controls(),
+            )
+        )
         for index, frequency_hz in enumerate(self.synthetic_frequencies[:, 0]):
             sections.append(
                 ControlPanelSection(
@@ -453,6 +483,12 @@ class RippleWaveVisualizer(VisualizerBase):
                 available=self.processor is not None,
             ),
             SourceToggle(
+                key="camera",
+                label="Camera Frame",
+                enabled=self.use_camera_source,
+                available=not self.use_shader,
+            ),
+            SourceToggle(
                 key="pose",
                 label="Pose Graph",
                 enabled=self.use_pose_sources,
@@ -468,6 +504,9 @@ class RippleWaveVisualizer(VisualizerBase):
     ) -> None:
         if section_key == "audio-source":
             self._update_audio_source_control(control_key, value)
+            return
+        if section_key == "camera-source":
+            self._update_camera_source_control(control_key, value)
             return
         if control_key != "frequency_hz" or not section_key.startswith("synthetic-source-"):
             raise KeyError(f"Unknown source control: {section_key}.{control_key}")
@@ -525,6 +564,16 @@ class RippleWaveVisualizer(VisualizerBase):
             return
         raise KeyError(f"Unknown audio source control: {control_key}")
 
+    def _update_camera_source_control(
+        self,
+        control_key: str,
+        value: float | bool | int | str,
+    ) -> None:
+        if control_key == "gain":
+            self.camera_source_gain = float(value)
+            return
+        raise KeyError(f"Unknown camera source control: {control_key}")
+
     def _sync_audio_control_panel(self, freqs: np.ndarray | None) -> None:
         if self.control_panel is None or self.processor is None:
             return
@@ -570,10 +619,77 @@ class RippleWaveVisualizer(VisualizerBase):
                 raise RuntimeError("Audio source toggles require an audio processor.")
             self.use_audio_source = enabled
             return
+        if source_key == "camera":
+            if enabled:
+                if self.use_shader:
+                    raise NotImplementedError(
+                        "Camera-frame source currently requires the CPU/GPU ripple backend."
+                    )
+                self._ensure_camera_source(camera_index=self.camera_source_index)
+            self.use_camera_source = enabled
+            return
         if source_key == "pose":
             self._set_pose_sources_enabled(enabled)
             return
         raise KeyError(f"Unknown source toggle: {source_key}")
+
+    def _ensure_camera_source(self, *, camera_index: int) -> None:
+        if self.camera_capture is not None:
+            return
+        cv2 = self._load_cv2()
+        self.camera_capture = cv2.VideoCapture(camera_index)
+        if not self.camera_capture.isOpened():
+            self.camera_capture = None
+            raise RuntimeError(f"Failed to open camera source index {camera_index}")
+
+    def _resolve_camera_frame_excitation(self) -> np.ndarray | None:
+        if not self.use_camera_source:
+            return None
+        self._ensure_camera_source(camera_index=self.camera_source_index)
+        if self.camera_capture is None:
+            return None
+        ok, frame = self.camera_capture.read()
+        if not ok or frame is None:
+            return None
+        return self._camera_frame_to_excitation_grid(frame)
+
+    def _camera_frame_to_excitation_grid(self, frame: np.ndarray) -> np.ndarray:
+        values = np.asarray(frame)
+        if values.ndim == 3:
+            channels = values[..., :3].astype(np.float32)
+            gray = (
+                0.114 * channels[..., 0]
+                + 0.587 * channels[..., 1]
+                + 0.299 * channels[..., 2]
+            )
+        elif values.ndim == 2:
+            gray = values.astype(np.float32)
+        else:
+            raise ValueError(
+                "camera frame must have shape (rows, cols) or (rows, cols, channels)"
+            )
+        if gray.size == 0:
+            raise ValueError("camera frame must not be empty")
+        if values.dtype.kind in {"u", "i"}:
+            gray = gray / np.float32(255.0)
+        else:
+            max_value = float(np.nanmax(gray))
+            if max_value > 1.0:
+                gray = gray / np.float32(255.0)
+        gray = np.nan_to_num(gray, nan=0.0, posinf=1.0, neginf=0.0)
+        gray = np.clip(gray, 0.0, 1.0)
+        mapped = self._resize_camera_grid(gray)
+        return (mapped * np.float32(self.camera_source_gain)).astype(
+            np.float32,
+            copy=False,
+        )
+
+    def _resize_camera_grid(self, values: np.ndarray) -> np.ndarray:
+        rows, cols = self.resolution
+        src_rows, src_cols = values.shape
+        y_index = np.rint(np.linspace(0, src_rows - 1, rows)).astype(np.int32)
+        x_index = np.rint(np.linspace(0, src_cols - 1, cols)).astype(np.int32)
+        return np.ascontiguousarray(values[y_index][:, x_index], dtype=np.float32)
 
     def _set_pose_sources_enabled(self, enabled: bool) -> None:
         if enabled:
@@ -650,7 +766,12 @@ class RippleWaveVisualizer(VisualizerBase):
             )
         raise AssertionError(f"Unhandled pose_render_mode {self.pose_render_mode!r}")
 
-    def _update_pose_visualization(self, freqs: np.ndarray | None) -> None:
+    def _update_pose_visualization(
+        self,
+        freqs: np.ndarray | None,
+        *,
+        camera_excitation: np.ndarray | None = None,
+    ) -> None:
         if self.pose_capture is None or self.pose_extractor is None:
             return
 
@@ -673,7 +794,10 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.pose_debug_view:
             self._update_pose_debug_view(frame, pose, segmentation_mask=segmentation_mask)
         if not pose.coords.size:
-            self._render_pose_field_without_detection(freqs)
+            self._render_pose_field_without_detection(
+                freqs,
+                camera_excitation=camera_excitation,
+            )
             return
 
         now = time.monotonic()
@@ -697,14 +821,22 @@ class RippleWaveVisualizer(VisualizerBase):
             valid=valid,
             adjacency=pose.adjacency,
         )
-        self._render_pose_medium(freqs)
+        self._render_pose_medium(freqs, camera_excitation=camera_excitation)
 
-    def _render_pose_field_without_detection(self, freqs: np.ndarray | None) -> None:
+    def _render_pose_field_without_detection(
+        self,
+        freqs: np.ndarray | None,
+        *,
+        camera_excitation: np.ndarray | None = None,
+    ) -> None:
         if self.pose_state is None:
-            if freqs is not None:
+            if freqs is not None or camera_excitation is not None:
                 if not self.renderer.prepare_frame():
                     return
-                self.engine.step(freqs)
+                if camera_excitation is not None:
+                    self.engine.step_grid_excitation(camera_excitation, frequencies=freqs)
+                else:
+                    self.engine.step(freqs)
                 self.time = self.engine.time
                 self._render_scene()
                 return
@@ -718,7 +850,7 @@ class RippleWaveVisualizer(VisualizerBase):
             valid=np.zeros(self.pose_state.num_nodes, dtype=bool),
             adjacency=self.pose_state.adjacency,
         )
-        self._render_pose_medium(freqs)
+        self._render_pose_medium(freqs, camera_excitation=camera_excitation)
 
     def _render_pose_field(self, source_excitations: np.ndarray) -> None:
         if not self.renderer.prepare_frame():
@@ -728,11 +860,16 @@ class RippleWaveVisualizer(VisualizerBase):
         self.time = self.engine.time
         self._render_scene()
 
-    def _render_pose_medium(self, freqs: np.ndarray | None) -> None:
+    def _render_pose_medium(
+        self,
+        freqs: np.ndarray | None,
+        *,
+        camera_excitation: np.ndarray | None = None,
+    ) -> None:
         if not self.renderer.prepare_frame():
             return
 
-        self.engine.step_pose_medium(freqs)
+        self.engine.step_pose_medium(freqs, grid_excitation=camera_excitation)
         if self.pose_state is not None:
             self.pose_state.set_ripple_states(self.engine.get_pose_medium_state())
         self.time = self.engine.time
@@ -971,6 +1108,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def closeEvent(self, event):
         self.close_pose_sources()
+        self.close_camera_source()
         super().closeEvent(event)
 
     def close_pose_sources(self) -> None:
@@ -980,6 +1118,11 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.pose_capture is not None:
             self.pose_capture.release()
             self.pose_capture = None
+
+    def close_camera_source(self) -> None:
+        if self.camera_capture is not None:
+            self.camera_capture.release()
+            self.camera_capture = None
 
     def _create_pose_debug_widget(self):
         widget = pg.GraphicsLayoutWidget()
