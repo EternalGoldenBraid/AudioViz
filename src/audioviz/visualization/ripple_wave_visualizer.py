@@ -84,6 +84,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  speed: float = 340.0,
                  damping: float = 0.999,
                  use_synthetic: bool = True,
+                 use_audio_source: bool | None = None,
                  apply_gaussian_smoothing: bool = False,
                  use_gpu: bool = False,
                  use_shader: bool = False,
@@ -123,7 +124,11 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.processor = processor
         self.use_synthetic = use_synthetic
-        self.use_audio_source = processor is not None and not use_synthetic
+        self.use_audio_source = (
+            processor is not None and not use_synthetic
+            if use_audio_source is None
+            else processor is not None and bool(use_audio_source)
+        )
         self.use_gpu = use_gpu
         self.use_shader = use_shader
         self.pose_model_path = pose_model_path

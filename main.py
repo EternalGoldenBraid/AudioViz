@@ -20,65 +20,181 @@ from audioviz.utils.audio_devices import AudioDeviceDesktop
 from audioviz.utils.guitar_profiles import GuitarProfile  
 
 
-# --- High-level switches ---
-IS_STREAMING = True
-# SHOW_SPECTROGRAM = True
-SHOW_SPECTROGRAM = False
-SHOW_HELIX = False
-SHOW_RIPPLES = True
-
-# --- Audio / spectrogram config ---
-DATA_PATH = Path("/home/nicklas/Projects/AudioViz/data")
-AUDIO_FILE = DATA_PATH / "test.wav"
-IO_BLOCKSIZE = 2096
-N_FFT = 256
-WINDOW_DURATION_MS = 20
-
-# --- Plotting config ---
-PLOT_UPDATE_INTERVAL_MS = 100
-WAVEFORM_PLOT_DURATION_S = 0.5
-PLOT_WINDOW_DURATION_S = 5.0
-
-# --- Ripple config ---
-RIPPLE_CONFIG = {
-    "use_synthetic": True,
-    # "use_synthetic": False,
-    # "n_sources": 3,
-    "n_sources": 1,
-    # "plane_size_m": (50.0, 50.0),
-    "plane_size_m": (500.0, 500.0),
-    # "resolution": (640, 860),
-    # "resolution": (480, 640),
-    "resolution": (320, 320),
-    "frequency": 2.0,
-    # "amplitude": 0.002,
-    "amplitude": 1.0,
-    "decay_alpha": 0.0,
-    "speed": 340.0,
-    # "damping": 0.999,
-    "damping": 0.988,
-    # "damping": 0.799,
-    "use_gpu": False,
-    # "use_opengl": True,
-    "use_opengl": False,
-    "boundary_condition": "neumann",
-    "use_pose_sources": True,
-    # "use_pose_sources": False,
-    "pose_model_path": "models/pose_landmarker_lite.task",
-    "pose_camera_index": 0,
-    # "pose_acceleration_scale": 1e2,
-    # "pose_max_excitation": 0.5,
-    "pose_acceleration_scale": 0.,
-    "pose_max_excitation": 0.0,
-    # "pose_debug_view": True,
-    "pose_debug_view": False,
+# --- App config ---
+APP_CONFIG = {
+    "is_streaming": True,
+    "windows": {
+        "spectrogram": {
+            # "enabled": True,
+            "enabled": False,
+            "title": "Audio Visualizer",
+            "size": (800, 600),
+        },
+        "helix": {
+            "enabled": False,
+            "title": "Pitch Helix Visualizer",
+            "size": (800, 600),
+        },
+        "ripples": {
+            "enabled": True,
+            "title": "Ripple Wave Visualizer",
+            "size": (600, 600),
+        },
+    },
 }
+
+AUDIO_CONFIG = {
+    "data_path": Path("/home/nicklas/Projects/AudioViz/data"),
+    "file_name": "test.wav",
+    "io_blocksize": 2096,
+    "analysis": {
+        "n_fft": 256,
+        "window_duration_ms": 20,
+        "n_mels": None,
+    },
+    "plotting": {
+        "update_interval_ms": 100,
+        "waveform_duration_s": 0.5,
+        "window_duration_s": 5.0,
+        "colormap": "viridis",
+        "db_range": (-80, 0),
+    },
+}
+
+RIPPLE_CONFIG = {
+    "field": {
+        "n_sources": 1,
+        "plane_size_m": (500.0, 500.0),
+        "resolution": (480, 640),
+    },
+    "dynamics": {
+        "amplitude": 1.0,
+        "decay_alpha": 0.1,
+        "speed": 340.0,
+        "damping": 0.988,
+        "boundary_condition": "neumann",
+    },
+    "renderer": {
+        "backend": "numpy",  # numpy | gpu | opengl
+        "auto_color_activation_threshold": 0.1,
+        "auto_color_floor": 0.1,
+    },
+    "sources": {
+        "synthetic": {
+            "enabled": False,
+            "frequency": 20.0,
+        },
+        "audio": {
+            "enabled": False,
+            "signal_gate_threshold": 0.05,
+            "drive_amplitude": 1.0,
+            "peak_picking": {
+                "minimum_peak_magnitude": 0.1,
+                "peak_prominence_ratio": 5.0,
+                "top_k_count": 3,
+            },
+            "mapping": {
+                # "legacy": alpha * log10(1 + f_audio / f0) * exp(-f_audio / fc)
+                # "linear": linear_offset + linear_scale * f_audio
+                "mode": "legacy",
+                "alpha": 50.0,
+                "f0": 50.0,
+                "fc": 2000.0,
+                "linear_scale": 0.05,
+                "linear_offset": 0.0,
+            },
+        },
+        "pose": {
+            "enabled": False,
+            "render_mode": "standing-body",
+            "model_path": "models/pose_landmarker_lite.task",
+            "camera_index": 0,
+            "debug_view": False,
+            "medium": {
+                "graph_stiffness": 0.25,
+                "field_width_fraction": 1.0,
+                "field_height_fraction": 1.0,
+            },
+            "boundary": {
+                "transmission": 0.54,
+                "dissipation": 0.06,
+            },
+        },
+        "camera_frame": {
+            "enabled": False,
+            "camera_index": 1,
+            "gain": 1.0,
+        },
+    },
+}
+
+
+def build_ripple_visualizer_config(config: Dict) -> Dict:
+    sources = config["sources"]
+    renderer = config["renderer"]
+    audio = sources["audio"]
+    audio_mapping = audio["mapping"]
+    pose = sources["pose"]
+    pose_medium = pose["medium"]
+    pose_boundary = pose["boundary"]
+    camera_frame = sources["camera_frame"]
+    backend = renderer["backend"]
+
+    return {
+        **config["field"],
+        **config["dynamics"],
+        "use_synthetic": sources["synthetic"]["enabled"],
+        "frequency": sources["synthetic"]["frequency"],
+        "use_audio_source": audio["enabled"],
+        "audio_signal_gate_threshold": audio["signal_gate_threshold"],
+        "audio_drive_amplitude": audio["drive_amplitude"],
+        "audio_visual_mapping_mode": audio_mapping["mode"],
+        "audio_visual_mapping_alpha": audio_mapping["alpha"],
+        "audio_visual_mapping_f0": audio_mapping["f0"],
+        "audio_visual_mapping_fc": audio_mapping["fc"],
+        "audio_visual_linear_scale": audio_mapping["linear_scale"],
+        "audio_visual_linear_offset": audio_mapping["linear_offset"],
+        "use_pose_sources": pose["enabled"],
+        "pose_render_mode": pose["render_mode"],
+        "pose_model_path": pose["model_path"],
+        "pose_camera_index": pose["camera_index"],
+        "pose_debug_view": pose["debug_view"],
+        "pose_graph_stiffness": pose_medium["graph_stiffness"],
+        "pose_field_width_fraction": pose_medium["field_width_fraction"],
+        "pose_field_height_fraction": pose_medium["field_height_fraction"],
+        "body_boundary_transmission": pose_boundary["transmission"],
+        "body_boundary_dissipation": pose_boundary["dissipation"],
+        "use_camera_source": camera_frame["enabled"],
+        "camera_source_index": camera_frame["camera_index"],
+        "camera_source_gain": camera_frame["gain"],
+        "use_gpu": backend == "gpu",
+        "use_shader": backend == "opengl",
+        "auto_color_activation_threshold": renderer["auto_color_activation_threshold"],
+        "auto_color_floor": renderer["auto_color_floor"],
+    }
+
+
+def configure_audio_source_processor(processor: AudioProcessor, config: Dict) -> None:
+    peak_picking = config["sources"]["audio"]["peak_picking"]
+    processor.minimum_frequency_peak_magnitude = float(
+        peak_picking["minimum_peak_magnitude"]
+    )
+    processor.minimum_frequency_peak_to_median_ratio = float(
+        peak_picking["peak_prominence_ratio"]
+    )
+    processor.minimum_signal_level = float(
+        config["sources"]["audio"]["signal_gate_threshold"]
+    )
+    processor.set_num_top_frequencies(int(peak_picking["top_k_count"]))
 
 
 def main():
     # --- Config Phase ---
-    
-    is_streaming = IS_STREAMING
+
+    is_streaming = APP_CONFIG["is_streaming"]
+    audio_file = AUDIO_CONFIG["data_path"] / AUDIO_CONFIG["file_name"]
+    audio_analysis_config = AUDIO_CONFIG["analysis"]
+    audio_plotting_config = AUDIO_CONFIG["plotting"]
     
     if is_streaming:
         data = None
@@ -86,7 +202,7 @@ def main():
         config = select_devices(config_file=Path("outputs/audio_devices.json"))
         sr: Union[int, float] = config["samplerate"]
     else:
-        data, sr = lr.load(AUDIO_FILE, sr=None)
+        data, sr = lr.load(audio_file, sr=None)
     
         config = {
             "input_device_index": None,
@@ -102,18 +218,18 @@ def main():
         "input_channels": config["input_channels"],
         "output_device_index": config["output_device_index"],
         "output_channels": config["output_channels"],
-        "io_blocksize": IO_BLOCKSIZE,
+        "io_blocksize": AUDIO_CONFIG["io_blocksize"],
     }
     
     # Spectrogram parameters
-    n_fft = N_FFT
-    window_length = int((WINDOW_DURATION_MS / 1000) * sr)
+    n_fft = audio_analysis_config["n_fft"]
+    window_length = int((audio_analysis_config["window_duration_ms"] / 1000) * sr)
     window_length = 2**int(np.log2(window_length))
     
     spectrogram_params = {
         "n_fft": n_fft,
         "hop_length": window_length // 4,
-        "n_mels": None,
+        "n_mels": audio_analysis_config["n_mels"],
         "stft_window": lr.filters.get_window("hann", window_length),
     }
     
@@ -131,16 +247,16 @@ def main():
         spectrogram_params["mel_spec_max"] = 0.0
     
     # Plotting configs
-    cmap = cm.get_cmap('viridis')
-    norm = Normalize(vmin=-80, vmax=0)
-    plot_update_interval = PLOT_UPDATE_INTERVAL_MS
+    cmap = cm.get_cmap(audio_plotting_config["colormap"])
+    norm = Normalize(*audio_plotting_config["db_range"])
+    plot_update_interval = audio_plotting_config["update_interval_ms"]
     
     plotting_config = {
         "cmap": cmap,
         "norm": norm,
         "plot_update_interval": plot_update_interval,
-        "num_samples_in_plot_window": int(PLOT_WINDOW_DURATION_S * sr),
-        "waveform_plot_duration": WAVEFORM_PLOT_DURATION_S,
+        "num_samples_in_plot_window": int(audio_plotting_config["window_duration_s"] * sr),
+        "waveform_plot_duration": audio_plotting_config["waveform_duration_s"],
     }
     
     # --- Run Phase ---
@@ -163,8 +279,9 @@ def main():
         output_device_index=io_config["output_device_index"],
         output_channels=io_config["output_channels"] or 1,
         io_blocksize=io_config["io_blocksize"],
-        number_top_k_frequencies=n_fft//2,
+        number_top_k_frequencies=n_fft // 2,
     )
+    configure_audio_source_processor(processor, RIPPLE_CONFIG)
     
     # Create a processing timer
     block_duration_ms = (io_config["io_blocksize"] / sr) * 1000
@@ -175,21 +292,21 @@ def main():
     processing_timer.start()
     
     # Visualizer
-    show_spectrogram = SHOW_SPECTROGRAM
-    if show_spectrogram == True:
+    spectrogram_window_config = APP_CONFIG["windows"]["spectrogram"]
+    if spectrogram_window_config["enabled"]:
         visualizer = SpectrogramVisualizer(
             processor=processor,
             cmap=plotting_config["cmap"],
             norm=plotting_config["norm"],
             waveform_plot_duration=plotting_config["waveform_plot_duration"],
         )
-        visualizer.setWindowTitle("Audio Visualizer")
-        visualizer.resize(800, 600)
+        visualizer.setWindowTitle(spectrogram_window_config["title"])
+        visualizer.resize(*spectrogram_window_config["size"])
         visualizer.show()
     
     # Create Pitch Helix Visualizer
-    show_helix = SHOW_HELIX
-    if show_helix:
+    helix_window_config = APP_CONFIG["windows"]["helix"]
+    if helix_window_config["enabled"]:
         standard_guitar = GuitarProfile(
             open_strings=[82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
             num_frets=22
@@ -204,22 +321,20 @@ def main():
             processor=processor,
             guitar_profile=standard_guitar,
         )
-        helix_window.setWindowTitle("Pitch Helix Visualizer")
-        helix_window.resize(800, 600)
+        helix_window.setWindowTitle(helix_window_config["title"])
+        helix_window.resize(*helix_window_config["size"])
         helix_window.show()
     
     # Create Ripple Wave Visualizer
-    show_ripples = SHOW_RIPPLES
-    
-    if show_ripples:
-        ripple_config = RIPPLE_CONFIG.copy()
-        ripple_config["use_shader"] = ripple_config.pop("use_opengl")
+    ripples_window_config = APP_CONFIG["windows"]["ripples"]
+    if ripples_window_config["enabled"]:
+        ripple_config = build_ripple_visualizer_config(RIPPLE_CONFIG)
         ripple_window = RippleWaveVisualizer(
             processor=processor,
             **ripple_config
         )
-        ripple_window.setWindowTitle("Ripple Wave Visualizer (Synthetic)")
-        ripple_window.resize(600, 600)
+        ripple_window.setWindowTitle(ripples_window_config["title"])
+        ripple_window.resize(*ripples_window_config["size"])
         ripple_window.show()
     
     # Start audio

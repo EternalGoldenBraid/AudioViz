@@ -435,6 +435,31 @@ def test_ripple_visualizer_maps_audio_frequencies_before_ripple_drive():
     app.processEvents()
 
 
+def test_ripple_visualizer_respects_explicit_audio_source_enabled_state():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    processor = _FakeProcessor([440.0])
+    visualizer = RippleWaveVisualizer(
+        processor=processor,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_audio_source=False,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+
+    assert visualizer.use_audio_source is False
+    assert visualizer._resolve_audio_frequencies() is None
+    app.processEvents()
+
+
 def test_ripple_visualizer_uses_configured_audio_frequency_mapping():
     from PyQt5 import QtWidgets
 
