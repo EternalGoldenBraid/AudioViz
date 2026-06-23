@@ -4,17 +4,15 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
 from PyQt5 import QtWidgets
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
-    QAction,
+    QButtonGroup,
     QCheckBox,
-    QComboBox,
     QDoubleSpinBox,
     QLabel,
-    QMenu,
+    QRadioButton,
     QScrollArea,
     QSlider,
-    QToolButton,
 )
 
 from audioviz.engine import RippleEngine
@@ -34,6 +32,64 @@ class SourceToggle:
     label: str
     enabled: bool
     available: bool = True
+
+
+class InlineChoiceControl(QtWidgets.QWidget):
+    value_changed = pyqtSignal(object)
+
+    def __init__(
+        self,
+        choices: Sequence[ControlValue],
+        default: ControlValue,
+        parent: QtWidgets.QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self._buttons: list[QRadioButton] = []
+        self._suppress_emit = False
+        self.button_group = QButtonGroup(self)
+        self.button_group.setExclusive(True)
+
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        for choice in choices:
+            button = QRadioButton(str(choice))
+            button.setProperty("control_value", choice)
+            button.toggled.connect(
+                lambda checked, button=button: self._button_toggled(button, checked)
+            )
+            self.button_group.addButton(button)
+            self._buttons.append(button)
+            layout.addWidget(button)
+            if str(choice) == str(default):
+                button.setChecked(True)
+        layout.addStretch(1)
+        if self.button_group.checkedButton() is None and self._buttons:
+            self._buttons[0].setChecked(True)
+
+    def value(self) -> ControlValue | None:
+        button = self.button_group.checkedButton()
+        if button is None:
+            return None
+        return button.property("control_value")
+
+    def set_value(self, value: ControlValue, *, emit: bool = True) -> None:
+        target = str(value)
+        for button in self._buttons:
+            if str(button.property("control_value")) == target:
+                self._suppress_emit = not emit
+                try:
+                    button.setChecked(True)
+                finally:
+                    self._suppress_emit = False
+                return
+
+    def setCurrentText(self, value: str) -> None:
+        self.set_value(value)
+
+    def _button_toggled(self, button: QRadioButton, checked: bool) -> None:
+        if checked and not self._suppress_emit:
+            self.value_changed.emit(button.property("control_value"))
 
 
 class RippleControlPanel(QtWidgets.QWidget):
@@ -80,7 +136,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.before_reset = before_reset
         self.on_reset = on_reset
         self.source_control_widgets: dict[tuple[str, str], QtWidgets.QWidget] = {}
-        self.source_toggle_actions: dict[str, QAction] = {}
+        self.source_toggle_checkboxes: dict[str, QCheckBox] = {}
 
         self.setWindowTitle("Ripple Controls")
         layout = QtWidgets.QVBoxLayout(self)
@@ -237,13 +293,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         source_controls_group = QtWidgets.QGroupBox("Source Controls")
         source_controls_layout = QtWidgets.QVBoxLayout(source_controls_group)
         if self.source_toggles:
-            self.source_toggle_button = QToolButton()
-            self.source_toggle_button.setPopupMode(QToolButton.InstantPopup)
-            self.source_toggle_button.setToolButtonStyle(Qt.ToolButtonTextOnly)
-            self.source_toggle_menu = QMenu(self.source_toggle_button)
-            self.source_toggle_button.setMenu(self.source_toggle_menu)
-            self._populate_source_toggle_menu()
-            source_controls_layout.addWidget(self.source_toggle_button)
+            self._add_source_toggle_controls(source_controls_layout)
         if self.source_sections:
             for section in self.source_sections:
                 source_group = QtWidgets.QGroupBox(section.title)
@@ -385,15 +435,9 @@ class RippleControlPanel(QtWidgets.QWidget):
         self,
         section_key: str,
         control: SourceControl,
-    ) -> QComboBox:
-        widget = QComboBox()
-        for choice in control.choices:
-            widget.addItem(str(choice), choice)
-        default = str(control.default)
-        index = widget.findText(default)
-        if index >= 0:
-            widget.setCurrentIndex(index)
-        widget.currentTextChanged.connect(
+    ) -> InlineChoiceControl:
+        widget = InlineChoiceControl(control.choices, control.default)
+        widget.value_changed.connect(
             lambda value, section_key=section_key, control_key=control.key: self._emit_source_control_change(
                 section_key, control_key, str(value)
             )
@@ -436,12 +480,8 @@ class RippleControlPanel(QtWidgets.QWidget):
         if isinstance(widget, QLabel):
             widget.setText(str(value))
             return
-        if isinstance(widget, QComboBox):
-            index = widget.findText(str(value))
-            if index >= 0 and index != widget.currentIndex():
-                widget.blockSignals(True)
-                widget.setCurrentIndex(index)
-                widget.blockSignals(False)
+        if isinstance(widget, InlineChoiceControl):
+            widget.set_value(value, emit=False)
             return
         if isinstance(widget, QDoubleSpinBox):
             widget.blockSignals(True)
@@ -450,30 +490,24 @@ class RippleControlPanel(QtWidgets.QWidget):
             return
         raise TypeError(f"Unsupported source control widget type: {type(widget)!r}")
 
-    def _populate_source_toggle_menu(self) -> None:
-        self.source_toggle_menu.clear()
-        self.source_toggle_actions.clear()
+    def _add_source_toggle_controls(self, layout: QtWidgets.QVBoxLayout) -> None:
+        row = QtWidgets.QWidget()
+        row_layout = QtWidgets.QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(8)
+        row_layout.addWidget(QLabel("Active Sources:"))
         for toggle in self.source_toggles:
-            action = self.source_toggle_menu.addAction(toggle.label)
-            action.setCheckable(True)
-            action.setChecked(toggle.enabled)
-            action.setEnabled(toggle.available)
-            action.toggled.connect(
+            checkbox = QCheckBox(toggle.label)
+            checkbox.setChecked(toggle.enabled)
+            checkbox.setEnabled(toggle.available)
+            checkbox.toggled.connect(
                 lambda checked, key=toggle.key: self._emit_source_toggle_change(key, checked)
             )
-            self.source_toggle_actions[toggle.key] = action
-        self._update_source_toggle_button_text()
-
-    def _update_source_toggle_button_text(self) -> None:
-        enabled_labels = [
-            action.text()
-            for action in self.source_toggle_actions.values()
-            if action.isEnabled() and action.isChecked()
-        ]
-        label = ", ".join(enabled_labels) if enabled_labels else "None"
-        self.source_toggle_button.setText(f"Active Sources: {label}")
+            self.source_toggle_checkboxes[toggle.key] = checkbox
+            row_layout.addWidget(checkbox)
+        row_layout.addStretch(1)
+        layout.addWidget(row)
 
     def _emit_source_toggle_change(self, source_key: str, enabled: bool) -> None:
-        self._update_source_toggle_button_text()
         if self.on_source_toggle_changed is not None:
             self.on_source_toggle_changed(source_key, enabled)

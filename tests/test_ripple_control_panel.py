@@ -2,7 +2,7 @@ import pytest
 
 from audioviz.engine import RippleEngine
 from audioviz.source_controls import SourceControl
-from audioviz.visualization.ripple_control_panel import ControlPanelSection
+from audioviz.visualization.ripple_control_panel import ControlPanelSection, SourceToggle
 
 
 @pytest.fixture
@@ -90,8 +90,10 @@ def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_d
         ),
     )
 
-    combo = panel.source_control_widgets[("audio-source", "mapping_mode")]
-    combo.setCurrentText("linear")
+    choice = panel.source_control_widgets[("audio-source", "mapping_mode")]
+    buttons = choice.findChildren(QtWidgets.QRadioButton)
+    assert [button.text() for button in buttons] == ["legacy", "linear"]
+    buttons[1].click()
     panel.set_source_control_value("audio-source", "signal_level", "0.42")
     panel.auto_color_threshold_slider.setValue(30)
     panel.auto_color_floor_slider.setValue(25)
@@ -101,3 +103,36 @@ def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_d
     assert panel.source_control_widgets[("audio-source", "signal_level")].text() == "0.42"
     assert auto_threshold_values[-1] == 0.3
     assert auto_floor_values[-1] == 0.25
+
+
+def test_ripple_control_panel_renders_source_toggles_inline(ripple_panel_deps):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=10.0,
+        damping=0.999,
+        amplitude=1.0,
+        use_gpu=False,
+    )
+    toggle_events = []
+    panel = RippleControlPanel(
+        engine,
+        source_toggles=(
+            SourceToggle("audio", "Audio", enabled=False, available=True),
+            SourceToggle("pose", "Pose Graph", enabled=True, available=False),
+        ),
+        on_source_toggle_changed=lambda key, enabled: toggle_events.append(
+            (key, enabled)
+        ),
+    )
+
+    audio_toggle = panel.source_toggle_checkboxes["audio"]
+    pose_toggle = panel.source_toggle_checkboxes["pose"]
+    audio_toggle.click()
+    app.processEvents()
+
+    assert audio_toggle.isChecked()
+    assert not pose_toggle.isEnabled()
+    assert toggle_events[-1] == ("audio", True)
