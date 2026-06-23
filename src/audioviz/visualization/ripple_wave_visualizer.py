@@ -1,5 +1,3 @@
-from contextlib import contextmanager
-import os
 import time
 from typing import Optional, Tuple
 
@@ -639,31 +637,12 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.camera_capture is not None:
             return
         cv2 = self._load_cv2()
-        with self._suppress_native_stderr():
-            capture = cv2.VideoCapture(camera_index)
-            opened = capture.isOpened()
-            if not opened:
-                capture.release()
-        if not opened:
+        capture = cv2.VideoCapture(camera_index)
+        if not capture.isOpened():
+            capture.release()
             self.camera_capture = None
             raise RuntimeError(f"Failed to open camera source index {camera_index}")
         self.camera_capture = capture
-
-    @staticmethod
-    @contextmanager
-    def _suppress_native_stderr():
-        try:
-            stderr_fd = 2
-            saved_fd = os.dup(stderr_fd)
-            with open(os.devnull, "w") as devnull:
-                os.dup2(devnull.fileno(), stderr_fd)
-                yield
-        except OSError:
-            yield
-        finally:
-            if "saved_fd" in locals():
-                os.dup2(saved_fd, stderr_fd)
-                os.close(saved_fd)
 
     def _resolve_camera_frame_excitation(self) -> np.ndarray | None:
         if not self.use_camera_source:
