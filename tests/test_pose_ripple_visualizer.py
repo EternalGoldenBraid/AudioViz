@@ -22,6 +22,25 @@ class _FakeCapture:
         self.released = True
 
 
+class _FailedCameraCapture:
+    def __init__(self):
+        self.released = False
+
+    def isOpened(self):
+        return False
+
+    def release(self):
+        self.released = True
+
+
+class _FakeCv2:
+    def __init__(self):
+        self.capture = _FailedCameraCapture()
+
+    def VideoCapture(self, _camera_index):
+        return self.capture
+
+
 class _FakeExtractor:
     def __init__(self):
         self.frames = [
@@ -216,6 +235,35 @@ def test_ripple_visualizer_camera_source_updates_field_and_releases_capture():
 
     visualizer.close_camera_source()
     assert capture.released
+    app.processEvents()
+
+
+def test_ripple_visualizer_releases_failed_camera_capture():
+    import pytest
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    fake_cv2 = _FakeCv2()
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(6, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+    )
+    visualizer.timer.stop()
+    visualizer._load_cv2 = lambda: fake_cv2
+
+    with pytest.raises(RuntimeError, match="Failed to open camera source index 0"):
+        visualizer._ensure_camera_source(camera_index=0)
+
+    assert fake_cv2.capture.released
+    assert visualizer.camera_capture is None
     app.processEvents()
 
 

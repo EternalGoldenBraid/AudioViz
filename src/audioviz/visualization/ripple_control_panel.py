@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
+from loguru import logger
 from PyQt5 import QtWidgets
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
@@ -510,4 +511,12 @@ class RippleControlPanel(QtWidgets.QWidget):
 
     def _emit_source_toggle_change(self, source_key: str, enabled: bool) -> None:
         if self.on_source_toggle_changed is not None:
-            self.on_source_toggle_changed(source_key, enabled)
+            try:
+                self.on_source_toggle_changed(source_key, enabled)
+            except Exception as exc:
+                checkbox = self.source_toggle_checkboxes.get(source_key)
+                if checkbox is not None:
+                    checkbox.blockSignals(True)
+                    checkbox.setChecked(not enabled)
+                    checkbox.blockSignals(False)
+                logger.warning(f"Failed to update source toggle {source_key!r}: {exc}")

@@ -136,3 +136,33 @@ def test_ripple_control_panel_renders_source_toggles_inline(ripple_panel_deps):
     assert audio_toggle.isChecked()
     assert not pose_toggle.isEnabled()
     assert toggle_events[-1] == ("audio", True)
+
+
+def test_ripple_control_panel_reverts_source_toggle_when_callback_fails(
+    ripple_panel_deps,
+):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=10.0,
+        damping=0.999,
+        amplitude=1.0,
+        use_gpu=False,
+    )
+
+    def fail_toggle(_key, _enabled):
+        raise RuntimeError("camera unavailable")
+
+    panel = RippleControlPanel(
+        engine,
+        source_toggles=(SourceToggle("camera", "Camera Frame", enabled=False),),
+        on_source_toggle_changed=fail_toggle,
+    )
+
+    camera_toggle = panel.source_toggle_checkboxes["camera"]
+    camera_toggle.click()
+    app.processEvents()
+
+    assert not camera_toggle.isChecked()

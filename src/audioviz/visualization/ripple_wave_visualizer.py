@@ -637,10 +637,12 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.camera_capture is not None:
             return
         cv2 = self._load_cv2()
-        self.camera_capture = cv2.VideoCapture(camera_index)
-        if not self.camera_capture.isOpened():
+        capture = cv2.VideoCapture(camera_index)
+        if not capture.isOpened():
+            capture.release()
             self.camera_capture = None
             raise RuntimeError(f"Failed to open camera source index {camera_index}")
+        self.camera_capture = capture
 
     def _resolve_camera_frame_excitation(self) -> np.ndarray | None:
         if not self.use_camera_source:
