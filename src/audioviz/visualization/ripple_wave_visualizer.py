@@ -99,6 +99,8 @@ class RippleWaveVisualizer(VisualizerBase):
                  prediction_error_sigma: float = 0.1,
                  prediction_error_output_mode: str = "bits",
                  prediction_error_gain: float = 1.0,
+                 prediction_error_prediction_clip: float = 10.0,
+                 prediction_error_max_output: float = 10.0,
                  audio_visual_mapping_mode: str = "legacy",
                  audio_visual_mapping_alpha: float = 50.0,
                  audio_visual_mapping_f0: float = 50.0,
@@ -153,6 +155,10 @@ class RippleWaveVisualizer(VisualizerBase):
         self.prediction_error_sigma = float(prediction_error_sigma)
         self.prediction_error_output_mode = str(prediction_error_output_mode)
         self.prediction_error_gain = float(prediction_error_gain)
+        self.prediction_error_prediction_clip = float(
+            prediction_error_prediction_clip
+        )
+        self.prediction_error_max_output = float(prediction_error_max_output)
         self._validate_prediction_error_transform_config()
         self.audio_visual_mapping_mode = normalize_audio_visual_mapping_mode(
             audio_visual_mapping_mode
@@ -717,6 +723,10 @@ class RippleWaveVisualizer(VisualizerBase):
     def _validate_prediction_error_transform_config(self) -> None:
         if self.prediction_error_sigma <= 0.0:
             raise ValueError("prediction_error_sigma must be positive")
+        if self.prediction_error_prediction_clip <= 0.0:
+            raise ValueError("prediction_error_prediction_clip must be positive")
+        if self.prediction_error_max_output <= 0.0:
+            raise ValueError("prediction_error_max_output must be positive")
         if self.prediction_error_predictor_source != "ripple_state":
             raise ValueError(
                 "prediction_error_predictor_source must be 'ripple_state'"
@@ -742,7 +752,13 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _prediction_error_transform(self, observation: np.ndarray) -> np.ndarray:
         prediction = self._prediction_from_ripple_state()
-        error = np.asarray(observation, dtype=np.float32) - prediction
+        observed = np.nan_to_num(
+            np.asarray(observation, dtype=np.float64),
+            nan=0.0,
+            posinf=self.prediction_error_prediction_clip,
+            neginf=-self.prediction_error_prediction_clip,
+        )
+        error = observed - prediction.astype(np.float64, copy=False)
         mode = self.prediction_error_output_mode
         if mode == "raw_error":
             transformed = error
@@ -751,22 +767,33 @@ class RippleWaveVisualizer(VisualizerBase):
         elif mode == "squared_error":
             transformed = error * error
         elif mode == "bits":
-            sigma = np.float32(self.prediction_error_sigma)
+            sigma = np.float64(self.prediction_error_sigma)
             transformed = (error * error) / (
-                np.float32(2.0) * sigma * sigma * np.float32(np.log(2.0))
+                np.float64(2.0) * sigma * sigma * np.float64(np.log(2.0))
             )
         else:
             raise ValueError(f"Unknown prediction error output mode: {mode}")
-        return (transformed * np.float32(self.prediction_error_gain)).astype(
-            np.float32,
-            copy=False,
+        transformed = transformed * np.float64(self.prediction_error_gain)
+        max_output = np.float64(self.prediction_error_max_output)
+        transformed = np.nan_to_num(
+            transformed,
+            nan=0.0,
+            posinf=max_output,
+            neginf=-max_output,
         )
+        if mode == "raw_error":
+            transformed = np.clip(transformed, -max_output, max_output)
+        else:
+            transformed = np.clip(transformed, 0.0, max_output)
+        return transformed.astype(np.float32, copy=False)
 
     def _prediction_from_ripple_state(self) -> np.ndarray:
         field = np.asarray(self.engine.get_field_numpy(), dtype=np.float32)
         if field.shape != self.resolution:
             raise ValueError("ripple-state prediction must match engine resolution")
-        return np.nan_to_num(field, nan=0.0, posinf=0.0, neginf=0.0)
+        clip = np.float32(self.prediction_error_prediction_clip)
+        field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
+        return np.clip(field, -clip, clip).astype(np.float32, copy=False)
 
     def _set_pose_sources_enabled(self, enabled: bool) -> None:
         if enabled:

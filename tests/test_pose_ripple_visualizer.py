@@ -272,6 +272,49 @@ def test_ripple_visualizer_prediction_error_transform_outputs_gaussian_bits():
     app.processEvents()
 
 
+def test_ripple_visualizer_prediction_error_transform_clips_runaway_values():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(2, 2),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+        prediction_error_transform_enabled=True,
+        prediction_error_sigma=0.1,
+        prediction_error_output_mode="bits",
+        prediction_error_prediction_clip=5.0,
+        prediction_error_max_output=3.0,
+    )
+    visualizer.timer.stop()
+    visualizer.engine.Z[:] = np.array(
+        [[1e30, np.inf], [np.nan, -np.inf]],
+        dtype=np.float32,
+    )
+    observation = np.array(
+        [[0.0, np.inf], [np.nan, -np.inf]],
+        dtype=np.float32,
+    )
+
+    with np.errstate(all="raise"):
+        transformed = visualizer._apply_source_transforms(
+            "camera_frame",
+            observation,
+        )
+
+    assert np.all(np.isfinite(transformed))
+    assert np.min(transformed) >= 0.0
+    assert np.max(transformed) <= 3.0
+    app.processEvents()
+
+
 def test_ripple_visualizer_prediction_error_transform_rejects_invalid_config():
     import pytest
     from PyQt5 import QtWidgets
