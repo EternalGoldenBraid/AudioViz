@@ -103,6 +103,11 @@ class RippleWaveVisualizer(VisualizerBase):
                  prediction_error_gain: float = 1.0,
                  prediction_error_prediction_clip: float = 10.0,
                  prediction_error_max_output: float = 10.0,
+                 prediction_error_learning_enabled: bool = False,
+                 prediction_error_learning_rate: float = 1e-4,
+                 prediction_error_learning_weight_decay: float = 1e-4,
+                 prediction_error_learning_weight_clip: float = 1.0,
+                 prediction_error_learning_gradient_clip: float = 1.0,
                  audio_visual_mapping_mode: str = "legacy",
                  audio_visual_mapping_alpha: float = 50.0,
                  audio_visual_mapping_f0: float = 50.0,
@@ -167,6 +172,20 @@ class RippleWaveVisualizer(VisualizerBase):
             prediction_error_prediction_clip
         )
         self.prediction_error_max_output = float(prediction_error_max_output)
+        self.prediction_error_learning_enabled = bool(
+            prediction_error_learning_enabled
+        )
+        self.prediction_error_learning_rate = float(prediction_error_learning_rate)
+        self.prediction_error_learning_weight_decay = float(
+            prediction_error_learning_weight_decay
+        )
+        self.prediction_error_learning_weight_clip = float(
+            prediction_error_learning_weight_clip
+        )
+        self.prediction_error_learning_gradient_clip = float(
+            prediction_error_learning_gradient_clip
+        )
+        self.prediction_error_edge_weights: np.ndarray | None = None
         self._validate_prediction_error_transform_config()
         self.audio_visual_mapping_mode = normalize_audio_visual_mapping_mode(
             audio_visual_mapping_mode
@@ -737,6 +756,21 @@ class RippleWaveVisualizer(VisualizerBase):
             raise ValueError("prediction_error_max_output must be positive")
         if self.prediction_error_activation_scale <= 0.0:
             raise ValueError("prediction_error_activation_scale must be positive")
+        if self.prediction_error_learning_rate < 0.0:
+            raise ValueError("prediction_error_learning_rate must be non-negative")
+        if (
+            self.prediction_error_learning_weight_decay < 0.0
+            or self.prediction_error_learning_weight_decay > 1.0
+        ):
+            raise ValueError(
+                "prediction_error_learning_weight_decay must be between 0 and 1"
+            )
+        if self.prediction_error_learning_weight_clip <= 0.0:
+            raise ValueError("prediction_error_learning_weight_clip must be positive")
+        if self.prediction_error_learning_gradient_clip <= 0.0:
+            raise ValueError(
+                "prediction_error_learning_gradient_clip must be positive"
+            )
         if self.prediction_error_predictor_source != "ripple_state":
             raise ValueError(
                 "prediction_error_predictor_source must be 'ripple_state'"
@@ -780,6 +814,7 @@ class RippleWaveVisualizer(VisualizerBase):
             neginf=-self.prediction_error_prediction_clip,
         )
         error = observed - prediction.astype(np.float64, copy=False)
+        self._update_prediction_error_edge_weights(error)
         mode = self.prediction_error_output_mode
         if mode == "raw_error":
             transformed = error
@@ -842,7 +877,78 @@ class RippleWaveVisualizer(VisualizerBase):
             raise ValueError("ripple-state prediction must match engine resolution")
         clip = np.float32(self.prediction_error_prediction_clip)
         field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
-        return np.clip(field, -clip, clip).astype(np.float32, copy=False)
+        field = np.clip(field, -clip, clip).astype(np.float32, copy=False)
+        if not self.prediction_error_learning_enabled:
+            return field
+        self._ensure_prediction_error_edge_weights()
+        assert self.prediction_error_edge_weights is not None
+        neighbors = self._prediction_error_neighbor_fields(field)
+        prediction = field.astype(np.float64) + np.sum(
+            self.prediction_error_edge_weights.astype(np.float64) * neighbors,
+            axis=0,
+        )
+        return np.clip(prediction, -clip, clip).astype(np.float32, copy=False)
+
+    def _update_prediction_error_edge_weights(self, error: np.ndarray) -> None:
+        if (
+            not self.prediction_error_learning_enabled
+            or self.prediction_error_learning_rate == 0.0
+        ):
+            return
+        self._ensure_prediction_error_edge_weights()
+        assert self.prediction_error_edge_weights is not None
+        field = np.asarray(self.engine.get_field_numpy(), dtype=np.float32)
+        clip = np.float32(self.prediction_error_prediction_clip)
+        field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
+        field = np.clip(field, -clip, clip).astype(np.float32, copy=False)
+        neighbors = self._prediction_error_neighbor_fields(field)
+        denom = (
+            np.float64(self.prediction_error_sigma)
+            * np.float64(self.prediction_error_sigma)
+            * np.float64(np.log(2.0))
+        )
+        gradient = error[None, :, :] * neighbors / denom
+        gradient = np.nan_to_num(gradient, nan=0.0, posinf=0.0, neginf=0.0)
+        gradient = np.clip(
+            gradient,
+            -self.prediction_error_learning_gradient_clip,
+            self.prediction_error_learning_gradient_clip,
+        )
+        weights = self.prediction_error_edge_weights.astype(np.float64, copy=False)
+        if self.prediction_error_learning_weight_decay:
+            weights *= np.float64(1.0 - self.prediction_error_learning_weight_decay)
+        weights += np.float64(self.prediction_error_learning_rate) * gradient
+        weights = np.clip(
+            weights,
+            -self.prediction_error_learning_weight_clip,
+            self.prediction_error_learning_weight_clip,
+        )
+        self.prediction_error_edge_weights = weights.astype(np.float32, copy=False)
+
+    def _ensure_prediction_error_edge_weights(self) -> None:
+        if self.prediction_error_edge_weights is None:
+            self.prediction_error_edge_weights = np.zeros(
+                (4, *self.resolution),
+                dtype=np.float32,
+            )
+        elif self.prediction_error_edge_weights.shape != (4, *self.resolution):
+            self.prediction_error_edge_weights = np.zeros(
+                (4, *self.resolution),
+                dtype=np.float32,
+            )
+
+    @staticmethod
+    def _prediction_error_neighbor_fields(field: np.ndarray) -> np.ndarray:
+        padded = np.pad(np.asarray(field, dtype=np.float64), 1, mode="edge")
+        return np.stack(
+            (
+                padded[:-2, 1:-1],
+                padded[2:, 1:-1],
+                padded[1:-1, :-2],
+                padded[1:-1, 2:],
+            ),
+            axis=0,
+        )
 
     def _set_pose_sources_enabled(self, enabled: bool) -> None:
         if enabled:

@@ -23,6 +23,8 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     config["transforms"]["prediction_error"]["predictor"]["sigma"] = 0.25
     config["transforms"]["prediction_error"]["output"]["activation"]["function"] = "tanh"
     config["transforms"]["prediction_error"]["output"]["activation"]["scale"] = 2.0
+    config["transforms"]["prediction_error"]["learning"]["enabled"] = True
+    config["transforms"]["prediction_error"]["learning"]["learning_rate"] = 0.01
 
     flattened = main.build_ripple_visualizer_config(config)
 
@@ -36,6 +38,8 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     assert flattened["prediction_error_sigma"] == 0.25
     assert flattened["prediction_error_activation_function"] == "tanh"
     assert flattened["prediction_error_activation_scale"] == 2.0
+    assert flattened["prediction_error_learning_enabled"] is True
+    assert flattened["prediction_error_learning_rate"] == 0.01
     assert flattened["pose_camera_index"] == config["sources"]["pose"]["camera_index"]
     assert (
         flattened["body_boundary_transmission"]

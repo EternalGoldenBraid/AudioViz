@@ -143,6 +143,13 @@ RIPPLE_CONFIG = {
                 },
                 "gain": 1.0,
             },
+            "learning": {
+                "enabled": False,
+                "learning_rate": 1e-4,
+                "weight_decay": 1e-4,
+                "weight_clip": 1.0,
+                "gradient_clip": 1.0,
+            },
         },
     },
 }
@@ -160,6 +167,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     prediction_error = config["transforms"]["prediction_error"]
     prediction_error_predictor = prediction_error["predictor"]
     prediction_error_output = prediction_error["output"]
+    prediction_error_learning = prediction_error["learning"]
     backend = renderer["backend"]
 
     return {
@@ -201,6 +209,17 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             "scale"
         ],
         "prediction_error_gain": prediction_error_output["gain"],
+        "prediction_error_learning_enabled": prediction_error_learning["enabled"],
+        "prediction_error_learning_rate": prediction_error_learning["learning_rate"],
+        "prediction_error_learning_weight_decay": prediction_error_learning[
+            "weight_decay"
+        ],
+        "prediction_error_learning_weight_clip": prediction_error_learning[
+            "weight_clip"
+        ],
+        "prediction_error_learning_gradient_clip": prediction_error_learning[
+            "gradient_clip"
+        ],
         "use_gpu": backend == "gpu",
         "use_shader": backend == "opengl",
         "auto_color_activation_threshold": renderer["auto_color_activation_threshold"],

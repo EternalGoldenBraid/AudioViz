@@ -306,6 +306,53 @@ def test_ripple_visualizer_prediction_error_transform_applies_softsign_activatio
     app.processEvents()
 
 
+def test_ripple_visualizer_prediction_error_learning_updates_edge_weights():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(2, 2),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+        prediction_error_transform_enabled=True,
+        prediction_error_output_mode="squared_error",
+        prediction_error_activation_function="linear_clipped",
+        prediction_error_sigma=1.0,
+        prediction_error_learning_enabled=True,
+        prediction_error_learning_rate=0.5,
+        prediction_error_learning_weight_decay=0.0,
+        prediction_error_learning_weight_clip=100.0,
+        prediction_error_learning_gradient_clip=100.0,
+    )
+    visualizer.timer.stop()
+    field = np.array(
+        [[1.0, 2.0], [3.0, 4.0]],
+        dtype=np.float32,
+    )
+    visualizer.engine.Z[:] = field
+    observation = field + np.ones_like(field)
+
+    visualizer._apply_source_transforms("camera_frame", observation)
+
+    neighbors = visualizer._prediction_error_neighbor_fields(field)
+    expected = 0.5 * neighbors / np.log(2.0)
+    assert visualizer.prediction_error_edge_weights is not None
+    np.testing.assert_allclose(
+        visualizer.prediction_error_edge_weights,
+        expected,
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    app.processEvents()
+
+
 def test_ripple_visualizer_prediction_error_transform_clips_runaway_values():
     from PyQt5 import QtWidgets
 
