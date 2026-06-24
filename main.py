@@ -126,6 +126,21 @@ RIPPLE_CONFIG = {
             "gain": 1.0,
         },
     },
+    "transforms": {
+        "prediction_error": {
+            "enabled": False,
+            "inputs": ("camera_frame",),
+            "predictor": {
+                "source": "ripple_state",
+                "model": "gaussian_fixed_variance",
+                "sigma": 0.1,
+            },
+            "output": {
+                "mode": "bits",  # raw_error | abs_error | squared_error | bits
+                "gain": 1.0,
+            },
+        },
+    },
 }
 
 
@@ -138,6 +153,9 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     pose_medium = pose["medium"]
     pose_boundary = pose["boundary"]
     camera_frame = sources["camera_frame"]
+    prediction_error = config["transforms"]["prediction_error"]
+    prediction_error_predictor = prediction_error["predictor"]
+    prediction_error_output = prediction_error["output"]
     backend = renderer["backend"]
 
     return {
@@ -167,6 +185,12 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
         "use_camera_source": camera_frame["enabled"],
         "camera_source_index": camera_frame["camera_index"],
         "camera_source_gain": camera_frame["gain"],
+        "prediction_error_transform_enabled": prediction_error["enabled"],
+        "prediction_error_inputs": prediction_error["inputs"],
+        "prediction_error_predictor_source": prediction_error_predictor["source"],
+        "prediction_error_sigma": prediction_error_predictor["sigma"],
+        "prediction_error_output_mode": prediction_error_output["mode"],
+        "prediction_error_gain": prediction_error_output["gain"],
         "use_gpu": backend == "gpu",
         "use_shader": backend == "opengl",
         "auto_color_activation_threshold": renderer["auto_color_activation_threshold"],

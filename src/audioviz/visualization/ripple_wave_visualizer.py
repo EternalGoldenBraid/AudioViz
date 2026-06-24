@@ -93,6 +93,12 @@ class RippleWaveVisualizer(VisualizerBase):
                  use_camera_source: bool = False,
                  camera_source_index: int = 0,
                  camera_source_gain: float = 1.0,
+                 prediction_error_transform_enabled: bool = False,
+                 prediction_error_inputs: tuple[str, ...] = ("camera_frame",),
+                 prediction_error_predictor_source: str = "ripple_state",
+                 prediction_error_sigma: float = 0.1,
+                 prediction_error_output_mode: str = "bits",
+                 prediction_error_gain: float = 1.0,
                  audio_visual_mapping_mode: str = "legacy",
                  audio_visual_mapping_alpha: float = 50.0,
                  audio_visual_mapping_f0: float = 50.0,
@@ -139,6 +145,15 @@ class RippleWaveVisualizer(VisualizerBase):
         self.camera_source_index = int(camera_source_index)
         self.camera_source_gain = float(camera_source_gain)
         self.camera_capture = camera_capture
+        self.prediction_error_transform_enabled = bool(
+            prediction_error_transform_enabled
+        )
+        self.prediction_error_inputs = tuple(prediction_error_inputs)
+        self.prediction_error_predictor_source = str(prediction_error_predictor_source)
+        self.prediction_error_sigma = float(prediction_error_sigma)
+        self.prediction_error_output_mode = str(prediction_error_output_mode)
+        self.prediction_error_gain = float(prediction_error_gain)
+        self._validate_prediction_error_transform_config()
         self.audio_visual_mapping_mode = normalize_audio_visual_mapping_mode(
             audio_visual_mapping_mode
         )
@@ -658,7 +673,8 @@ class RippleWaveVisualizer(VisualizerBase):
         ok, frame = self.camera_capture.read()
         if not ok or frame is None:
             return None
-        return self._camera_frame_to_excitation_grid(frame)
+        excitation = self._camera_frame_to_excitation_grid(frame)
+        return self._apply_source_transforms("camera_frame", excitation)
 
     def _camera_frame_to_excitation_grid(self, frame: np.ndarray) -> np.ndarray:
         values = np.asarray(frame)
@@ -697,6 +713,60 @@ class RippleWaveVisualizer(VisualizerBase):
         y_index = np.rint(np.linspace(0, src_rows - 1, rows)).astype(np.int32)
         x_index = np.rint(np.linspace(0, src_cols - 1, cols)).astype(np.int32)
         return np.ascontiguousarray(values[y_index][:, x_index], dtype=np.float32)
+
+    def _validate_prediction_error_transform_config(self) -> None:
+        if self.prediction_error_sigma <= 0.0:
+            raise ValueError("prediction_error_sigma must be positive")
+        if self.prediction_error_predictor_source != "ripple_state":
+            raise ValueError(
+                "prediction_error_predictor_source must be 'ripple_state'"
+            )
+        valid_output_modes = {"raw_error", "abs_error", "squared_error", "bits"}
+        if self.prediction_error_output_mode not in valid_output_modes:
+            raise ValueError(
+                "prediction_error_output_mode must be one of "
+                f"{sorted(valid_output_modes)}"
+            )
+
+    def _apply_source_transforms(
+        self,
+        source_key: str,
+        excitation: np.ndarray,
+    ) -> np.ndarray:
+        if (
+            self.prediction_error_transform_enabled
+            and source_key in self.prediction_error_inputs
+        ):
+            return self._prediction_error_transform(excitation)
+        return excitation
+
+    def _prediction_error_transform(self, observation: np.ndarray) -> np.ndarray:
+        prediction = self._prediction_from_ripple_state()
+        error = np.asarray(observation, dtype=np.float32) - prediction
+        mode = self.prediction_error_output_mode
+        if mode == "raw_error":
+            transformed = error
+        elif mode == "abs_error":
+            transformed = np.abs(error)
+        elif mode == "squared_error":
+            transformed = error * error
+        elif mode == "bits":
+            sigma = np.float32(self.prediction_error_sigma)
+            transformed = (error * error) / (
+                np.float32(2.0) * sigma * sigma * np.float32(np.log(2.0))
+            )
+        else:
+            raise ValueError(f"Unknown prediction error output mode: {mode}")
+        return (transformed * np.float32(self.prediction_error_gain)).astype(
+            np.float32,
+            copy=False,
+        )
+
+    def _prediction_from_ripple_state(self) -> np.ndarray:
+        field = np.asarray(self.engine.get_field_numpy(), dtype=np.float32)
+        if field.shape != self.resolution:
+            raise ValueError("ripple-state prediction must match engine resolution")
+        return np.nan_to_num(field, nan=0.0, posinf=0.0, neginf=0.0)
 
     def _set_pose_sources_enabled(self, enabled: bool) -> None:
         if enabled:

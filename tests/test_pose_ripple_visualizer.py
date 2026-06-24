@@ -238,6 +238,64 @@ def test_ripple_visualizer_camera_source_updates_field_and_releases_capture():
     app.processEvents()
 
 
+def test_ripple_visualizer_prediction_error_transform_outputs_gaussian_bits():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(2, 2),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+        prediction_error_transform_enabled=True,
+        prediction_error_sigma=0.1,
+        prediction_error_output_mode="bits",
+    )
+    visualizer.timer.stop()
+    visualizer.engine.Z[:] = np.array(
+        [[0.1, 0.2], [0.3, 0.4]],
+        dtype=np.float32,
+    )
+    observation = np.full((2, 2), 0.2, dtype=np.float32)
+
+    transformed = visualizer._apply_source_transforms("camera_frame", observation)
+
+    expected_error = observation - visualizer.engine.Z
+    expected = (expected_error * expected_error) / (2.0 * 0.1 * 0.1 * np.log(2.0))
+    np.testing.assert_allclose(transformed, expected, rtol=1e-6, atol=1e-6)
+    app.processEvents()
+
+
+def test_ripple_visualizer_prediction_error_transform_rejects_invalid_config():
+    import pytest
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    with pytest.raises(ValueError, match="prediction_error_sigma"):
+        RippleWaveVisualizer(
+            processor=None,
+            resolution=(2, 2),
+            plane_size_m=(1.0, 1.0),
+            speed=1.0,
+            damping=1.0,
+            amplitude=1.0,
+            use_synthetic=False,
+            use_pose_sources=False,
+            prediction_error_transform_enabled=True,
+            prediction_error_sigma=0.0,
+        )
+    app.processEvents()
+
+
 def test_ripple_visualizer_releases_failed_camera_capture():
     import pytest
     from PyQt5 import QtWidgets

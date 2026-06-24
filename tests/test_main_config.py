@@ -19,6 +19,8 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     config["sources"]["audio"]["enabled"] = False
     config["sources"]["camera_frame"]["enabled"] = True
     config["sources"]["camera_frame"]["camera_index"] = 2
+    config["transforms"]["prediction_error"]["enabled"] = True
+    config["transforms"]["prediction_error"]["predictor"]["sigma"] = 0.25
 
     flattened = main.build_ripple_visualizer_config(config)
 
@@ -27,6 +29,9 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     assert flattened["use_audio_source"] is False
     assert flattened["use_camera_source"] is True
     assert flattened["camera_source_index"] == 2
+    assert flattened["prediction_error_transform_enabled"] is True
+    assert flattened["prediction_error_inputs"] == ("camera_frame",)
+    assert flattened["prediction_error_sigma"] == 0.25
     assert flattened["pose_camera_index"] == config["sources"]["pose"]["camera_index"]
     assert (
         flattened["body_boundary_transmission"]
