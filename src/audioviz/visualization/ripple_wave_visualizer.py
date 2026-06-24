@@ -98,6 +98,8 @@ class RippleWaveVisualizer(VisualizerBase):
                  prediction_error_predictor_source: str = "ripple_state",
                  prediction_error_sigma: float = 0.1,
                  prediction_error_output_mode: str = "bits",
+                 prediction_error_activation_function: str = "softsign",
+                 prediction_error_activation_scale: float = 1.0,
                  prediction_error_gain: float = 1.0,
                  prediction_error_prediction_clip: float = 10.0,
                  prediction_error_max_output: float = 10.0,
@@ -154,6 +156,12 @@ class RippleWaveVisualizer(VisualizerBase):
         self.prediction_error_predictor_source = str(prediction_error_predictor_source)
         self.prediction_error_sigma = float(prediction_error_sigma)
         self.prediction_error_output_mode = str(prediction_error_output_mode)
+        self.prediction_error_activation_function = str(
+            prediction_error_activation_function
+        )
+        self.prediction_error_activation_scale = float(
+            prediction_error_activation_scale
+        )
         self.prediction_error_gain = float(prediction_error_gain)
         self.prediction_error_prediction_clip = float(
             prediction_error_prediction_clip
@@ -727,6 +735,8 @@ class RippleWaveVisualizer(VisualizerBase):
             raise ValueError("prediction_error_prediction_clip must be positive")
         if self.prediction_error_max_output <= 0.0:
             raise ValueError("prediction_error_max_output must be positive")
+        if self.prediction_error_activation_scale <= 0.0:
+            raise ValueError("prediction_error_activation_scale must be positive")
         if self.prediction_error_predictor_source != "ripple_state":
             raise ValueError(
                 "prediction_error_predictor_source must be 'ripple_state'"
@@ -736,6 +746,17 @@ class RippleWaveVisualizer(VisualizerBase):
             raise ValueError(
                 "prediction_error_output_mode must be one of "
                 f"{sorted(valid_output_modes)}"
+            )
+        valid_activation_functions = {
+            "linear_clipped",
+            "tanh",
+            "softsign",
+            "log1p",
+        }
+        if self.prediction_error_activation_function not in valid_activation_functions:
+            raise ValueError(
+                "prediction_error_activation_function must be one of "
+                f"{sorted(valid_activation_functions)}"
             )
 
     def _apply_source_transforms(
@@ -773,6 +794,10 @@ class RippleWaveVisualizer(VisualizerBase):
             )
         else:
             raise ValueError(f"Unknown prediction error output mode: {mode}")
+        transformed = self._activate_prediction_error_output(
+            transformed,
+            signed=mode == "raw_error",
+        )
         transformed = transformed * np.float64(self.prediction_error_gain)
         max_output = np.float64(self.prediction_error_max_output)
         transformed = np.nan_to_num(
@@ -786,6 +811,30 @@ class RippleWaveVisualizer(VisualizerBase):
         else:
             transformed = np.clip(transformed, 0.0, max_output)
         return transformed.astype(np.float32, copy=False)
+
+    def _activate_prediction_error_output(
+        self,
+        values: np.ndarray,
+        *,
+        signed: bool,
+    ) -> np.ndarray:
+        values = np.asarray(values, dtype=np.float64)
+        scale = np.float64(self.prediction_error_activation_scale)
+        max_output = np.float64(self.prediction_error_max_output)
+        function = self.prediction_error_activation_function
+        if function == "linear_clipped":
+            activated = values
+        elif function == "tanh":
+            activated = max_output * np.tanh(values / scale)
+        elif function == "softsign":
+            activated = max_output * values / (scale + np.abs(values))
+        elif function == "log1p":
+            activated = scale * np.sign(values) * np.log1p(np.abs(values) / scale)
+        else:
+            raise ValueError(f"Unknown prediction error activation: {function}")
+        if not signed:
+            activated = np.maximum(activated, 0.0)
+        return activated
 
     def _prediction_from_ripple_state(self) -> np.ndarray:
         field = np.asarray(self.engine.get_field_numpy(), dtype=np.float32)

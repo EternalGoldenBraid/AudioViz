@@ -256,6 +256,7 @@ def test_ripple_visualizer_prediction_error_transform_outputs_gaussian_bits():
         prediction_error_transform_enabled=True,
         prediction_error_sigma=0.1,
         prediction_error_output_mode="bits",
+        prediction_error_activation_function="linear_clipped",
     )
     visualizer.timer.stop()
     visualizer.engine.Z[:] = np.array(
@@ -268,6 +269,39 @@ def test_ripple_visualizer_prediction_error_transform_outputs_gaussian_bits():
 
     expected_error = observation - visualizer.engine.Z
     expected = (expected_error * expected_error) / (2.0 * 0.1 * 0.1 * np.log(2.0))
+    np.testing.assert_allclose(transformed, expected, rtol=1e-6, atol=1e-6)
+    app.processEvents()
+
+
+def test_ripple_visualizer_prediction_error_transform_applies_softsign_activation():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(1, 3),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_synthetic=False,
+        use_pose_sources=False,
+        prediction_error_transform_enabled=True,
+        prediction_error_output_mode="squared_error",
+        prediction_error_activation_function="softsign",
+        prediction_error_activation_scale=2.0,
+        prediction_error_max_output=5.0,
+    )
+    visualizer.timer.stop()
+    visualizer.engine.Z[:] = np.zeros((1, 3), dtype=np.float32)
+    observation = np.array([[0.0, 1.0, 2.0]], dtype=np.float32)
+
+    transformed = visualizer._apply_source_transforms("camera_frame", observation)
+
+    squared_error = observation * observation
+    expected = 5.0 * squared_error / (2.0 + squared_error)
     np.testing.assert_allclose(transformed, expected, rtol=1e-6, atol=1e-6)
     app.processEvents()
 

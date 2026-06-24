@@ -137,6 +137,10 @@ RIPPLE_CONFIG = {
             },
             "output": {
                 "mode": "bits",  # raw_error | abs_error | squared_error | bits
+                "activation": {
+                    "function": "softsign",
+                    "scale": 1.0,
+                },
                 "gain": 1.0,
             },
         },
@@ -190,6 +194,12 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
         "prediction_error_predictor_source": prediction_error_predictor["source"],
         "prediction_error_sigma": prediction_error_predictor["sigma"],
         "prediction_error_output_mode": prediction_error_output["mode"],
+        "prediction_error_activation_function": prediction_error_output["activation"][
+            "function"
+        ],
+        "prediction_error_activation_scale": prediction_error_output["activation"][
+            "scale"
+        ],
         "prediction_error_gain": prediction_error_output["gain"],
         "use_gpu": backend == "gpu",
         "use_shader": backend == "opengl",
