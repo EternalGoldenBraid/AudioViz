@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from audioviz.source_controls import AudioSourceControls, ControlValue
+from audioviz.sources.ripple_grid import frequency_excitation_grid
 from audioviz.utils.signal_processing import (
     map_audio_freq_to_visual_freq,
     normalize_audio_visual_mapping_mode,
@@ -60,6 +61,34 @@ class AudioRippleSource:
             linear_offset=self.linear_offset,
         ).astype(np.float32, copy=False)
         return np.tile(visual_frequencies, (n_sources, 1))
+
+    def excitation_grid(
+        self,
+        *,
+        t: float,
+        n_sources: int,
+        frequencies: np.ndarray | None = None,
+        source_positions: np.ndarray,
+        resolution: tuple[int, int],
+        grid_spacing: float,
+        speed: float,
+        max_frequency: float,
+        decay_alpha: float,
+    ) -> np.ndarray | None:
+        if frequencies is None:
+            frequencies = self.frequencies(n_sources=n_sources)
+        if frequencies is None:
+            return None
+        return frequency_excitation_grid(
+            t=t,
+            frequencies=frequencies,
+            source_positions=source_positions,
+            resolution=resolution,
+            grid_spacing=grid_spacing,
+            speed=speed,
+            max_frequency=max_frequency,
+            decay_alpha=decay_alpha,
+        )
 
     def excitation_amplitude(
         self,

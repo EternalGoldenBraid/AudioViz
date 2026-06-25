@@ -171,7 +171,7 @@ def test_ripple_engine_accepts_pose_mapped_source_positions():
 
     assert engine.n_sources == 2
     np.testing.assert_allclose(engine.source_positions, positions)
-    engine.step(np.full((2, 1), 5.0, dtype=np.float32))
+    engine.step_grid_excitation(np.zeros((10, 20), dtype=np.float32))
 
 
 def test_pose_graph_state_maps_acceleration_norm_to_source_excitations():
@@ -227,7 +227,7 @@ def test_pose_graph_state_filters_out_of_frame_landmarks_from_ripple_sources():
     np.testing.assert_allclose(excitations, [np.sqrt(0.25**2 + 0.5**2)])
 
 
-def test_ripple_engine_steps_direct_source_excitations():
+def test_ripple_engine_steps_grid_excitation():
     engine = RippleEngine(
         resolution=(5, 6),
         plane_size_m=(1.0, 1.0),
@@ -237,18 +237,18 @@ def test_ripple_engine_steps_direct_source_excitations():
         amplitude=2.0,
         use_gpu=False,
     )
-    engine.set_source_positions(np.array([[2.0, 3.0], [2.4, 3.4]], dtype=np.float32))
+    excitation = np.zeros((5, 6), dtype=np.float32)
+    excitation[3, 2] = 4.0
 
-    engine.step_source_excitations(np.array([1.0, 3.0], dtype=np.float32))
+    engine.step_grid_excitation(excitation)
 
     state = engine.get_field_numpy()
-    assert engine.n_sources == 2
     assert state[3, 1] > 0.0
     assert state[3, 3] > 0.0
     np.testing.assert_allclose(engine.propagator.Z_old[3, 2], 8.0)
 
 
-def test_ripple_engine_validates_direct_source_excitations_shape():
+def test_ripple_engine_validates_grid_excitation_shape():
     engine = RippleEngine(
         resolution=(5, 6),
         plane_size_m=(1.0, 1.0),
@@ -257,8 +257,8 @@ def test_ripple_engine_validates_direct_source_excitations_shape():
         use_gpu=False,
     )
 
-    with pytest.raises(ValueError, match="source excitations"):
-        engine.step_source_excitations(np.ones(1, dtype=np.float32))
+    with pytest.raises(ValueError, match="excitation_grid"):
+        engine.step_grid_excitation(np.ones((5, 5), dtype=np.float32))
 
 
 def test_ripple_engine_source_positions_use_xy_field_bounds():

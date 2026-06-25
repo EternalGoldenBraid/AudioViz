@@ -68,9 +68,30 @@ def test_synthetic_ripple_source_owns_enabled_frequencies_and_controls():
         source.frequencies(),
         np.array([[220.0], [440.0]], dtype=np.float32),
     )
+    grid = source.excitation_grid(
+        t=0.01,
+        source_positions=np.array([[1.0, 1.0], [2.0, 2.0]], dtype=np.float32),
+        resolution=(4, 5),
+        grid_spacing=0.1,
+        speed=1.0,
+        max_frequency=10.0,
+        decay_alpha=0.0,
+    )
+    assert grid is not None
+    assert grid.shape == (4, 5)
+    assert grid.dtype == np.float32
 
     source.enabled = False
     assert source.frequencies() is None
+    assert source.excitation_grid(
+        t=0.01,
+        source_positions=np.array([[1.0, 1.0], [2.0, 2.0]], dtype=np.float32),
+        resolution=(4, 5),
+        grid_spacing=0.1,
+        speed=1.0,
+        max_frequency=10.0,
+        decay_alpha=0.0,
+    ) is None
 
 
 def test_audio_source_controls_expose_gate_mapping_and_readout_controls():
@@ -117,6 +138,20 @@ def test_audio_ripple_source_maps_frequencies_and_scales_amplitude():
         frequencies=frequencies,
         synthetic_enabled=False,
     ) == 2.0
+    grid = source.excitation_grid(
+        t=0.01,
+        n_sources=2,
+        frequencies=frequencies,
+        source_positions=np.array([[1.0, 1.0], [2.0, 2.0]], dtype=np.float32),
+        resolution=(4, 5),
+        grid_spacing=0.1,
+        speed=1.0,
+        max_frequency=10.0,
+        decay_alpha=0.0,
+    )
+    assert grid is not None
+    assert grid.shape == (4, 5)
+    assert grid.dtype == np.float32
 
     source.update_control("top_k_count", 2)
     assert processor.num_top_frequencies == 2

@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from audioviz.source_controls import SourceControl
+from audioviz.sources.ripple_grid import frequency_excitation_grid
 
 
 class SyntheticRippleSource:
@@ -27,6 +28,31 @@ class SyntheticRippleSource:
         if not self.enabled:
             return None
         return self.frequencies_matrix.copy()
+
+    def excitation_grid(
+        self,
+        *,
+        t: float,
+        source_positions: np.ndarray,
+        resolution: tuple[int, int],
+        grid_spacing: float,
+        speed: float,
+        max_frequency: float,
+        decay_alpha: float,
+    ) -> np.ndarray | None:
+        frequencies = self.frequencies()
+        if frequencies is None:
+            return None
+        return frequency_excitation_grid(
+            t=t,
+            frequencies=frequencies,
+            source_positions=source_positions,
+            resolution=resolution,
+            grid_spacing=grid_spacing,
+            speed=speed,
+            max_frequency=max_frequency,
+            decay_alpha=decay_alpha,
+        )
 
     def set_frequency(self, index: int, frequency_hz: float) -> None:
         self.frequencies_matrix[int(index), 0] = float(frequency_hz)

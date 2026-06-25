@@ -66,11 +66,6 @@ class RippleEngine:
         self.max_frequency = self.speed / (2 * self.grid_spacing)
 
         self.source_positions = self._make_source_positions()
-        self.xs, self.ys = self.backend.meshgrid(
-            self.backend.arange(self.resolution[1]),
-            self.backend.arange(self.resolution[0]),
-        )
-
         propagator_kwargs = {
             "shape": self.resolution,
             "dx": self.grid_spacing,
@@ -173,37 +168,12 @@ class RippleEngine:
             raise ValueError("body_boundary_mask must match engine resolution")
         self.body_boundary_mask = mask.copy()
 
-    def step(self, frequencies: np.ndarray):
-        self.time += self.dt
-        self._add_ripple_excitation(self.time, frequencies)
-        self.propagator.step()
-        if self.use_shader:
-            return self.Z
-        if hasattr(self.propagator, "Z_old"):
-            self.Z_old = np.array(self.propagator.Z_old, copy=True)
-        self.Z[:] = self.propagator.get_state()
-        return self.Z
-
-    def step_source_excitations(self, source_excitations: np.ndarray):
-        self.time += self.dt
-        self._add_source_excitation(source_excitations)
-        self.propagator.step()
-        if self.use_shader:
-            return self.Z
-        if hasattr(self.propagator, "Z_old"):
-            self.Z_old = np.array(self.propagator.Z_old, copy=True)
-        self.Z[:] = self.propagator.get_state()
-        return self.Z
-
     def step_grid_excitation(
         self,
         excitation_grid: np.ndarray,
-        frequencies: np.ndarray | None = None,
     ):
         self.time += self.dt
         self._add_grid_excitation(excitation_grid)
-        if frequencies is not None:
-            self._add_ripple_excitation(self.time, frequencies)
         self.propagator.step()
         if self.use_shader:
             return self.Z
@@ -242,45 +212,6 @@ class RippleEngine:
                 "OpenGL field textures are only available with use_shader=True."
             )
         return self.propagator.get_texture_shape()
-
-    def _add_ripple_excitation(self, t: float, frequencies: np.ndarray) -> None:
-        xp = self.backend
-        frequencies = xp.asarray(frequencies, dtype=xp.float32)
-        n_sources, _ = frequencies.shape
-
-        if n_sources != self.n_sources:
-            raise ValueError(
-                f"Expected {self.n_sources} source rows, got {n_sources}."
-            )
-
-        x0 = xp.array([p[0] for p in self.source_positions]).reshape(n_sources, 1, 1)
-        y0 = xp.array([p[1] for p in self.source_positions]).reshape(n_sources, 1, 1)
-
-        xs = self.xs[None, :, :]
-        ys = self.ys[None, :, :]
-
-        r_pixels = xp.sqrt((xs - x0) ** 2 + (ys - y0) ** 2)
-        r_meters = r_pixels * self.grid_spacing
-        decay = xp.exp(-self.decay_alpha * r_meters)
-
-        frequencies = xp.clip(frequencies, 1e-3, self.max_frequency)
-        wavelengths = self.speed / frequencies
-        phases = 2 * xp.pi * frequencies * t
-
-        r = r_meters[:, None, :, :]
-        decay = decay[:, None, :, :]
-        wavelengths = wavelengths[:, :, None, None]
-        phases = phases[:, :, None, None]
-
-        ripple = self.amplitude * decay * xp.sin(
-            phases - 2 * xp.pi * r / wavelengths
-        )
-        self.propagator.add_excitation(ripple.sum(axis=(0, 1)))
-
-    def _add_source_excitation(self, source_excitations: np.ndarray) -> None:
-        self.propagator.add_excitation(
-            self._source_excitations_to_grid(source_excitations)
-        )
 
     def configure_pose_medium(self, adjacency: np.ndarray) -> None:
         if self.use_gpu or self.use_shader:
@@ -335,7 +266,6 @@ class RippleEngine:
 
     def step_pose_medium(
         self,
-        frequencies: np.ndarray | None = None,
         grid_excitation: np.ndarray | None = None,
     ) -> np.ndarray:
         if not self.pose_medium_enabled:
@@ -352,8 +282,6 @@ class RippleEngine:
         pose = self.pose_values
         driven_grid = grid.copy()
         driven_pose = pose.copy()
-        if frequencies is not None:
-            driven_grid += self._compute_source_excitation_grid(self.time, frequencies)
         if grid_excitation is not None:
             driven_grid += self._coerce_grid_excitation(grid_excitation) * np.float32(
                 self.amplitude
@@ -392,83 +320,6 @@ class RippleEngine:
         if not valid_only or self.pose_valid is None:
             return self.pose_positions.copy()
         return self.pose_positions[self.pose_valid].copy()
-
-    def _compute_ripple_excitation_field(self, t: float, frequencies: np.ndarray) -> np.ndarray:
-        xp = self.backend
-        frequencies = xp.asarray(frequencies, dtype=xp.float32)
-        n_sources, _ = frequencies.shape
-
-        if n_sources != self.n_sources:
-            raise ValueError(
-                f"Expected {self.n_sources} source rows, got {n_sources}."
-            )
-
-        x0 = xp.array([p[0] for p in self.source_positions]).reshape(n_sources, 1, 1)
-        y0 = xp.array([p[1] for p in self.source_positions]).reshape(n_sources, 1, 1)
-
-        xs = self.xs[None, :, :]
-        ys = self.ys[None, :, :]
-
-        r_pixels = xp.sqrt((xs - x0) ** 2 + (ys - y0) ** 2)
-        r_meters = r_pixels * self.grid_spacing
-        decay = xp.exp(-self.decay_alpha * r_meters)
-
-        frequencies = xp.clip(frequencies, 1e-3, self.max_frequency)
-        wavelengths = self.speed / frequencies
-        phases = 2 * xp.pi * frequencies * t
-
-        r = r_meters[:, None, :, :]
-        decay = decay[:, None, :, :]
-        wavelengths = wavelengths[:, :, None, None]
-        phases = phases[:, :, None, None]
-
-        ripple = self.amplitude * decay * xp.sin(
-            phases - 2 * xp.pi * r / wavelengths
-        )
-        return ripple.sum(axis=(0, 1))
-
-    def _compute_source_excitation_grid(
-        self,
-        t: float,
-        frequencies: np.ndarray,
-    ) -> np.ndarray:
-        phases = self._compute_source_phase_amplitudes(t, frequencies)
-        return self._source_excitations_to_grid(phases)
-
-    def _compute_source_phase_amplitudes(
-        self,
-        t: float,
-        frequencies: np.ndarray,
-    ) -> np.ndarray:
-        values = np.asarray(frequencies, dtype=np.float32)
-        if values.ndim != 2:
-            raise ValueError("frequencies must have shape (n_sources, n_frequencies)")
-        n_sources, _ = values.shape
-        if n_sources != self.n_sources:
-            raise ValueError(
-                f"Expected {self.n_sources} source rows, got {n_sources}."
-            )
-
-        clipped = np.clip(values, 1e-3, self.max_frequency)
-        phases = 2.0 * np.pi * clipped * np.float32(t)
-        return np.sin(phases).sum(axis=1).astype(np.float32)
-
-    def _source_excitations_to_grid(self, source_excitations: np.ndarray) -> np.ndarray:
-        xp = self.backend
-        values = xp.asarray(source_excitations, dtype=xp.float32).reshape(-1)
-        if len(values) != self.n_sources:
-            raise ValueError(
-                f"Expected {self.n_sources} source excitations, got {len(values)}."
-            )
-
-        rows, cols = self.resolution
-        positions = xp.asarray(self.source_positions, dtype=xp.float32)
-        xs = xp.clip(xp.rint(positions[:, 0]).astype(xp.int32), 0, cols - 1)
-        ys = xp.clip(xp.rint(positions[:, 1]).astype(xp.int32), 0, rows - 1)
-
-        excitation = xp.zeros(self.resolution, dtype=xp.float32)
-        xp.add.at(excitation, (ys, xs), values * self.amplitude)
-        return excitation
 
     def _add_grid_excitation(self, excitation_grid: np.ndarray) -> None:
         self.propagator.add_excitation(
