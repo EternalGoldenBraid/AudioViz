@@ -1,5 +1,6 @@
 import numpy as np
 
+from audioviz.sources import CameraFrameSource
 from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
 from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
 
@@ -166,24 +167,7 @@ def test_ripple_visualizer_pose_medium_overlay_smoke():
     app.processEvents()
 
 
-def test_ripple_visualizer_camera_frame_maps_to_excitation_grid():
-    from PyQt5 import QtWidgets
-
-    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    visualizer = RippleWaveVisualizer(
-        processor=None,
-        resolution=(2, 3),
-        plane_size_m=(1.0, 1.0),
-        speed=1.0,
-        damping=1.0,
-        amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
-        camera_source_gain=2.0,
-    )
-    visualizer.timer.stop()
+def test_camera_frame_source_maps_frame_to_excitation_grid():
     frame = np.array(
         [
             [[0, 0, 0], [255, 255, 255]],
@@ -192,7 +176,11 @@ def test_ripple_visualizer_camera_frame_maps_to_excitation_grid():
         dtype=np.uint8,
     )
 
-    grid = visualizer._camera_frame_to_excitation_grid(frame)
+    grid = CameraFrameSource.frame_to_excitation_grid(
+        frame,
+        resolution=(2, 3),
+        gain=2.0,
+    )
 
     expected = np.array(
         [
@@ -202,7 +190,6 @@ def test_ripple_visualizer_camera_frame_maps_to_excitation_grid():
         dtype=np.float32,
     )
     np.testing.assert_allclose(grid, expected, atol=1e-6)
-    app.processEvents()
 
 
 def test_ripple_visualizer_camera_source_updates_field_and_releases_capture():
@@ -421,33 +408,21 @@ def test_ripple_visualizer_prediction_error_transform_rejects_invalid_config():
     app.processEvents()
 
 
-def test_ripple_visualizer_releases_failed_camera_capture():
+def test_camera_frame_source_releases_failed_capture():
     import pytest
-    from PyQt5 import QtWidgets
 
-    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     fake_cv2 = _FakeCv2()
-    visualizer = RippleWaveVisualizer(
-        processor=None,
+    source = CameraFrameSource(
         resolution=(6, 8),
-        plane_size_m=(1.0, 1.0),
-        speed=1.0,
-        damping=1.0,
-        amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
+        camera_index=0,
+        cv2_loader=lambda: fake_cv2,
     )
-    visualizer.timer.stop()
-    visualizer._load_cv2 = lambda: fake_cv2
 
     with pytest.raises(RuntimeError, match="Failed to open camera source index 0"):
-        visualizer._ensure_camera_source(camera_index=0)
+        source.ensure_open()
 
     assert fake_cv2.capture.released
-    assert visualizer.camera_capture is None
-    app.processEvents()
+    assert source.capture is None
 
 
 def test_ripple_visualizer_camera_source_gain_control_updates_mapping():
@@ -470,7 +445,7 @@ def test_ripple_visualizer_camera_source_gain_control_updates_mapping():
 
     visualizer._update_source_control("camera-source", "gain", 3.0)
 
-    assert visualizer.camera_source_gain == 3.0
+    assert visualizer.camera_source.gain == 3.0
     app.processEvents()
 
 

@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 import numpy as np
 import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
+from audioviz.sources import CameraFrameSource
 from audioviz.source_controls import (
     AudioSourceControls,
     CameraFrameSourceControls,
@@ -78,6 +79,14 @@ class RippleWaveVisualizer(VisualizerBase):
     POSE_DEBUG_MASK_COLOR = (255.0, 64.0, 208.0)
     POSE_DEBUG_MASK_ALPHA = 0.35
     POSE_DEBUG_MASK_OUTLINE_COLOR = (255, 255, 255)
+
+    @property
+    def use_camera_source(self) -> bool:
+        return self.camera_source.enabled
+
+    @use_camera_source.setter
+    def use_camera_source(self, enabled: bool) -> None:
+        self.camera_source.enabled = bool(enabled)
 
     def __init__(self,
                  processor: Optional[AudioProcessor] = None,
@@ -156,10 +165,13 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_camera_index = pose_camera_index
         self.boundary_condition = boundary_condition
         self.use_pose_sources = use_pose_sources
-        self.use_camera_source = bool(use_camera_source)
-        self.camera_source_index = int(camera_source_index)
-        self.camera_source_gain = float(camera_source_gain)
-        self.camera_capture = camera_capture
+        self.camera_source = CameraFrameSource(
+            resolution=resolution,
+            camera_index=camera_source_index,
+            gain=camera_source_gain,
+            enabled=bool(use_camera_source),
+            capture=camera_capture,
+        )
         self.prediction_error_transform_enabled = bool(
             prediction_error_transform_enabled
         )
@@ -304,7 +316,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.use_pose_sources:
             self._set_pose_sources_enabled(True)
         if self.use_camera_source:
-            self._ensure_camera_source(camera_index=self.camera_source_index)
+            self.camera_source.set_enabled(True)
 
         layout = QtWidgets.QVBoxLayout(self)
         if self.pose_debug_view:
@@ -529,7 +541,7 @@ class RippleWaveVisualizer(VisualizerBase):
                 key="camera-source",
                 title="Camera Source",
                 controls=CameraFrameSourceControls(
-                    gain=self.camera_source_gain,
+                    gain=self.camera_source.gain,
                 ).get_controls(),
             )
         )
@@ -648,7 +660,7 @@ class RippleWaveVisualizer(VisualizerBase):
         value: float | bool | int | str,
     ) -> None:
         if control_key == "gain":
-            self.camera_source_gain = float(value)
+            self.camera_source.set_gain(float(value))
             return
         raise KeyError(f"Unknown camera source control: {control_key}")
 
@@ -703,74 +715,18 @@ class RippleWaveVisualizer(VisualizerBase):
                     raise NotImplementedError(
                         "Camera-frame source currently requires the CPU/GPU ripple backend."
                     )
-                self._ensure_camera_source(camera_index=self.camera_source_index)
-            self.use_camera_source = enabled
+            self.camera_source.set_enabled(enabled)
             return
         if source_key == "pose":
             self._set_pose_sources_enabled(enabled)
             return
         raise KeyError(f"Unknown source toggle: {source_key}")
 
-    def _ensure_camera_source(self, *, camera_index: int) -> None:
-        if self.camera_capture is not None:
-            return
-        cv2 = self._load_cv2()
-        capture = cv2.VideoCapture(camera_index)
-        if not capture.isOpened():
-            capture.release()
-            self.camera_capture = None
-            raise RuntimeError(f"Failed to open camera source index {camera_index}")
-        self.camera_capture = capture
-
     def _resolve_camera_frame_excitation(self) -> np.ndarray | None:
-        if not self.use_camera_source:
+        excitation = self.camera_source.excitation()
+        if excitation is None:
             return None
-        self._ensure_camera_source(camera_index=self.camera_source_index)
-        if self.camera_capture is None:
-            return None
-        ok, frame = self.camera_capture.read()
-        if not ok or frame is None:
-            return None
-        excitation = self._camera_frame_to_excitation_grid(frame)
         return self._apply_source_transforms("camera_frame", excitation)
-
-    def _camera_frame_to_excitation_grid(self, frame: np.ndarray) -> np.ndarray:
-        values = np.asarray(frame)
-        if values.ndim == 3:
-            channels = values[..., :3].astype(np.float32)
-            gray = (
-                0.114 * channels[..., 0]
-                + 0.587 * channels[..., 1]
-                + 0.299 * channels[..., 2]
-            )
-        elif values.ndim == 2:
-            gray = values.astype(np.float32)
-        else:
-            raise ValueError(
-                "camera frame must have shape (rows, cols) or (rows, cols, channels)"
-            )
-        if gray.size == 0:
-            raise ValueError("camera frame must not be empty")
-        if values.dtype.kind in {"u", "i"}:
-            gray = gray / np.float32(255.0)
-        else:
-            max_value = float(np.nanmax(gray))
-            if max_value > 1.0:
-                gray = gray / np.float32(255.0)
-        gray = np.nan_to_num(gray, nan=0.0, posinf=1.0, neginf=0.0)
-        gray = np.clip(gray, 0.0, 1.0)
-        mapped = self._resize_camera_grid(gray)
-        return (mapped * np.float32(self.camera_source_gain)).astype(
-            np.float32,
-            copy=False,
-        )
-
-    def _resize_camera_grid(self, values: np.ndarray) -> np.ndarray:
-        rows, cols = self.resolution
-        src_rows, src_cols = values.shape
-        y_index = np.rint(np.linspace(0, src_rows - 1, rows)).astype(np.int32)
-        x_index = np.rint(np.linspace(0, src_cols - 1, cols)).astype(np.int32)
-        return np.ascontiguousarray(values[y_index][:, x_index], dtype=np.float32)
 
     def _apply_source_transforms(
         self,
@@ -999,9 +955,7 @@ class RippleWaveVisualizer(VisualizerBase):
             self.pose_capture = None
 
     def close_camera_source(self) -> None:
-        if self.camera_capture is not None:
-            self.camera_capture.release()
-            self.camera_capture = None
+        self.camera_source.close()
 
     def _create_pose_debug_widget(self):
         widget = pg.GraphicsLayoutWidget()
