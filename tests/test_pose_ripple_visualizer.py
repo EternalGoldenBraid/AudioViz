@@ -252,7 +252,10 @@ def test_ripple_visualizer_prediction_error_transform_outputs_gaussian_bits():
     )
     observation = np.full((2, 2), 0.2, dtype=np.float32)
 
-    transformed = visualizer._apply_source_transforms("camera_frame", observation)
+    transformed = visualizer.source_orchestrator.apply_source_transforms(
+        "camera_frame",
+        observation,
+    )
 
     expected_error = observation - visualizer.engine.Z
     expected = (expected_error * expected_error) / (2.0 * 0.1 * 0.1 * np.log(2.0))
@@ -285,7 +288,10 @@ def test_ripple_visualizer_prediction_error_transform_applies_softsign_activatio
     visualizer.engine.Z[:] = np.zeros((1, 3), dtype=np.float32)
     observation = np.array([[0.0, 1.0, 2.0]], dtype=np.float32)
 
-    transformed = visualizer._apply_source_transforms("camera_frame", observation)
+    transformed = visualizer.source_orchestrator.apply_source_transforms(
+        "camera_frame",
+        observation,
+    )
 
     squared_error = observation * observation
     expected = 5.0 * squared_error / (2.0 + squared_error)
@@ -326,7 +332,10 @@ def test_ripple_visualizer_prediction_error_learning_updates_edge_weights():
     visualizer.engine.Z[:] = field
     observation = field + np.ones_like(field)
 
-    visualizer._apply_source_transforms("camera_frame", observation)
+    visualizer.source_orchestrator.apply_source_transforms(
+        "camera_frame",
+        observation,
+    )
 
     transform = visualizer.prediction_error_transform
     neighbors = transform.neighbor_fields(field)
@@ -373,7 +382,7 @@ def test_ripple_visualizer_prediction_error_transform_clips_runaway_values():
     )
 
     with np.errstate(all="raise"):
-        transformed = visualizer._apply_source_transforms(
+        transformed = visualizer.source_orchestrator.apply_source_transforms(
             "camera_frame",
             observation,
         )
@@ -675,9 +684,9 @@ def test_ripple_visualizer_scales_audio_only_excitation_by_signal_level():
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
 
-    amplitude = visualizer._current_excitation_amplitude(
-        np.asarray([[1.0]], dtype=np.float32)
-    )
+    amplitude = visualizer.source_orchestrator.resolve(
+        base_amplitude=visualizer.base_amplitude,
+    ).amplitude
 
     assert amplitude == 0.5
 

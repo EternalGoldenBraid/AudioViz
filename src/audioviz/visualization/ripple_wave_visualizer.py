@@ -35,6 +35,9 @@ from audioviz.visualization.ripple_control_panel import (
 from audioviz.visualization.ripple_source_controls import (
     RippleSourceControlBinding,
 )
+from audioviz.visualization.ripple_source_orchestrator import (
+    RippleSourceOrchestrator,
+)
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
 
@@ -307,6 +310,15 @@ class RippleWaveVisualizer(VisualizerBase):
             use_external_opengl_context=self.use_shader,
         )
         self.dt = self.engine.dt
+        self.source_orchestrator = RippleSourceOrchestrator(
+            audio_source=self.audio_source,
+            synthetic_source=self.synthetic_source,
+            camera_source=self.camera_source,
+            prediction_error_transform=self.prediction_error_transform,
+            engine=self.engine,
+            resolution=self.resolution,
+            n_sources=self.n_sources,
+        )
 
         self.renderer = (
             OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer(
@@ -414,17 +426,16 @@ class RippleWaveVisualizer(VisualizerBase):
             set_auto_level_floor(self.auto_color_floor)
 
     def update_visualization(self):
-        audio_frequencies = self.audio_source.frequencies(n_sources=self.n_sources)
-        source_excitation = self._resolve_source_excitation_grid(
-            audio_frequencies=audio_frequencies,
+        source_frame = self.source_orchestrator.resolve(
+            base_amplitude=self.base_amplitude,
         )
-        self.engine.amplitude = self._current_excitation_amplitude(audio_frequencies)
+        self.engine.amplitude = source_frame.amplitude
 
         if self.use_pose_sources:
-            self._update_pose_visualization(source_excitation)
+            self._update_pose_visualization(source_frame.grid_excitation)
             return
 
-        if source_excitation is None:
+        if source_frame.grid_excitation is None:
             if not self.renderer.prepare_frame():
                 return
             self.engine.step_without_excitation()
@@ -432,77 +443,19 @@ class RippleWaveVisualizer(VisualizerBase):
             self.renderer.render(self.engine)
             self.source_control_binding.sync_audio_panel(
                 self.control_panel,
-                audio_frequencies,
+                source_frame.audio_frequencies,
             )
             return
 
         if not self.renderer.prepare_frame():
             return
 
-        self.engine.step_grid_excitation(source_excitation)
+        self.engine.step_grid_excitation(source_frame.grid_excitation)
         self.time = self.engine.time
         self.renderer.render(self.engine)
         self.source_control_binding.sync_audio_panel(
             self.control_panel,
-            audio_frequencies,
-        )
-
-    def _current_excitation_amplitude(self, freqs: np.ndarray | None) -> float:
-        return self.audio_source.excitation_amplitude(
-            base_amplitude=self.base_amplitude,
-            frequencies=freqs,
-            synthetic_enabled=self.synthetic_source.enabled,
-        )
-
-    def _resolve_source_excitation_grid(
-        self,
-        *,
-        audio_frequencies: np.ndarray | None,
-    ) -> np.ndarray | None:
-        next_time = self.engine.time + self.engine.dt
-        grids = [
-            self.synthetic_source.excitation_grid(
-                t=next_time,
-                source_positions=self.engine.source_positions,
-                resolution=self.resolution,
-                grid_spacing=self.engine.grid_spacing,
-                speed=self.engine.speed,
-                max_frequency=self.engine.max_frequency,
-                decay_alpha=self.engine.decay_alpha,
-            ),
-            self.audio_source.excitation_grid(
-                t=next_time,
-                n_sources=self.n_sources,
-                frequencies=audio_frequencies,
-                source_positions=self.engine.source_positions,
-                resolution=self.resolution,
-                grid_spacing=self.engine.grid_spacing,
-                speed=self.engine.speed,
-                max_frequency=self.engine.max_frequency,
-                decay_alpha=self.engine.decay_alpha,
-            ),
-            self._resolve_camera_frame_excitation(),
-        ]
-        active = [grid for grid in grids if grid is not None]
-        if not active:
-            return None
-        return np.sum(np.stack(active, axis=0), axis=0, dtype=np.float32)
-
-    def _resolve_camera_frame_excitation(self) -> np.ndarray | None:
-        excitation = self.camera_source.excitation()
-        if excitation is None:
-            return None
-        return self._apply_source_transforms("camera_frame", excitation)
-
-    def _apply_source_transforms(
-        self,
-        source_key: str,
-        excitation: np.ndarray,
-    ) -> np.ndarray:
-        return self.prediction_error_transform.apply(
-            source_key=source_key,
-            observation=excitation,
-            ripple_state=self.engine.get_field_numpy(),
+            source_frame.audio_frequencies,
         )
 
     def _set_pose_sources_enabled(self, enabled: bool) -> None:
