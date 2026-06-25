@@ -341,11 +341,12 @@ def test_ripple_visualizer_prediction_error_learning_updates_edge_weights():
 
     visualizer._apply_source_transforms("camera_frame", observation)
 
-    neighbors = visualizer._prediction_error_neighbor_fields(field)
+    transform = visualizer.prediction_error_transform
+    neighbors = transform.neighbor_fields(field)
     expected = 0.5 * neighbors / np.log(2.0)
-    assert visualizer.prediction_error_edge_weights is not None
+    assert transform.edge_weights is not None
     np.testing.assert_allclose(
-        visualizer.prediction_error_edge_weights,
+        transform.edge_weights,
         expected,
         rtol=1e-6,
         atol=1e-6,
