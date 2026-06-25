@@ -7,7 +7,7 @@ from audioviz.sources import CameraFrameSource
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources.pose import (
-    MediaPipePoseExtractor,
+    PoseFrameSource,
     PoseGraphExtractor,
     PoseGraphState,
     build_pose_graph_segmentation_mask,
@@ -73,6 +73,14 @@ class RippleWaveVisualizer(VisualizerBase):
     @use_camera_source.setter
     def use_camera_source(self, enabled: bool) -> None:
         self.camera_source.enabled = bool(enabled)
+
+    @property
+    def use_pose_sources(self) -> bool:
+        return self.pose_source.enabled
+
+    @use_pose_sources.setter
+    def use_pose_sources(self, enabled: bool) -> None:
+        self.pose_source.enabled = bool(enabled)
 
     def __init__(self,
                  processor: Optional[AudioProcessor] = None,
@@ -147,10 +155,14 @@ class RippleWaveVisualizer(VisualizerBase):
         )
         self.use_gpu = use_gpu
         self.use_shader = use_shader
-        self.pose_model_path = pose_model_path
-        self.pose_camera_index = pose_camera_index
         self.boundary_condition = boundary_condition
-        self.use_pose_sources = use_pose_sources
+        self.pose_source = PoseFrameSource(
+            model_path=pose_model_path,
+            camera_index=pose_camera_index,
+            enabled=bool(use_pose_sources),
+            extractor=pose_extractor,
+            capture=pose_capture,
+        )
         self.camera_source = CameraFrameSource(
             resolution=resolution,
             camera_index=camera_source_index,
@@ -263,8 +275,6 @@ class RippleWaveVisualizer(VisualizerBase):
         )
         self.pose_state: PoseGraphState | None = None
         self.pose_last_update_time = time.monotonic()
-        self.pose_extractor = pose_extractor
-        self.pose_capture = pose_capture
         self._latest_pose_coords = np.zeros((0, 2), dtype=np.float32)
         self._latest_pose_adjacency = np.zeros((0, 0), dtype=np.float32)
         self._latest_pose_segmentation_mask: np.ndarray | None = None
@@ -509,31 +519,13 @@ class RippleWaveVisualizer(VisualizerBase):
                 raise NotImplementedError(
                     "Pose-medium coupling currently requires the CPU ripple backend."
                 )
-            self._ensure_pose_source(
-                model_path=self.pose_model_path,
-                camera_index=self.pose_camera_index,
-            )
+            self.pose_source.set_enabled(True)
             self.pose_last_update_time = time.monotonic()
-        self.use_pose_sources = enabled
+        else:
+            self.pose_source.set_enabled(False)
         self.pose_state = None
         self._clear_pose_medium_state()
         self.engine.set_body_boundary_mask(None)
-
-    def _ensure_pose_source(
-        self,
-        *,
-        model_path: str | None,
-        camera_index: int,
-    ) -> None:
-        if self.pose_extractor is None:
-            self.pose_extractor = MediaPipePoseExtractor(model_path=model_path)
-        if self.pose_capture is None:
-            cv2 = self._load_cv2()
-            self.pose_capture = cv2.VideoCapture(camera_index)
-            if not self.pose_capture.isOpened():
-                self.pose_extractor.close()
-                self.pose_extractor = None
-                raise RuntimeError(f"Failed to open pose camera index {camera_index}")
 
     def _clear_pose_medium_state(self) -> None:
         if self.engine.pose_values is not None:
@@ -584,14 +576,10 @@ class RippleWaveVisualizer(VisualizerBase):
         *,
         camera_excitation: np.ndarray | None = None,
     ) -> None:
-        if self.pose_capture is None or self.pose_extractor is None:
+        sample = self.pose_source.read()
+        if sample is None:
             return
-
-        ok, frame = self.pose_capture.read()
-        if not ok:
-            return
-
-        pose = self.pose_extractor.extract(frame)
+        frame, pose = sample
         segmentation_mask = self._resolve_pose_segmentation_mask(frame, pose)
         self._latest_pose_coords = np.asarray(pose.coords, dtype=np.float32).copy()
         self._latest_pose_adjacency = np.asarray(pose.adjacency, dtype=np.float32).copy()
@@ -711,12 +699,7 @@ class RippleWaveVisualizer(VisualizerBase):
         super().closeEvent(event)
 
     def close_pose_sources(self) -> None:
-        if self.pose_extractor is not None:
-            self.pose_extractor.close()
-            self.pose_extractor = None
-        if self.pose_capture is not None:
-            self.pose_capture.release()
-            self.pose_capture = None
+        self.pose_source.close()
 
     def close_camera_source(self) -> None:
         self.camera_source.close()
@@ -765,18 +748,6 @@ class RippleWaveVisualizer(VisualizerBase):
         if mask.ndim != 2:
             return False
         return bool(np.any(mask >= np.float32(0.5)))
-
-    @staticmethod
-    def _load_cv2():
-        try:
-            import cv2
-        except ImportError as exc:
-            raise ImportError(
-                "OpenCV is required for pose-driven ripple sources. "
-                "Install the pose-demo dependency group first."
-            ) from exc
-        return cv2
-
 
 if __name__ == "__main__":
     import sys

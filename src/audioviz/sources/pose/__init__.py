@@ -7,6 +7,7 @@ from audioviz.sources.pose.adjacency import (
     mediapipe_pose_adjacency,
 )
 from audioviz.sources.pose.base import PoseGraphExtractor, PoseGraphFrame
+from audioviz.sources.pose.frame_source import PoseFrameSource
 from audioviz.sources.pose.grid_mapping import (
     build_pose_graph_segmentation_mask,
     centered_field_rect,
@@ -24,6 +25,7 @@ __all__ = [
     "MediaPipePoseExtractor",
     "PoseGraphExtractor",
     "PoseGraphFrame",
+    "PoseFrameSource",
     "PoseGraphState",
     "adjacency_from_edges",
     "build_pose_graph_segmentation_mask",
