@@ -8,6 +8,10 @@ from PyQt5 import QtWidgets
 
 from audioviz.engine import RippleEngine
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+from audioviz.visualization.ripple_visualizer_config import (
+    RippleSourceOrchestratorConfig,
+    SyntheticSourceConfig,
+)
 
 
 def benchmark_cpu(
@@ -78,13 +82,15 @@ def benchmark_shader_direct(
 ) -> float:
     widget = RippleWaveVisualizer(
         processor=None,
-        use_synthetic=True,
         use_shader=True,
         resolution=resolution,
         n_sources=n_sources,
         speed=10.0,
         damping=0.99,
         amplitude=1.0,
+        source_orchestrator_config=RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(enabled=True, frequency=440.0)
+        ),
     )
     widget.resize(320, 320)
     widget.show()

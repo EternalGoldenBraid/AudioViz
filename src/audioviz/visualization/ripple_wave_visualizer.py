@@ -36,9 +36,6 @@ from audioviz.visualization.ripple_source_orchestrator import (
 from audioviz.visualization.ripple_visualizer_config import (
     RipplePoseConfig,
     RippleSourceOrchestratorConfig,
-    pop_legacy_pose_config,
-    pop_legacy_source_orchestrator_config,
-    reject_mixed_legacy_config,
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
@@ -135,16 +132,10 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_capture=None,
                  camera_capture=None,
                  **kwargs):
-        kwargs = dict(kwargs)
-        reject_mixed_legacy_config(
-            kwargs,
-            source_orchestrator_config=source_orchestrator_config,
-            pose_config=pose_config,
-        )
         if source_orchestrator_config is None:
-            source_orchestrator_config = pop_legacy_source_orchestrator_config(kwargs)
+            source_orchestrator_config = RippleSourceOrchestratorConfig()
         if pose_config is None:
-            pose_config = pop_legacy_pose_config(kwargs)
+            pose_config = RipplePoseConfig()
         super().__init__(processor, **kwargs)
 
         self.processor = processor

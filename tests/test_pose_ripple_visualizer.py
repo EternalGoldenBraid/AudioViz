@@ -3,6 +3,16 @@ import numpy as np
 from audioviz.sources import CameraFrameSource
 from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
 from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
+from audioviz.visualization.prediction_error_transform import (
+    PredictionErrorTransformConfig,
+)
+from audioviz.visualization.ripple_visualizer_config import (
+    AudioSourceConfig,
+    CameraFrameSourceConfig,
+    RipplePoseConfig,
+    RippleSourceOrchestratorConfig,
+    SyntheticSourceConfig,
+)
 
 
 class _FakeCapture:
@@ -120,6 +130,66 @@ class _FakeProcessor:
         self.current_top_k_frequencies = values
 
 
+def _source_config(
+    *,
+    use_synthetic: bool = False,
+    frequency: float | tuple[float, ...] | list[float] = 440.0,
+    use_audio_source: bool | None = None,
+    use_camera_source: bool = False,
+    prediction_error: PredictionErrorTransformConfig | None = None,
+    audio_signal_gate_threshold: float = 0.05,
+    audio_drive_amplitude: float = 1.0,
+    audio_visual_mapping_mode: str = "legacy",
+    audio_visual_mapping_alpha: float = 50.0,
+    audio_visual_mapping_f0: float = 50.0,
+    audio_visual_mapping_fc: float = 2000.0,
+    audio_visual_linear_scale: float = 0.05,
+    audio_visual_linear_offset: float = 0.0,
+    camera_source_index: int = 0,
+    camera_source_gain: float = 1.0,
+) -> RippleSourceOrchestratorConfig:
+    return RippleSourceOrchestratorConfig(
+        synthetic=SyntheticSourceConfig(
+            enabled=use_synthetic,
+            frequency=frequency,
+        ),
+        audio=AudioSourceConfig(
+            enabled=use_audio_source,
+            signal_gate_threshold=audio_signal_gate_threshold,
+            drive_amplitude=audio_drive_amplitude,
+            mapping_mode=audio_visual_mapping_mode,
+            mapping_alpha=audio_visual_mapping_alpha,
+            mapping_f0=audio_visual_mapping_f0,
+            mapping_fc=audio_visual_mapping_fc,
+            linear_scale=audio_visual_linear_scale,
+            linear_offset=audio_visual_linear_offset,
+        ),
+        camera_frame=CameraFrameSourceConfig(
+            enabled=use_camera_source,
+            camera_index=camera_source_index,
+            gain=camera_source_gain,
+        ),
+        prediction_error=(
+            PredictionErrorTransformConfig()
+            if prediction_error is None
+            else prediction_error
+        ),
+    )
+
+
+def _pose_config(
+    *,
+    enabled: bool = False,
+    render_mode: str = "overlay",
+    debug_view: bool = False,
+) -> RipplePoseConfig:
+    return RipplePoseConfig(
+        enabled=enabled,
+        render_mode=render_mode,
+        debug_view=debug_view,
+    )
+
+
 def test_ripple_visualizer_pose_medium_overlay_smoke():
     from PyQt5 import QtWidgets
 
@@ -135,14 +205,10 @@ def test_ripple_visualizer_pose_medium_overlay_smoke():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=True,
+        source_orchestrator_config=_source_config(use_synthetic=False),
+        pose_config=_pose_config(enabled=True, render_mode="overlay"),
         pose_capture=capture,
         pose_extractor=extractor,
-        pose_acceleration_scale=1.0,
-        pose_max_excitation=10.0,
-        pose_debug_view=False,
-        pose_render_mode="overlay",
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
@@ -207,9 +273,10 @@ def test_ripple_visualizer_camera_source_updates_field_and_releases_capture():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
-        use_camera_source=True,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            use_camera_source=True,
+        ),
         camera_capture=capture,
     )
     visualizer.timer.stop()
@@ -238,12 +305,15 @@ def test_ripple_visualizer_prediction_error_transform_outputs_gaussian_bits():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
-        prediction_error_transform_enabled=True,
-        prediction_error_sigma=0.1,
-        prediction_error_output_mode="bits",
-        prediction_error_activation_function="linear_clipped",
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                sigma=0.1,
+                output_mode="bits",
+                activation_function="linear_clipped",
+            ),
+        ),
     )
     visualizer.timer.stop()
     visualizer.engine.Z[:] = np.array(
@@ -276,13 +346,16 @@ def test_ripple_visualizer_prediction_error_transform_applies_softsign_activatio
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
-        prediction_error_transform_enabled=True,
-        prediction_error_output_mode="squared_error",
-        prediction_error_activation_function="softsign",
-        prediction_error_activation_scale=2.0,
-        prediction_error_max_output=5.0,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                output_mode="squared_error",
+                activation_function="softsign",
+                activation_scale=2.0,
+                max_output=5.0,
+            ),
+        ),
     )
     visualizer.timer.stop()
     visualizer.engine.Z[:] = np.zeros((1, 3), dtype=np.float32)
@@ -312,17 +385,20 @@ def test_ripple_visualizer_prediction_error_learning_updates_edge_weights():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
-        prediction_error_transform_enabled=True,
-        prediction_error_output_mode="squared_error",
-        prediction_error_activation_function="linear_clipped",
-        prediction_error_sigma=1.0,
-        prediction_error_learning_enabled=True,
-        prediction_error_learning_rate=0.5,
-        prediction_error_learning_weight_decay=0.0,
-        prediction_error_learning_weight_clip=100.0,
-        prediction_error_learning_gradient_clip=100.0,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                output_mode="squared_error",
+                activation_function="linear_clipped",
+                sigma=1.0,
+                learning_enabled=True,
+                learning_rate=0.5,
+                learning_weight_decay=0.0,
+                learning_weight_clip=100.0,
+                learning_gradient_clip=100.0,
+            ),
+        ),
     )
     visualizer.timer.stop()
     field = np.array(
@@ -363,13 +439,16 @@ def test_ripple_visualizer_prediction_error_transform_clips_runaway_values():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
-        prediction_error_transform_enabled=True,
-        prediction_error_sigma=0.1,
-        prediction_error_output_mode="bits",
-        prediction_error_prediction_clip=5.0,
-        prediction_error_max_output=3.0,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                sigma=0.1,
+                output_mode="bits",
+                prediction_clip=5.0,
+                max_output=3.0,
+            ),
+        ),
     )
     visualizer.timer.stop()
     visualizer.engine.Z[:] = np.array(
@@ -409,10 +488,13 @@ def test_ripple_visualizer_prediction_error_transform_rejects_invalid_config():
             speed=1.0,
             damping=1.0,
             amplitude=1.0,
-            use_synthetic=False,
-            use_pose_sources=False,
-            prediction_error_transform_enabled=True,
-            prediction_error_sigma=0.0,
+            source_orchestrator_config=_source_config(
+                use_synthetic=False,
+                prediction_error=PredictionErrorTransformConfig(
+                    enabled=True,
+                    sigma=0.0,
+                ),
+            ),
         )
     app.processEvents()
 
@@ -447,8 +529,7 @@ def test_ripple_visualizer_camera_source_gain_control_updates_mapping():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
+        source_orchestrator_config=_source_config(use_synthetic=False),
     )
     visualizer.timer.stop()
 
@@ -473,12 +554,10 @@ def test_ripple_visualizer_pose_medium_standing_body_smoke():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=True,
+        source_orchestrator_config=_source_config(use_synthetic=False),
+        pose_config=_pose_config(enabled=True, render_mode="standing-body"),
         pose_capture=capture,
         pose_extractor=extractor,
-        pose_debug_view=False,
-        pose_render_mode="standing-body",
     )
     visualizer.timer.stop()
     visualizer.renderer = _StandingRenderer()
@@ -511,12 +590,10 @@ def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=True,
+        source_orchestrator_config=_source_config(use_synthetic=False),
+        pose_config=_pose_config(enabled=True, render_mode="standing-body"),
         pose_capture=capture,
         pose_extractor=extractor,
-        pose_debug_view=False,
-        pose_render_mode="standing-body",
     )
     visualizer.timer.stop()
     visualizer.renderer = _StandingRendererWithCallableLut()
@@ -550,12 +627,10 @@ def test_ripple_visualizer_pose_medium_standing_body_with_numpy_renderer_smoke()
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=True,
+        source_orchestrator_config=_source_config(use_synthetic=False),
+        pose_config=_pose_config(enabled=True, render_mode="standing-body"),
         pose_capture=capture,
         pose_extractor=extractor,
-        pose_debug_view=False,
-        pose_render_mode="standing-body",
     )
     visualizer.timer.stop()
     visualizer.renderer = NumpyImageRenderer()
@@ -585,8 +660,7 @@ def test_ripple_visualizer_maps_audio_frequencies_before_ripple_drive():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
+        source_orchestrator_config=_source_config(use_synthetic=False),
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
@@ -616,9 +690,10 @@ def test_ripple_visualizer_respects_explicit_audio_source_enabled_state():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_audio_source=False,
-        use_pose_sources=False,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            use_audio_source=False,
+        ),
     )
     visualizer.timer.stop()
 
@@ -641,11 +716,12 @@ def test_ripple_visualizer_uses_configured_audio_frequency_mapping():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
-        use_synthetic=False,
-        use_pose_sources=False,
-        audio_visual_mapping_alpha=10.0,
-        audio_visual_mapping_f0=100.0,
-        audio_visual_mapping_fc=10_000.0,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            audio_visual_mapping_alpha=10.0,
+            audio_visual_mapping_f0=100.0,
+            audio_visual_mapping_fc=10_000.0,
+        ),
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
@@ -678,8 +754,7 @@ def test_ripple_visualizer_scales_audio_only_excitation_by_signal_level():
         speed=1.0,
         damping=1.0,
         amplitude=2.0,
-        use_synthetic=False,
-        use_pose_sources=False,
+        source_orchestrator_config=_source_config(use_synthetic=False),
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
@@ -705,8 +780,7 @@ def test_ripple_visualizer_audio_source_controls_update_processor_and_mapping():
         speed=1.0,
         damping=1.0,
         amplitude=2.0,
-        use_synthetic=False,
-        use_pose_sources=False,
+        source_orchestrator_config=_source_config(use_synthetic=False),
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
