@@ -3,7 +3,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 from PyQt5 import QtCore, QtWidgets
-from audioviz.sources import CameraFrameSource
+from audioviz.sources import AudioRippleSource, CameraFrameSource, SyntheticRippleSource
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources.pose import (
@@ -38,10 +38,6 @@ from audioviz.visualization.ripple_source_controls import (
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
-from audioviz.utils.signal_processing import (
-    map_audio_freq_to_visual_freq,
-    normalize_audio_visual_mapping_mode,
-)
 
 POSE_RENDER_MODE_OVERLAY = "overlay"
 POSE_RENDER_MODE_STANDING_BODY = "standing-body"
@@ -81,6 +77,22 @@ class RippleWaveVisualizer(VisualizerBase):
     @use_pose_sources.setter
     def use_pose_sources(self, enabled: bool) -> None:
         self.pose_source.enabled = bool(enabled)
+
+    @property
+    def use_synthetic(self) -> bool:
+        return self.synthetic_source.enabled
+
+    @use_synthetic.setter
+    def use_synthetic(self, enabled: bool) -> None:
+        self.synthetic_source.enabled = bool(enabled)
+
+    @property
+    def use_audio_source(self) -> bool:
+        return self.audio_source.enabled
+
+    @use_audio_source.setter
+    def use_audio_source(self, enabled: bool) -> None:
+        self.audio_source.enabled = bool(enabled)
 
     def __init__(self,
                  processor: Optional[AudioProcessor] = None,
@@ -147,11 +159,28 @@ class RippleWaveVisualizer(VisualizerBase):
         super().__init__(processor, **kwargs)
 
         self.processor = processor
-        self.use_synthetic = use_synthetic
-        self.use_audio_source = (
+        self.n_sources = n_sources
+        self.synthetic_source = SyntheticRippleSource(
+            frequency=frequency,
+            n_sources=n_sources,
+            enabled=bool(use_synthetic),
+        )
+        audio_source_enabled = (
             processor is not None and not use_synthetic
             if use_audio_source is None
             else processor is not None and bool(use_audio_source)
+        )
+        self.audio_source = AudioRippleSource(
+            processor=processor,
+            enabled=audio_source_enabled,
+            signal_gate_threshold=audio_signal_gate_threshold,
+            drive_amplitude=audio_drive_amplitude,
+            mapping_mode=audio_visual_mapping_mode,
+            mapping_alpha=audio_visual_mapping_alpha,
+            mapping_f0=audio_visual_mapping_f0,
+            mapping_fc=audio_visual_mapping_fc,
+            linear_scale=audio_visual_linear_scale,
+            linear_offset=audio_visual_linear_offset,
         )
         self.use_gpu = use_gpu
         self.use_shader = use_shader
@@ -222,16 +251,6 @@ class RippleWaveVisualizer(VisualizerBase):
             resolution=resolution,
         )
         self.standing_body_renderer = StandingBodyRenderer()
-        self.audio_visual_mapping_mode = normalize_audio_visual_mapping_mode(
-            audio_visual_mapping_mode
-        )
-        self.audio_visual_mapping_alpha = float(audio_visual_mapping_alpha)
-        self.audio_visual_mapping_f0 = float(audio_visual_mapping_f0)
-        self.audio_visual_mapping_fc = float(audio_visual_mapping_fc)
-        self.audio_visual_linear_scale = float(audio_visual_linear_scale)
-        self.audio_visual_linear_offset = float(audio_visual_linear_offset)
-        self.audio_signal_gate_threshold = float(audio_signal_gate_threshold)
-        self.audio_drive_amplitude = float(audio_drive_amplitude)
         self.auto_color_activation_threshold = float(auto_color_activation_threshold)
         self.auto_color_floor = float(auto_color_floor)
         if self.use_pose_sources and (self.use_gpu or self.use_shader):
@@ -243,14 +262,8 @@ class RippleWaveVisualizer(VisualizerBase):
                 "Camera-frame source currently requires the CPU/GPU ripple backend."
             )
 
-        self.n_sources = n_sources
         self.plane_size_m = plane_size_m
         self.resolution = resolution
-        self.synthetic_frequencies = self._coerce_synthetic_frequencies(
-            frequency,
-            n_sources=self.n_sources,
-        )
-        self.frequency = float(self.synthetic_frequencies[0, 0])
         self.base_amplitude = float(amplitude)
         self.apply_gaussian_smoothing = apply_gaussian_smoothing
         self.amplitude = amplitude
@@ -278,9 +291,6 @@ class RippleWaveVisualizer(VisualizerBase):
         self._latest_pose_coords = np.zeros((0, 2), dtype=np.float32)
         self._latest_pose_adjacency = np.zeros((0, 0), dtype=np.float32)
         self._latest_pose_segmentation_mask: np.ndarray | None = None
-        if self.processor is not None:
-            self.processor.minimum_signal_level = self.audio_signal_gate_threshold
-
         self.engine = RippleEngine(
             resolution=self.resolution,
             plane_size_m=self.plane_size_m,
@@ -434,67 +444,23 @@ class RippleWaveVisualizer(VisualizerBase):
         self.source_control_binding.sync_audio_panel(self.control_panel, freqs)
 
     def _current_excitation_amplitude(self, freqs: np.ndarray | None) -> float:
-        if (
-            freqs is None
-            or self.processor is None
-            or not self.use_audio_source
-            or self.use_synthetic
-        ):
-            return self.base_amplitude
-        signal_level = float(getattr(self.processor, "current_signal_level", 0.0))
-        if not np.isfinite(signal_level):
-            return self.base_amplitude
-        return self.base_amplitude * self.audio_drive_amplitude * max(signal_level, 0.0)
+        return self.audio_source.excitation_amplitude(
+            base_amplitude=self.base_amplitude,
+            frequencies=freqs,
+            synthetic_enabled=self.synthetic_source.enabled,
+        )
 
     def _resolve_ripple_frequencies(self) -> np.ndarray | None:
         frequency_groups: list[np.ndarray] = []
-        if self.use_synthetic:
-            frequency_groups.append(self.synthetic_frequencies.copy())
-        audio_frequencies = self._resolve_audio_frequencies()
+        synthetic_frequencies = self.synthetic_source.frequencies()
+        if synthetic_frequencies is not None:
+            frequency_groups.append(synthetic_frequencies)
+        audio_frequencies = self.audio_source.frequencies(n_sources=self.n_sources)
         if audio_frequencies is not None:
             frequency_groups.append(audio_frequencies)
         if not frequency_groups:
             return None
         return np.concatenate(frequency_groups, axis=1)
-
-    def _resolve_audio_frequencies(self) -> np.ndarray | None:
-        if not self.use_audio_source or self.processor is None:
-            return None
-        signal_level = float(getattr(self.processor, "current_signal_level", 0.0))
-        if signal_level < self.audio_signal_gate_threshold:
-            return None
-        top_k = self.processor.current_top_k_frequencies
-        top_k = [f for f in top_k if f is not None and np.isfinite(f)]
-        if len(top_k) == 0:
-            return None
-        visual_frequencies = map_audio_freq_to_visual_freq(
-            np.asarray(top_k, dtype=np.float32),
-            mode=self.audio_visual_mapping_mode,
-            alpha=self.audio_visual_mapping_alpha,
-            f0=self.audio_visual_mapping_f0,
-            fc=self.audio_visual_mapping_fc,
-            linear_scale=self.audio_visual_linear_scale,
-            linear_offset=self.audio_visual_linear_offset,
-        ).astype(np.float32, copy=False)
-        return np.tile(visual_frequencies, (self.n_sources, 1))
-
-    @staticmethod
-    def _coerce_synthetic_frequencies(
-        frequency: float | list[float] | tuple[float, ...] | np.ndarray,
-        *,
-        n_sources: int,
-    ) -> np.ndarray:
-        values = np.asarray(frequency, dtype=np.float32)
-        if values.ndim == 0:
-            return np.full((n_sources, 1), float(values), dtype=np.float32)
-        if values.ndim == 1 and values.shape[0] == n_sources:
-            return values.reshape(n_sources, 1).astype(np.float32, copy=False)
-        if values.ndim == 2 and values.shape == (n_sources, 1):
-            return values.astype(np.float32, copy=False)
-        raise ValueError(
-            "frequency must be a scalar, a length-n_sources vector, "
-            "or an (n_sources, 1) matrix"
-        )
 
     def _resolve_camera_frame_excitation(self) -> np.ndarray | None:
         excitation = self.camera_source.excitation()

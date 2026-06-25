@@ -582,7 +582,7 @@ def test_ripple_visualizer_maps_audio_frequencies_before_ripple_drive():
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
 
-    resolved = visualizer._resolve_audio_frequencies()
+    resolved = visualizer.audio_source.frequencies(n_sources=visualizer.n_sources)
 
     expected = map_audio_freq_to_visual_freq(
         np.asarray([440.0, 880.0], dtype=np.float32)
@@ -614,7 +614,7 @@ def test_ripple_visualizer_respects_explicit_audio_source_enabled_state():
     visualizer.timer.stop()
 
     assert visualizer.use_audio_source is False
-    assert visualizer._resolve_audio_frequencies() is None
+    assert visualizer.audio_source.frequencies(n_sources=visualizer.n_sources) is None
     app.processEvents()
 
 
@@ -641,7 +641,7 @@ def test_ripple_visualizer_uses_configured_audio_frequency_mapping():
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
 
-    resolved = visualizer._resolve_audio_frequencies()
+    resolved = visualizer.audio_source.frequencies(n_sources=visualizer.n_sources)
 
     expected = map_audio_freq_to_visual_freq(
         np.asarray([440.0, 880.0], dtype=np.float32),
@@ -736,13 +736,13 @@ def test_ripple_visualizer_audio_source_controls_update_processor_and_mapping():
         0.1,
     )
 
-    assert visualizer.audio_signal_gate_threshold == 0.2
+    assert visualizer.audio_source.signal_gate_threshold == 0.2
     assert processor.minimum_signal_level == 0.2
-    assert visualizer.audio_drive_amplitude == 1.5
+    assert visualizer.audio_source.drive_amplitude == 1.5
     assert processor.minimum_frequency_peak_magnitude == 0.3
     assert processor.minimum_frequency_peak_to_median_ratio == 7.0
     assert processor.num_top_frequencies == 2
-    assert visualizer.audio_visual_mapping_mode == "linear"
-    assert visualizer.audio_visual_linear_scale == 0.1
+    assert visualizer.audio_source.mapping_mode == "linear"
+    assert visualizer.audio_source.linear_scale == 0.1
 
     app.processEvents()

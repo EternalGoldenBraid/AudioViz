@@ -128,7 +128,9 @@ def run_offline_audio_ripple(
                     if freq is not None
                 )
             )
-            resolved = visualizer._resolve_audio_frequencies()
+            resolved = visualizer.audio_source.frequencies(
+                n_sources=visualizer.n_sources
+            )
             mapped_visual_frequencies.append(
                 ()
                 if resolved is None
