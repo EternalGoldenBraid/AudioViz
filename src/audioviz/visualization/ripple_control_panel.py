@@ -475,6 +475,8 @@ class RippleControlPanel(QtWidgets.QWidget):
     ) -> QtWidgets.QWidget:
         if control.kind == "number":
             return self._create_number_control(section_key, control)
+        if control.kind == "toggle":
+            return self._create_toggle_control(section_key, control)
         if control.kind == "choice":
             return self._create_choice_control(section_key, control)
         if control.kind == "text":
@@ -497,6 +499,20 @@ class RippleControlPanel(QtWidgets.QWidget):
         widget.valueChanged.connect(
             lambda value, section_key=section_key, control_key=control.key: self._emit_source_control_change(
                 section_key, control_key, float(value)
+            )
+        )
+        return widget
+
+    def _create_toggle_control(
+        self,
+        section_key: str,
+        control: SourceControl,
+    ) -> QCheckBox:
+        widget = QCheckBox()
+        widget.setChecked(bool(control.default))
+        widget.toggled.connect(
+            lambda checked, section_key=section_key, control_key=control.key: self._emit_source_control_change(
+                section_key, control_key, bool(checked)
             )
         )
         return widget
@@ -537,6 +553,10 @@ class RippleControlPanel(QtWidgets.QWidget):
     ) -> None:
         if self.on_source_control_changed is not None:
             self.on_source_control_changed(section_key, control_key, value)
+        if section_key == "learning-dynamics" and control_key == "learning_enabled":
+            section = self.section_widgets.get(section_key)
+            if section is not None:
+                section.set_expanded(bool(value))
 
     def set_source_control_value(
         self,
@@ -552,6 +572,11 @@ class RippleControlPanel(QtWidgets.QWidget):
             return
         if isinstance(widget, InlineChoiceControl):
             widget.set_value(value, emit=False)
+            return
+        if isinstance(widget, QCheckBox):
+            widget.blockSignals(True)
+            widget.setChecked(bool(value))
+            widget.blockSignals(False)
             return
         if isinstance(widget, QDoubleSpinBox):
             widget.blockSignals(True)

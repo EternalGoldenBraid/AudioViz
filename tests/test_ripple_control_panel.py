@@ -106,6 +106,53 @@ def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_d
     assert auto_floor_values[-1] == 0.25
 
 
+def test_ripple_control_panel_supports_toggle_controls_and_section_expansion(
+    ripple_panel_deps,
+):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=10.0,
+        damping=0.999,
+        amplitude=1.0,
+        use_gpu=False,
+    )
+    source_events = []
+    panel = RippleControlPanel(
+        engine,
+        source_sections=(
+            ControlPanelSection(
+                key="learning-dynamics",
+                title="Learning Dynamics",
+                controls=(
+                    SourceControl(
+                        key="learning_enabled",
+                        label="Learning Enabled",
+                        default=False,
+                        kind="toggle",
+                    ),
+                ),
+                expanded=False,
+            ),
+        ),
+        on_source_control_changed=lambda section, key, value: source_events.append(
+            (section, key, value)
+        ),
+    )
+
+    section = panel.section_widgets["learning-dynamics"]
+    checkbox = panel.source_control_widgets[("learning-dynamics", "learning_enabled")]
+
+    assert not section.is_expanded()
+    checkbox.click()
+    app.processEvents()
+
+    assert section.is_expanded()
+    assert source_events[-1] == ("learning-dynamics", "learning_enabled", True)
+
+
 def test_ripple_control_panel_expands_active_source_sections_by_default(
     ripple_panel_deps,
 ):

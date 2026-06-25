@@ -3,6 +3,7 @@ from __future__ import annotations
 from audioviz.source_controls import (
     CameraFrameSourceControls,
     ControlValue,
+    PredictionLearningControls,
 )
 from audioviz.visualization.ripple_control_panel import (
     ControlPanelSection,
@@ -64,6 +65,22 @@ class RippleSourceControlBinding:
                 empty_message="No pose-specific controls are available yet.",
             )
         )
+        transform_config = visualizer.prediction_error_transform.config
+        if transform_config.enabled:
+            sections.append(
+                ControlPanelSection(
+                    key="learning-dynamics",
+                    title="Learning Dynamics",
+                    controls=PredictionLearningControls(
+                        enabled=transform_config.learning_enabled,
+                        learning_rate=transform_config.learning_rate,
+                        weight_decay=transform_config.learning_weight_decay,
+                        weight_clip=transform_config.learning_weight_clip,
+                        gradient_clip=transform_config.learning_gradient_clip,
+                    ).get_controls(),
+                    expanded=transform_config.learning_enabled,
+                )
+            )
         return tuple(sections)
 
     def build_toggles(self) -> tuple[SourceToggle, ...]:
@@ -106,6 +123,9 @@ class RippleSourceControlBinding:
             return
         if section_key == "camera-source":
             self._update_camera_control(control_key, value)
+            return
+        if section_key == "learning-dynamics":
+            self._update_learning_control(control_key, value)
             return
         self._update_synthetic_control(section_key, control_key, value)
 
@@ -193,3 +213,26 @@ class RippleSourceControlBinding:
             raise KeyError(f"Unknown source control: {section_key}.{control_key}")
         index = int(section_key.removeprefix("synthetic-source-"))
         visualizer.synthetic_source.set_frequency(index, float(value))
+
+    def _update_learning_control(
+        self,
+        control_key: str,
+        value: ControlValue,
+    ) -> None:
+        transform = self.visualizer.prediction_error_transform
+        if control_key == "learning_enabled":
+            transform.update_config(learning_enabled=bool(value))
+            return
+        if control_key == "learning_rate":
+            transform.update_config(learning_rate=float(value))
+            return
+        if control_key == "learning_weight_decay":
+            transform.update_config(learning_weight_decay=float(value))
+            return
+        if control_key == "learning_weight_clip":
+            transform.update_config(learning_weight_clip=float(value))
+            return
+        if control_key == "learning_gradient_clip":
+            transform.update_config(learning_gradient_clip=float(value))
+            return
+        raise KeyError(f"Unknown learning dynamics control: {control_key}")

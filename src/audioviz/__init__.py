@@ -2,6 +2,7 @@ from audioviz.sources import AudioRippleSource, SyntheticRippleSource
 from audioviz.source_controls import (
     AudioSourceControls,
     CameraFrameSourceControls,
+    PredictionLearningControls,
     SourceControl,
     SourceControlProvider,
     SourceControls,
@@ -17,4 +18,5 @@ __all__ = [
     "SyntheticFrequencySource",
     "AudioSourceControls",
     "CameraFrameSourceControls",
+    "PredictionLearningControls",
 ]

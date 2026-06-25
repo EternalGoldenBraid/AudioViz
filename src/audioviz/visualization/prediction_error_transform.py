@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -35,6 +35,16 @@ class PredictionErrorTransform:
         self.resolution = resolution
         self.edge_weights: np.ndarray | None = None
         self._validate_config()
+
+    def update_config(self, **changes) -> None:
+        next_config = replace(self.config, **changes)
+        previous_config = self.config
+        self.config = next_config
+        try:
+            self._validate_config()
+        except Exception:
+            self.config = previous_config
+            raise
 
     def applies_to(self, source_key: str) -> bool:
         return self.config.enabled and source_key in self.config.inputs

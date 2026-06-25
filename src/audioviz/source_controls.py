@@ -203,3 +203,54 @@ class CameraFrameSourceControls(SourceControlProvider):
                 step=0.05,
             ),
         )
+
+
+@dataclass
+class PredictionLearningControls(SourceControlProvider):
+    enabled: bool = False
+    learning_rate: float = 1e-4
+    weight_decay: float = 1e-4
+    weight_clip: float = 1.0
+    gradient_clip: float = 1.0
+
+    def get_controls(self) -> Sequence[SourceControl]:
+        return (
+            SourceControl(
+                key="learning_enabled",
+                label="Learning Enabled",
+                default=self.enabled,
+                kind="toggle",
+            ),
+            SourceControl(
+                key="learning_rate",
+                label="Learning Rate",
+                default=self.learning_rate,
+                minimum=0.0,
+                maximum=1.0,
+                step=1e-4,
+            ),
+            SourceControl(
+                key="learning_weight_decay",
+                label="Weight Decay",
+                default=self.weight_decay,
+                minimum=0.0,
+                maximum=1.0,
+                step=1e-4,
+            ),
+            SourceControl(
+                key="learning_weight_clip",
+                label="Weight Clip",
+                default=self.weight_clip,
+                minimum=1e-4,
+                maximum=1000.0,
+                step=0.01,
+            ),
+            SourceControl(
+                key="learning_gradient_clip",
+                label="Gradient Clip",
+                default=self.gradient_clip,
+                minimum=1e-4,
+                maximum=1000.0,
+                step=0.01,
+            ),
+        )

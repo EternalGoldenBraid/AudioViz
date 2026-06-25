@@ -827,3 +827,65 @@ def test_ripple_visualizer_audio_source_controls_update_processor_and_mapping():
     assert visualizer.audio_source.linear_scale == 0.1
 
     app.processEvents()
+
+
+def test_ripple_visualizer_learning_dynamics_controls_update_transform_config():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                learning_enabled=False,
+                learning_rate=1e-4,
+                learning_weight_decay=1e-4,
+                learning_weight_clip=1.0,
+                learning_gradient_clip=1.0,
+            ),
+        ),
+    )
+    visualizer.timer.stop()
+
+    visualizer.source_control_binding.update_control(
+        "learning-dynamics",
+        "learning_enabled",
+        True,
+    )
+    visualizer.source_control_binding.update_control(
+        "learning-dynamics",
+        "learning_rate",
+        0.05,
+    )
+    visualizer.source_control_binding.update_control(
+        "learning-dynamics",
+        "learning_weight_decay",
+        0.02,
+    )
+    visualizer.source_control_binding.update_control(
+        "learning-dynamics",
+        "learning_weight_clip",
+        3.0,
+    )
+    visualizer.source_control_binding.update_control(
+        "learning-dynamics",
+        "learning_gradient_clip",
+        4.0,
+    )
+
+    config = visualizer.prediction_error_transform.config
+    assert config.learning_enabled is True
+    assert config.learning_rate == 0.05
+    assert config.learning_weight_decay == 0.02
+    assert config.learning_weight_clip == 3.0
+    assert config.learning_gradient_clip == 4.0
+    app.processEvents()
