@@ -84,6 +84,23 @@ class _FakeRenderer:
         self.render_count += 1
 
 
+class _AutoColorRenderer(_FakeRenderer):
+    def __init__(self):
+        super().__init__()
+        self.auto_percentile_levels = None
+        self.auto_level_activation_threshold = None
+        self.auto_level_floor = None
+
+    def set_auto_percentile_levels(self, enabled):
+        self.auto_percentile_levels = bool(enabled)
+
+    def set_auto_level_activation_threshold(self, threshold):
+        self.auto_level_activation_threshold = float(threshold)
+
+    def set_auto_level_floor(self, floor):
+        self.auto_level_floor = float(floor)
+
+
 class _StandingRenderer(_FakeRenderer):
     def __init__(self):
         super().__init__()
@@ -888,4 +905,80 @@ def test_ripple_visualizer_learning_dynamics_controls_update_transform_config():
     assert config.learning_weight_decay == 0.02
     assert config.learning_weight_clip == 3.0
     assert config.learning_gradient_clip == 4.0
+    app.processEvents()
+
+
+def test_ripple_visualizer_auto_color_controls_refresh_live_renderer():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        source_orchestrator_config=_source_config(use_synthetic=False),
+    )
+    visualizer.timer.stop()
+    renderer = _AutoColorRenderer()
+    visualizer.renderer = renderer
+
+    visualizer._update_auto_color_levels(False)
+    visualizer._update_auto_color_activation_threshold(0.35)
+    visualizer._update_auto_color_floor(0.2)
+
+    assert renderer.auto_percentile_levels is False
+    assert renderer.auto_level_activation_threshold == 0.35
+    assert renderer.auto_level_floor == 0.2
+    assert renderer.render_count == 3
+    app.processEvents()
+
+
+def test_ripple_visualizer_learning_controls_take_effect_on_next_transform():
+    from PyQt5 import QtWidgets
+
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(2, 2),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                sigma=1.0,
+                learning_enabled=False,
+                learning_rate=0.5,
+                learning_weight_decay=0.0,
+                learning_weight_clip=100.0,
+                learning_gradient_clip=100.0,
+            ),
+        ),
+    )
+    visualizer.timer.stop()
+    visualizer.engine.Z[:] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    observation = visualizer.engine.Z + 1.0
+
+    visualizer.source_orchestrator.apply_source_transforms("camera_frame", observation)
+    assert visualizer.prediction_error_transform.edge_weights is None
+
+    visualizer.source_control_binding.update_control(
+        "learning-dynamics",
+        "learning_enabled",
+        True,
+    )
+    visualizer.source_orchestrator.apply_source_transforms("camera_frame", observation)
+
+    edge_weights = visualizer.prediction_error_transform.edge_weights
+    assert edge_weights is not None
+    assert np.any(edge_weights != 0.0)
     app.processEvents()

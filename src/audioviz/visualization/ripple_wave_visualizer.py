@@ -310,18 +310,25 @@ class RippleWaveVisualizer(VisualizerBase):
         set_auto_levels = getattr(self.renderer, "set_auto_percentile_levels", None)
         if callable(set_auto_levels):
             set_auto_levels(self.auto_color_levels_enabled)
+        self._refresh_current_render()
 
     def _update_auto_color_activation_threshold(self, val: float) -> None:
         self.auto_color_activation_threshold = float(val)
         setter = getattr(self.renderer, "set_auto_level_activation_threshold", None)
         if callable(setter):
             setter(self.auto_color_activation_threshold)
+        self._refresh_current_render()
 
     def _update_auto_color_floor(self, val: float) -> None:
         self.auto_color_floor = float(val)
         set_auto_level_floor = getattr(self.renderer, "set_auto_level_floor", None)
         if callable(set_auto_level_floor):
             set_auto_level_floor(self.auto_color_floor)
+        self._refresh_current_render()
+
+    def _refresh_current_render(self) -> None:
+        if self.renderer.prepare_frame():
+            self.renderer.render(self.engine)
 
     def update_visualization(self):
         source_frame = self.source_orchestrator.resolve()
