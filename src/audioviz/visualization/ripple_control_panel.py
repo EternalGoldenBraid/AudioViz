@@ -25,6 +25,9 @@ class ControlPanelSection:
     key: str
     title: str
     controls: Sequence[SourceControl]
+    toggle_key: str | None = None
+    expanded: bool | None = None
+    empty_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,55 @@ class InlineChoiceControl(QtWidgets.QWidget):
             self.value_changed.emit(button.property("control_value"))
 
 
+class CollapsibleSection(QtWidgets.QWidget):
+    def __init__(
+        self,
+        title: str,
+        *,
+        expanded: bool = True,
+        parent: QtWidgets.QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._expanded = bool(expanded)
+        self.header_button = QtWidgets.QToolButton(self)
+        self.header_button.setText(title)
+        self.header_button.setCheckable(True)
+        self.header_button.setChecked(self._expanded)
+        self.header_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.header_button.setArrowType(
+            Qt.DownArrow if self._expanded else Qt.RightArrow
+        )
+        self.header_button.clicked.connect(self._toggle_from_button)
+
+        self.content = QtWidgets.QWidget(self)
+        self.content_layout = QtWidgets.QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(8, 0, 0, 0)
+        self.content_layout.setSpacing(8)
+        self.content.setVisible(self._expanded)
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self.header_button)
+        layout.addWidget(self.content)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self._expanded = bool(expanded)
+        self.header_button.blockSignals(True)
+        self.header_button.setChecked(self._expanded)
+        self.header_button.blockSignals(False)
+        self.header_button.setArrowType(
+            Qt.DownArrow if self._expanded else Qt.RightArrow
+        )
+        self.content.setVisible(self._expanded)
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def _toggle_from_button(self, checked: bool) -> None:
+        self.set_expanded(checked)
+
+
 class RippleControlPanel(QtWidgets.QWidget):
     def __init__(
         self,
@@ -138,6 +190,8 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_reset = on_reset
         self.source_control_widgets: dict[tuple[str, str], QtWidgets.QWidget] = {}
         self.source_toggle_checkboxes: dict[str, QCheckBox] = {}
+        self.section_widgets: dict[str, CollapsibleSection] = {}
+        self.section_toggle_keys: dict[str, str | None] = {}
 
         self.setWindowTitle("Ripple Controls")
         layout = QtWidgets.QVBoxLayout(self)
@@ -152,8 +206,10 @@ class RippleControlPanel(QtWidgets.QWidget):
         info_label = QLabel("Wave physics controls for the ripple field.")
         content_layout.addWidget(info_label)
 
-        group = QtWidgets.QGroupBox("Wave Physics")
-        group_layout = QtWidgets.QVBoxLayout(group)
+        wave_section = CollapsibleSection("Wave Physics", expanded=True)
+        self.section_widgets["wave-physics"] = wave_section
+        self.section_toggle_keys["wave-physics"] = None
+        group_layout = wave_section.content_layout
 
         reset_button = QtWidgets.QPushButton("Reset Field")
         reset_button.clicked.connect(self.reset_field)
@@ -289,7 +345,7 @@ class RippleControlPanel(QtWidgets.QWidget):
             on_change=lambda raw: self.update_auto_color_floor(raw / 100.0),
         )
 
-        content_layout.addWidget(group)
+        content_layout.addWidget(wave_section)
 
         source_controls_group = QtWidgets.QGroupBox("Source Controls")
         source_controls_layout = QtWidgets.QVBoxLayout(source_controls_group)
@@ -297,13 +353,26 @@ class RippleControlPanel(QtWidgets.QWidget):
             self._add_source_toggle_controls(source_controls_layout)
         if self.source_sections:
             for section in self.source_sections:
-                source_group = QtWidgets.QGroupBox(section.title)
-                source_group_layout = QtWidgets.QFormLayout(source_group)
-                for control in section.controls:
-                    widget = self._create_source_control_widget(section.key, control)
-                    source_group_layout.addRow(control.label, widget)
-                    self.source_control_widgets[(section.key, control.key)] = widget
-                source_controls_layout.addWidget(source_group)
+                expanded = self._initial_section_expanded(section)
+                source_section = CollapsibleSection(section.title, expanded=expanded)
+                self.section_widgets[section.key] = source_section
+                self.section_toggle_keys[section.key] = section.toggle_key
+                source_group_layout = QtWidgets.QFormLayout()
+                source_group_layout.setContentsMargins(0, 0, 0, 0)
+                if section.controls:
+                    for control in section.controls:
+                        widget = self._create_source_control_widget(section.key, control)
+                        source_group_layout.addRow(control.label, widget)
+                        self.source_control_widgets[(section.key, control.key)] = widget
+                else:
+                    empty_label = QLabel(
+                        section.empty_message
+                        or "No controls are available for this source."
+                    )
+                    empty_label.setWordWrap(True)
+                    source_group_layout.addRow(empty_label)
+                source_section.content_layout.addLayout(source_group_layout)
+                source_controls_layout.addWidget(source_section)
         else:
             source_controls_layout.addWidget(
                 QLabel(
@@ -513,6 +582,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         if self.on_source_toggle_changed is not None:
             try:
                 self.on_source_toggle_changed(source_key, enabled)
+                self._set_sections_expanded_for_toggle(source_key, enabled)
             except Exception as exc:
                 checkbox = self.source_toggle_checkboxes.get(source_key)
                 if checkbox is not None:
@@ -520,3 +590,22 @@ class RippleControlPanel(QtWidgets.QWidget):
                     checkbox.setChecked(not enabled)
                     checkbox.blockSignals(False)
                 logger.warning(f"Failed to update source toggle {source_key!r}: {exc}")
+            return
+        self._set_sections_expanded_for_toggle(source_key, enabled)
+
+    def _initial_section_expanded(self, section: ControlPanelSection) -> bool:
+        if section.expanded is not None:
+            return bool(section.expanded)
+        if section.toggle_key is None:
+            return True
+        for toggle in self.source_toggles:
+            if toggle.key == section.toggle_key:
+                return bool(toggle.enabled)
+        return True
+
+    def _set_sections_expanded_for_toggle(self, source_key: str, expanded: bool) -> None:
+        for section_key, toggle_key in self.section_toggle_keys.items():
+            if toggle_key == source_key:
+                section = self.section_widgets.get(section_key)
+                if section is not None:
+                    section.set_expanded(expanded)

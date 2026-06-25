@@ -25,14 +25,17 @@ class RippleSourceControlBinding:
         visualizer = self.visualizer
         sections: list[ControlPanelSection] = []
         controls = visualizer.audio_source.controls()
-        if controls:
-            sections.append(
-                ControlPanelSection(
-                    key="audio-source",
-                    title="Audio Source",
-                    controls=controls,
-                )
+        sections.append(
+            ControlPanelSection(
+                key="audio-source",
+                title="Audio Source",
+                controls=controls,
+                toggle_key="audio",
+                empty_message=(
+                    "Audio source controls are unavailable without an audio processor."
+                ),
             )
+        )
         sections.append(
             ControlPanelSection(
                 key="camera-source",
@@ -40,6 +43,7 @@ class RippleSourceControlBinding:
                 controls=CameraFrameSourceControls(
                     gain=visualizer.camera_source.gain,
                 ).get_controls(),
+                toggle_key="camera",
             )
         )
         for index in range(visualizer.n_sources):
@@ -48,8 +52,18 @@ class RippleSourceControlBinding:
                     key=f"synthetic-source-{index}",
                     title=f"Synthetic Source {index + 1}",
                     controls=visualizer.synthetic_source.controls_for_index(index),
+                    toggle_key="synthetic",
                 )
             )
+        sections.append(
+            ControlPanelSection(
+                key="pose-source",
+                title="Pose Graph Source",
+                controls=(),
+                toggle_key="pose",
+                empty_message="No pose-specific controls are available yet.",
+            )
+        )
         return tuple(sections)
 
     def build_toggles(self) -> tuple[SourceToggle, ...]:

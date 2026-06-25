@@ -42,6 +42,7 @@ def test_ripple_control_panel_updates_wave_physics(ripple_panel_deps):
     assert engine.decay_alpha == 4.2
     assert engine.body_boundary_transmission == 0.25
     assert engine.body_boundary_dissipation == 0.6
+    assert panel.section_widgets["wave-physics"].is_expanded()
 
 
 def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_deps):
@@ -105,7 +106,9 @@ def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_d
     assert auto_floor_values[-1] == 0.25
 
 
-def test_ripple_control_panel_renders_source_toggles_inline(ripple_panel_deps):
+def test_ripple_control_panel_expands_active_source_sections_by_default(
+    ripple_panel_deps,
+):
     QtWidgets, RippleControlPanel = ripple_panel_deps
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     engine = RippleEngine(
@@ -123,6 +126,20 @@ def test_ripple_control_panel_renders_source_toggles_inline(ripple_panel_deps):
             SourceToggle("audio", "Audio", enabled=False, available=True),
             SourceToggle("pose", "Pose Graph", enabled=True, available=False),
         ),
+        source_sections=(
+            ControlPanelSection(
+                key="audio-source",
+                title="Audio Source",
+                controls=(),
+                toggle_key="audio",
+            ),
+            ControlPanelSection(
+                key="pose-source",
+                title="Pose Graph Source",
+                controls=(),
+                toggle_key="pose",
+            ),
+        ),
         on_source_toggle_changed=lambda key, enabled: toggle_events.append(
             (key, enabled)
         ),
@@ -130,11 +147,18 @@ def test_ripple_control_panel_renders_source_toggles_inline(ripple_panel_deps):
 
     audio_toggle = panel.source_toggle_checkboxes["audio"]
     pose_toggle = panel.source_toggle_checkboxes["pose"]
+    audio_section = panel.section_widgets["audio-source"]
+    pose_section = panel.section_widgets["pose-source"]
+
+    assert not audio_section.is_expanded()
+    assert pose_section.is_expanded()
+
     audio_toggle.click()
     app.processEvents()
 
     assert audio_toggle.isChecked()
     assert not pose_toggle.isEnabled()
+    assert audio_section.is_expanded()
     assert toggle_events[-1] == ("audio", True)
 
 
@@ -158,11 +182,21 @@ def test_ripple_control_panel_reverts_source_toggle_when_callback_fails(
     panel = RippleControlPanel(
         engine,
         source_toggles=(SourceToggle("camera", "Camera Frame", enabled=False),),
+        source_sections=(
+            ControlPanelSection(
+                key="camera-source",
+                title="Camera Source",
+                controls=(),
+                toggle_key="camera",
+            ),
+        ),
         on_source_toggle_changed=fail_toggle,
     )
 
     camera_toggle = panel.source_toggle_checkboxes["camera"]
+    camera_section = panel.section_widgets["camera-source"]
     camera_toggle.click()
     app.processEvents()
 
     assert not camera_toggle.isChecked()
+    assert not camera_section.is_expanded()
