@@ -443,7 +443,7 @@ def test_ripple_visualizer_camera_source_gain_control_updates_mapping():
     )
     visualizer.timer.stop()
 
-    visualizer._update_source_control("camera-source", "gain", 3.0)
+    visualizer.source_control_binding.update_control("camera-source", "gain", 3.0)
 
     assert visualizer.camera_source.gain == 3.0
     app.processEvents()
@@ -704,13 +704,37 @@ def test_ripple_visualizer_audio_source_controls_update_processor_and_mapping():
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
 
-    visualizer._update_source_control("audio-source", "signal_gate_threshold", 0.2)
-    visualizer._update_source_control("audio-source", "drive_amplitude", 1.5)
-    visualizer._update_source_control("audio-source", "minimum_peak_magnitude", 0.3)
-    visualizer._update_source_control("audio-source", "peak_prominence_ratio", 7.0)
-    visualizer._update_source_control("audio-source", "top_k_count", 2)
-    visualizer._update_source_control("audio-source", "mapping_mode", "linear")
-    visualizer._update_source_control("audio-source", "linear_scale", 0.1)
+    visualizer.source_control_binding.update_control(
+        "audio-source",
+        "signal_gate_threshold",
+        0.2,
+    )
+    visualizer.source_control_binding.update_control(
+        "audio-source",
+        "drive_amplitude",
+        1.5,
+    )
+    visualizer.source_control_binding.update_control(
+        "audio-source",
+        "minimum_peak_magnitude",
+        0.3,
+    )
+    visualizer.source_control_binding.update_control(
+        "audio-source",
+        "peak_prominence_ratio",
+        7.0,
+    )
+    visualizer.source_control_binding.update_control("audio-source", "top_k_count", 2)
+    visualizer.source_control_binding.update_control(
+        "audio-source",
+        "mapping_mode",
+        "linear",
+    )
+    visualizer.source_control_binding.update_control(
+        "audio-source",
+        "linear_scale",
+        0.1,
+    )
 
     assert visualizer.audio_signal_gate_threshold == 0.2
     assert processor.minimum_signal_level == 0.2

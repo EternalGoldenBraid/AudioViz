@@ -4,11 +4,6 @@ from typing import Optional, Tuple
 import numpy as np
 from PyQt5 import QtCore, QtWidgets
 from audioviz.sources import CameraFrameSource
-from audioviz.source_controls import (
-    AudioSourceControls,
-    CameraFrameSourceControls,
-    SyntheticFrequencySource,
-)
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources.pose import (
@@ -36,9 +31,10 @@ from audioviz.visualization.standing_body_renderer import (
     lookup_table_from_renderer,
 )
 from audioviz.visualization.ripple_control_panel import (
-    ControlPanelSection,
     RippleControlPanel,
-    SourceToggle,
+)
+from audioviz.visualization.ripple_source_controls import (
+    RippleSourceControlBinding,
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
@@ -67,12 +63,6 @@ def normalize_pose_render_mode(mode: str | None) -> str:
             f"{mode!r}. Expected one of {SUPPORTED_POSE_RENDER_MODES}."
         )
     return resolved
-
-
-def _format_frequency_readout(frequencies: tuple[float, ...]) -> str:
-    if not frequencies:
-        return "—"
-    return ", ".join(f"{value:.1f}" for value in frequencies)
 
 
 class RippleWaveVisualizer(VisualizerBase):
@@ -257,6 +247,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.damping = damping
         self.time = 0.0
         self.control_panel: Optional[RippleControlPanel] = None
+        self.source_control_binding = RippleSourceControlBinding(self)
         self.pose_graph_stiffness = pose_graph_stiffness
         _ = pose_acceleration_scale, pose_max_excitation, pose_drive_scale
         self.pose_render_mode = normalize_pose_render_mode(pose_render_mode)
@@ -357,10 +348,10 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_auto_color_activation_threshold_changed=self._update_auto_color_activation_threshold,
                 auto_color_floor=self.auto_color_floor,
                 on_auto_color_floor_changed=self._update_auto_color_floor,
-                source_toggles=self._build_source_toggles(),
-                source_sections=self._build_source_control_sections(),
-                on_source_control_changed=self._update_source_control,
-                on_source_toggle_changed=self._update_source_toggle,
+                source_toggles=self.source_control_binding.build_toggles(),
+                source_sections=self.source_control_binding.build_sections(),
+                on_source_control_changed=self.source_control_binding.update_control,
+                on_source_toggle_changed=self.source_control_binding.update_toggle,
                 before_reset=self.renderer.prepare_frame,
                 on_reset=self._sync_after_reset,
             )
@@ -418,7 +409,7 @@ class RippleWaveVisualizer(VisualizerBase):
             self.engine.step_without_excitation()
             self.time = self.engine.time
             self.renderer.render(self.engine)
-            self._sync_audio_control_panel(freqs)
+            self.source_control_binding.sync_audio_panel(self.control_panel, freqs)
             return
 
         if not self.renderer.prepare_frame():
@@ -430,7 +421,7 @@ class RippleWaveVisualizer(VisualizerBase):
             self.engine.step(freqs)
         self.time = self.engine.time
         self.renderer.render(self.engine)
-        self._sync_audio_control_panel(freqs)
+        self.source_control_binding.sync_audio_panel(self.control_panel, freqs)
 
     def _current_excitation_amplitude(self, freqs: np.ndarray | None) -> float:
         if (
@@ -494,227 +485,6 @@ class RippleWaveVisualizer(VisualizerBase):
             "frequency must be a scalar, a length-n_sources vector, "
             "or an (n_sources, 1) matrix"
         )
-
-    def _build_source_control_sections(self) -> tuple[ControlPanelSection, ...]:
-        sections: list[ControlPanelSection] = []
-        if self.processor is not None:
-            controls = AudioSourceControls(
-                signal_gate_threshold=self.audio_signal_gate_threshold,
-                drive_amplitude=self.audio_drive_amplitude,
-                minimum_peak_magnitude=float(
-                    getattr(
-                        self.processor,
-                        "minimum_frequency_peak_magnitude",
-                        0.1,
-                    )
-                ),
-                peak_prominence_ratio=float(
-                    getattr(
-                        self.processor,
-                        "minimum_frequency_peak_to_median_ratio",
-                        5.0,
-                    )
-                ),
-                top_k_count=int(getattr(self.processor, "num_top_frequencies", 3)),
-                mapping_mode=self.audio_visual_mapping_mode,
-                mapping_alpha=self.audio_visual_mapping_alpha,
-                mapping_f0=self.audio_visual_mapping_f0,
-                mapping_fc=self.audio_visual_mapping_fc,
-                linear_scale=self.audio_visual_linear_scale,
-                linear_offset=self.audio_visual_linear_offset,
-            ).get_controls()
-            sections.append(
-                ControlPanelSection(
-                    key="audio-source",
-                    title="Audio Source",
-                    controls=controls,
-                )
-            )
-        sections.append(
-            ControlPanelSection(
-                key="camera-source",
-                title="Camera Source",
-                controls=CameraFrameSourceControls(
-                    gain=self.camera_source.gain,
-                ).get_controls(),
-            )
-        )
-        for index, frequency_hz in enumerate(self.synthetic_frequencies[:, 0]):
-            sections.append(
-                ControlPanelSection(
-                    key=f"synthetic-source-{index}",
-                    title=f"Synthetic Source {index + 1}",
-                    controls=SyntheticFrequencySource(
-                        frequency_hz=float(frequency_hz),
-                        n_sources=1,
-                    ).get_controls(),
-                )
-            )
-        return tuple(sections)
-
-    def _build_source_toggles(self) -> tuple[SourceToggle, ...]:
-        return (
-            SourceToggle(
-                key="synthetic",
-                label="Synthetic",
-                enabled=self.use_synthetic,
-                available=True,
-            ),
-            SourceToggle(
-                key="audio",
-                label="Audio",
-                enabled=self.use_audio_source,
-                available=self.processor is not None,
-            ),
-            SourceToggle(
-                key="camera",
-                label="Camera Frame",
-                enabled=self.use_camera_source,
-                available=not self.use_shader,
-            ),
-            SourceToggle(
-                key="pose",
-                label="Pose Graph",
-                enabled=self.use_pose_sources,
-                available=not (self.use_gpu or self.use_shader),
-            ),
-        )
-
-    def _update_source_control(
-        self,
-        section_key: str,
-        control_key: str,
-        value: float | bool | int | str,
-    ) -> None:
-        if section_key == "audio-source":
-            self._update_audio_source_control(control_key, value)
-            return
-        if section_key == "camera-source":
-            self._update_camera_source_control(control_key, value)
-            return
-        if control_key != "frequency_hz" or not section_key.startswith("synthetic-source-"):
-            raise KeyError(f"Unknown source control: {section_key}.{control_key}")
-        index = int(section_key.removeprefix("synthetic-source-"))
-        self.synthetic_frequencies[index, 0] = float(value)
-        self.frequency = float(self.synthetic_frequencies[0, 0])
-
-    def _update_audio_source_control(
-        self,
-        control_key: str,
-        value: float | bool | int | str,
-    ) -> None:
-        if self.processor is None:
-            raise RuntimeError("Audio source controls require an audio processor.")
-        if control_key == "signal_gate_threshold":
-            self.audio_signal_gate_threshold = float(value)
-            self.processor.minimum_signal_level = float(value)
-            return
-        if control_key == "drive_amplitude":
-            self.audio_drive_amplitude = float(value)
-            return
-        if control_key == "minimum_peak_magnitude":
-            self.processor.minimum_frequency_peak_magnitude = float(value)
-            return
-        if control_key == "peak_prominence_ratio":
-            self.processor.minimum_frequency_peak_to_median_ratio = float(value)
-            return
-        if control_key == "top_k_count":
-            self.processor.set_num_top_frequencies(int(round(float(value))))
-            return
-        if control_key == "mapping_mode":
-            self.audio_visual_mapping_mode = normalize_audio_visual_mapping_mode(str(value))
-            return
-        if control_key == "mapping_alpha":
-            self.audio_visual_mapping_alpha = float(value)
-            return
-        if control_key == "mapping_f0":
-            self.audio_visual_mapping_f0 = float(value)
-            return
-        if control_key == "mapping_fc":
-            self.audio_visual_mapping_fc = float(value)
-            return
-        if control_key == "linear_scale":
-            self.audio_visual_linear_scale = float(value)
-            return
-        if control_key == "linear_offset":
-            self.audio_visual_linear_offset = float(value)
-            return
-        if control_key in {
-            "signal_level",
-            "gate_open",
-            "detected_frequencies",
-            "mapped_frequencies",
-        }:
-            return
-        raise KeyError(f"Unknown audio source control: {control_key}")
-
-    def _update_camera_source_control(
-        self,
-        control_key: str,
-        value: float | bool | int | str,
-    ) -> None:
-        if control_key == "gain":
-            self.camera_source.set_gain(float(value))
-            return
-        raise KeyError(f"Unknown camera source control: {control_key}")
-
-    def _sync_audio_control_panel(self, freqs: np.ndarray | None) -> None:
-        if self.control_panel is None or self.processor is None:
-            return
-        gate_open = (
-            self.use_audio_source
-            and float(getattr(self.processor, "current_signal_level", 0.0))
-            >= self.audio_signal_gate_threshold
-            and freqs is not None
-        )
-        detected = tuple(
-            float(freq)
-            for freq in getattr(self.processor, "current_top_k_frequencies", [])
-            if freq is not None and np.isfinite(freq)
-        )
-        mapped = () if freqs is None else tuple(float(freq) for freq in freqs[0])
-        self.control_panel.set_source_control_value(
-            "audio-source",
-            "signal_level",
-            f"{float(getattr(self.processor, 'current_signal_level', 0.0)):.2f}",
-        )
-        self.control_panel.set_source_control_value(
-            "audio-source",
-            "gate_open",
-            "open" if gate_open else "closed",
-        )
-        self.control_panel.set_source_control_value(
-            "audio-source",
-            "detected_frequencies",
-            _format_frequency_readout(detected),
-        )
-        self.control_panel.set_source_control_value(
-            "audio-source",
-            "mapped_frequencies",
-            _format_frequency_readout(mapped),
-        )
-
-    def _update_source_toggle(self, source_key: str, enabled: bool) -> None:
-        if source_key == "synthetic":
-            self.use_synthetic = enabled
-            return
-        if source_key == "audio":
-            if self.processor is None:
-                raise RuntimeError("Audio source toggles require an audio processor.")
-            self.use_audio_source = enabled
-            return
-        if source_key == "camera":
-            if enabled:
-                if self.use_shader:
-                    raise NotImplementedError(
-                        "Camera-frame source currently requires the CPU/GPU ripple backend."
-                    )
-            self.camera_source.set_enabled(enabled)
-            return
-        if source_key == "pose":
-            self._set_pose_sources_enabled(enabled)
-            return
-        raise KeyError(f"Unknown source toggle: {source_key}")
 
     def _resolve_camera_frame_excitation(self) -> np.ndarray | None:
         excitation = self.camera_source.excitation()
