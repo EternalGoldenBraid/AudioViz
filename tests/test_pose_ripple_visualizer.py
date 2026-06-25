@@ -84,23 +84,6 @@ class _FakeRenderer:
         self.render_count += 1
 
 
-class _AutoColorRenderer(_FakeRenderer):
-    def __init__(self):
-        super().__init__()
-        self.auto_percentile_levels = None
-        self.auto_level_activation_threshold = None
-        self.auto_level_floor = None
-
-    def set_auto_percentile_levels(self, enabled):
-        self.auto_percentile_levels = bool(enabled)
-
-    def set_auto_level_activation_threshold(self, threshold):
-        self.auto_level_activation_threshold = float(threshold)
-
-    def set_auto_level_floor(self, floor):
-        self.auto_level_floor = float(floor)
-
-
 class _StandingRenderer(_FakeRenderer):
     def __init__(self):
         super().__init__()
@@ -908,9 +891,10 @@ def test_ripple_visualizer_learning_dynamics_controls_update_transform_config():
     app.processEvents()
 
 
-def test_ripple_visualizer_auto_color_controls_refresh_live_renderer():
+def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render():
     from PyQt5 import QtWidgets
 
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -921,20 +905,36 @@ def test_ripple_visualizer_auto_color_controls_refresh_live_renderer():
         speed=1.0,
         damping=1.0,
         amplitude=1.0,
+        auto_color_floor=0.05,
         source_orchestrator_config=_source_config(use_synthetic=False),
     )
     visualizer.timer.stop()
-    renderer = _AutoColorRenderer()
+    renderer = NumpyImageRenderer(
+        auto_percentile_levels=True,
+        auto_level_floor=0.05,
+        auto_level_activation_threshold=0.1,
+    )
     visualizer.renderer = renderer
+    visualizer.engine.Z[:] = np.full((24, 32), 0.2, dtype=np.float32)
 
-    visualizer._update_auto_color_levels(False)
+    renderer.render(visualizer.engine)
+    first_levels = renderer.histogram.getLevels()
+
     visualizer._update_auto_color_activation_threshold(0.35)
     visualizer._update_auto_color_floor(0.2)
+    second_levels_before_render = renderer.histogram.getLevels()
+    renderer.render(visualizer.engine)
+    second_levels_after_render = renderer.histogram.getLevels()
 
-    assert renderer.auto_percentile_levels is False
-    assert renderer.auto_level_activation_threshold == 0.35
-    assert renderer.auto_level_floor == 0.2
-    assert renderer.render_count == 3
+    np.testing.assert_allclose(first_levels, (-0.2, 0.2))
+    np.testing.assert_allclose(second_levels_before_render, first_levels)
+    np.testing.assert_allclose(second_levels_after_render, (-0.2, 0.2))
+
+    visualizer._update_auto_color_floor(0.05)
+    renderer.render(visualizer.engine)
+    third_levels = renderer.histogram.getLevels()
+
+    np.testing.assert_allclose(third_levels, (-0.05, 0.05))
     app.processEvents()
 
 
