@@ -3,7 +3,6 @@ from typing import Optional, Tuple
 
 import numpy as np
 from PyQt5 import QtCore, QtWidgets
-from audioviz.sources import AudioRippleSource, CameraFrameSource, SyntheticRippleSource
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources.pose import (
@@ -20,10 +19,6 @@ from audioviz.visualization.ripple_renderers import (
     NumpyImageRenderer,
     OpenGLFieldRenderer,
 )
-from audioviz.visualization.prediction_error_transform import (
-    PredictionErrorTransform,
-    PredictionErrorTransformConfig,
-)
 from audioviz.visualization.pose_debug_view import PoseDebugView
 from audioviz.visualization.standing_body_renderer import (
     StandingBodyRenderer,
@@ -37,6 +32,13 @@ from audioviz.visualization.ripple_source_controls import (
 )
 from audioviz.visualization.ripple_source_orchestrator import (
     RippleSourceOrchestrator,
+)
+from audioviz.visualization.ripple_visualizer_config import (
+    RipplePoseConfig,
+    RippleSourceOrchestratorConfig,
+    pop_legacy_pose_config,
+    pop_legacy_source_orchestrator_config,
+    reject_mixed_legacy_config,
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
@@ -64,6 +66,22 @@ def normalize_pose_render_mode(mode: str | None) -> str:
 
 
 class RippleWaveVisualizer(VisualizerBase):
+    @property
+    def synthetic_source(self):
+        return self.source_orchestrator.synthetic_source
+
+    @property
+    def audio_source(self):
+        return self.source_orchestrator.audio_source
+
+    @property
+    def camera_source(self):
+        return self.source_orchestrator.camera_source
+
+    @property
+    def prediction_error_transform(self):
+        return self.source_orchestrator.prediction_error_transform
+
     @property
     def use_camera_source(self) -> bool:
         return self.camera_source.enabled
@@ -101,156 +119,45 @@ class RippleWaveVisualizer(VisualizerBase):
                  n_sources: int = 1,
                  plane_size_m: Tuple[float, float] = (0.36, 0.62),
                  resolution: Tuple[int, int] = (400, 400),
-                 frequency: float = 440.0,
                  amplitude: float = 1.0,
                  decay_alpha: float = 0.0,
                  speed: float = 340.0,
                  damping: float = 0.999,
-                 use_synthetic: bool = True,
-                 use_audio_source: bool | None = None,
                  apply_gaussian_smoothing: bool = False,
                  use_gpu: bool = False,
                  use_shader: bool = False,
                  boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
-                 use_pose_sources: bool = False,
-                 use_camera_source: bool = False,
-                 camera_source_index: int = 0,
-                 camera_source_gain: float = 1.0,
-                 prediction_error_transform_enabled: bool = False,
-                 prediction_error_inputs: tuple[str, ...] = ("camera_frame",),
-                 prediction_error_predictor_source: str = "ripple_state",
-                 prediction_error_sigma: float = 0.1,
-                 prediction_error_output_mode: str = "bits",
-                 prediction_error_activation_function: str = "softsign",
-                 prediction_error_activation_scale: float = 1.0,
-                 prediction_error_gain: float = 1.0,
-                 prediction_error_prediction_clip: float = 10.0,
-                 prediction_error_max_output: float = 10.0,
-                 prediction_error_learning_enabled: bool = False,
-                 prediction_error_learning_rate: float = 1e-4,
-                 prediction_error_learning_weight_decay: float = 1e-4,
-                 prediction_error_learning_weight_clip: float = 1.0,
-                 prediction_error_learning_gradient_clip: float = 1.0,
-                 audio_visual_mapping_mode: str = "legacy",
-                 audio_visual_mapping_alpha: float = 50.0,
-                 audio_visual_mapping_f0: float = 50.0,
-                 audio_visual_mapping_fc: float = 2000.0,
-                 audio_visual_linear_scale: float = 0.05,
-                 audio_visual_linear_offset: float = 0.0,
-                 audio_signal_gate_threshold: float = 0.05,
-                 audio_drive_amplitude: float = 1.0,
                  auto_color_activation_threshold: float = 0.1,
                  auto_color_floor: float = 0.1,
-                 pose_model_path: str | None = None,
-                 pose_camera_index: int = 0,
-                 pose_acceleration_scale: float = 1.0,
-                 pose_max_excitation: float | None = None,
-                 pose_graph_stiffness: float = 0.25,
-                 body_boundary_transmission: float = 0.0,
-                 body_boundary_dissipation: float = 1.0,
-                 pose_render_mode: str = POSE_RENDER_MODE_OVERLAY,
-                 pose_drive_scale: float = 0.1,
-                 pose_field_width_fraction: float = 1.0,
-                 pose_field_height_fraction: float = 1.0,
-                 pose_debug_view: bool = False,
+                 source_orchestrator_config: RippleSourceOrchestratorConfig | None = None,
+                 pose_config: RipplePoseConfig | None = None,
                  pose_extractor: PoseGraphExtractor | None = None,
                  pose_capture=None,
                  camera_capture=None,
                  **kwargs):
-
+        kwargs = dict(kwargs)
+        reject_mixed_legacy_config(
+            kwargs,
+            source_orchestrator_config=source_orchestrator_config,
+            pose_config=pose_config,
+        )
+        if source_orchestrator_config is None:
+            source_orchestrator_config = pop_legacy_source_orchestrator_config(kwargs)
+        if pose_config is None:
+            pose_config = pop_legacy_pose_config(kwargs)
         super().__init__(processor, **kwargs)
 
         self.processor = processor
         self.n_sources = n_sources
-        self.synthetic_source = SyntheticRippleSource(
-            frequency=frequency,
-            n_sources=n_sources,
-            enabled=bool(use_synthetic),
-        )
-        audio_source_enabled = (
-            processor is not None and not use_synthetic
-            if use_audio_source is None
-            else processor is not None and bool(use_audio_source)
-        )
-        self.audio_source = AudioRippleSource(
-            processor=processor,
-            enabled=audio_source_enabled,
-            signal_gate_threshold=audio_signal_gate_threshold,
-            drive_amplitude=audio_drive_amplitude,
-            mapping_mode=audio_visual_mapping_mode,
-            mapping_alpha=audio_visual_mapping_alpha,
-            mapping_f0=audio_visual_mapping_f0,
-            mapping_fc=audio_visual_mapping_fc,
-            linear_scale=audio_visual_linear_scale,
-            linear_offset=audio_visual_linear_offset,
-        )
         self.use_gpu = use_gpu
         self.use_shader = use_shader
         self.boundary_condition = boundary_condition
         self.pose_source = PoseFrameSource(
-            model_path=pose_model_path,
-            camera_index=pose_camera_index,
-            enabled=bool(use_pose_sources),
+            model_path=pose_config.model_path,
+            camera_index=pose_config.camera_index,
+            enabled=bool(pose_config.enabled),
             extractor=pose_extractor,
             capture=pose_capture,
-        )
-        self.camera_source = CameraFrameSource(
-            resolution=resolution,
-            camera_index=camera_source_index,
-            gain=camera_source_gain,
-            enabled=bool(use_camera_source),
-            capture=camera_capture,
-        )
-        self.prediction_error_transform_enabled = bool(
-            prediction_error_transform_enabled
-        )
-        self.prediction_error_inputs = tuple(prediction_error_inputs)
-        self.prediction_error_predictor_source = str(prediction_error_predictor_source)
-        self.prediction_error_sigma = float(prediction_error_sigma)
-        self.prediction_error_output_mode = str(prediction_error_output_mode)
-        self.prediction_error_activation_function = str(
-            prediction_error_activation_function
-        )
-        self.prediction_error_activation_scale = float(
-            prediction_error_activation_scale
-        )
-        self.prediction_error_gain = float(prediction_error_gain)
-        self.prediction_error_prediction_clip = float(
-            prediction_error_prediction_clip
-        )
-        self.prediction_error_max_output = float(prediction_error_max_output)
-        self.prediction_error_learning_enabled = bool(
-            prediction_error_learning_enabled
-        )
-        self.prediction_error_learning_rate = float(prediction_error_learning_rate)
-        self.prediction_error_learning_weight_decay = float(
-            prediction_error_learning_weight_decay
-        )
-        self.prediction_error_learning_weight_clip = float(
-            prediction_error_learning_weight_clip
-        )
-        self.prediction_error_learning_gradient_clip = float(
-            prediction_error_learning_gradient_clip
-        )
-        self.prediction_error_transform = PredictionErrorTransform(
-            config=PredictionErrorTransformConfig(
-                enabled=self.prediction_error_transform_enabled,
-                inputs=self.prediction_error_inputs,
-                predictor_source=self.prediction_error_predictor_source,
-                sigma=self.prediction_error_sigma,
-                output_mode=self.prediction_error_output_mode,
-                activation_function=self.prediction_error_activation_function,
-                activation_scale=self.prediction_error_activation_scale,
-                gain=self.prediction_error_gain,
-                prediction_clip=self.prediction_error_prediction_clip,
-                max_output=self.prediction_error_max_output,
-                learning_enabled=self.prediction_error_learning_enabled,
-                learning_rate=self.prediction_error_learning_rate,
-                learning_weight_decay=self.prediction_error_learning_weight_decay,
-                learning_weight_clip=self.prediction_error_learning_weight_clip,
-                learning_gradient_clip=self.prediction_error_learning_gradient_clip,
-            ),
-            resolution=resolution,
         )
         self.standing_body_renderer = StandingBodyRenderer()
         self.auto_color_activation_threshold = float(auto_color_activation_threshold)
@@ -259,7 +166,7 @@ class RippleWaveVisualizer(VisualizerBase):
             raise NotImplementedError(
                 "Pose-medium coupling currently requires the CPU ripple backend."
             )
-        if self.use_camera_source and self.use_shader:
+        if source_orchestrator_config.camera_frame.enabled and self.use_shader:
             raise NotImplementedError(
                 "Camera-frame source currently requires the CPU/GPU ripple backend."
             )
@@ -275,18 +182,17 @@ class RippleWaveVisualizer(VisualizerBase):
         self.time = 0.0
         self.control_panel: Optional[RippleControlPanel] = None
         self.source_control_binding = RippleSourceControlBinding(self)
-        self.pose_graph_stiffness = pose_graph_stiffness
-        _ = pose_acceleration_scale, pose_max_excitation, pose_drive_scale
-        self.pose_render_mode = normalize_pose_render_mode(pose_render_mode)
-        self.pose_debug_view = pose_debug_view
+        self.pose_graph_stiffness = pose_config.graph_stiffness
+        self.pose_render_mode = normalize_pose_render_mode(pose_config.render_mode)
+        self.pose_debug_view = pose_config.debug_view
         self.pose_debug_frame_count = 0
         self.auto_color_levels_enabled = True
-        self.body_boundary_transmission = float(body_boundary_transmission)
-        self.body_boundary_dissipation = float(body_boundary_dissipation)
+        self.body_boundary_transmission = float(pose_config.body_boundary_transmission)
+        self.body_boundary_dissipation = float(pose_config.body_boundary_dissipation)
         self.pose_field_rect = centered_field_rect(
             self.resolution,
-            width_fraction=pose_field_width_fraction,
-            height_fraction=pose_field_height_fraction,
+            width_fraction=pose_config.field_width_fraction,
+            height_fraction=pose_config.field_height_fraction,
         )
         self.pose_state: PoseGraphState | None = None
         self.pose_last_update_time = time.monotonic()
@@ -311,14 +217,14 @@ class RippleWaveVisualizer(VisualizerBase):
         )
         self.dt = self.engine.dt
         self.source_orchestrator = RippleSourceOrchestrator(
-            audio_source=self.audio_source,
-            synthetic_source=self.synthetic_source,
-            camera_source=self.camera_source,
-            prediction_error_transform=self.prediction_error_transform,
+            config=source_orchestrator_config,
+            processor=processor,
             engine=self.engine,
             resolution=self.resolution,
             n_sources=self.n_sources,
+            camera_capture=camera_capture,
         )
+        self.source_orchestrator.set_base_amplitude(self.base_amplitude)
 
         self.renderer = (
             OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer(
@@ -356,6 +262,7 @@ class RippleWaveVisualizer(VisualizerBase):
     def _update_amplitude(self, val: float):
         self.base_amplitude = val
         self.amplitude = val
+        self.source_orchestrator.set_base_amplitude(val)
 
     def _update_decay_alpha(self, val: float):
         self.decay_alpha = val
@@ -426,9 +333,7 @@ class RippleWaveVisualizer(VisualizerBase):
             set_auto_level_floor(self.auto_color_floor)
 
     def update_visualization(self):
-        source_frame = self.source_orchestrator.resolve(
-            base_amplitude=self.base_amplitude,
-        )
+        source_frame = self.source_orchestrator.resolve()
         self.engine.amplitude = source_frame.amplitude
 
         if self.use_pose_sources:

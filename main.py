@@ -15,6 +15,16 @@ from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.spectrogram_visualizer import SpectrogramVisualizer
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
+from audioviz.visualization.prediction_error_transform import (
+    PredictionErrorTransformConfig,
+)
+from audioviz.visualization.ripple_visualizer_config import (
+    AudioSourceConfig,
+    CameraFrameSourceConfig,
+    RipplePoseConfig,
+    RippleSourceOrchestratorConfig,
+    SyntheticSourceConfig,
+)
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 
 from audioviz.utils.guitar_profiles import GuitarProfile  
@@ -66,6 +76,7 @@ RIPPLE_CONFIG = {
         "n_sources": 1,
         "plane_size_m": (500.0, 500.0),
         "resolution": (480, 640),
+        # "resolution": (48, 64),
     },
     "dynamics": {
         "amplitude": 1.0,
@@ -121,14 +132,14 @@ RIPPLE_CONFIG = {
             },
         },
         "camera_frame": {
-            "enabled": False,
+            "enabled": True,
             "camera_index": 1,
             "gain": 1.0,
         },
     },
     "transforms": {
         "prediction_error": {
-            "enabled": False,
+            "enabled": True,
             "inputs": ("camera_frame",),
             "predictor": {
                 "source": "ripple_state",
@@ -141,7 +152,7 @@ RIPPLE_CONFIG = {
                     "function": "softsign",
                     "scale": 1.0,
                 },
-                "gain": 1.0,
+                "gain": .01,
             },
             "learning": {
                 "enabled": False,
@@ -173,53 +184,55 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     return {
         **config["field"],
         **config["dynamics"],
-        "use_synthetic": sources["synthetic"]["enabled"],
-        "frequency": sources["synthetic"]["frequency"],
-        "use_audio_source": audio["enabled"],
-        "audio_signal_gate_threshold": audio["signal_gate_threshold"],
-        "audio_drive_amplitude": audio["drive_amplitude"],
-        "audio_visual_mapping_mode": audio_mapping["mode"],
-        "audio_visual_mapping_alpha": audio_mapping["alpha"],
-        "audio_visual_mapping_f0": audio_mapping["f0"],
-        "audio_visual_mapping_fc": audio_mapping["fc"],
-        "audio_visual_linear_scale": audio_mapping["linear_scale"],
-        "audio_visual_linear_offset": audio_mapping["linear_offset"],
-        "use_pose_sources": pose["enabled"],
-        "pose_render_mode": pose["render_mode"],
-        "pose_model_path": pose["model_path"],
-        "pose_camera_index": pose["camera_index"],
-        "pose_debug_view": pose["debug_view"],
-        "pose_graph_stiffness": pose_medium["graph_stiffness"],
-        "pose_field_width_fraction": pose_medium["field_width_fraction"],
-        "pose_field_height_fraction": pose_medium["field_height_fraction"],
-        "body_boundary_transmission": pose_boundary["transmission"],
-        "body_boundary_dissipation": pose_boundary["dissipation"],
-        "use_camera_source": camera_frame["enabled"],
-        "camera_source_index": camera_frame["camera_index"],
-        "camera_source_gain": camera_frame["gain"],
-        "prediction_error_transform_enabled": prediction_error["enabled"],
-        "prediction_error_inputs": prediction_error["inputs"],
-        "prediction_error_predictor_source": prediction_error_predictor["source"],
-        "prediction_error_sigma": prediction_error_predictor["sigma"],
-        "prediction_error_output_mode": prediction_error_output["mode"],
-        "prediction_error_activation_function": prediction_error_output["activation"][
-            "function"
-        ],
-        "prediction_error_activation_scale": prediction_error_output["activation"][
-            "scale"
-        ],
-        "prediction_error_gain": prediction_error_output["gain"],
-        "prediction_error_learning_enabled": prediction_error_learning["enabled"],
-        "prediction_error_learning_rate": prediction_error_learning["learning_rate"],
-        "prediction_error_learning_weight_decay": prediction_error_learning[
-            "weight_decay"
-        ],
-        "prediction_error_learning_weight_clip": prediction_error_learning[
-            "weight_clip"
-        ],
-        "prediction_error_learning_gradient_clip": prediction_error_learning[
-            "gradient_clip"
-        ],
+        "source_orchestrator_config": RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(
+                enabled=sources["synthetic"]["enabled"],
+                frequency=sources["synthetic"]["frequency"],
+            ),
+            audio=AudioSourceConfig(
+                enabled=audio["enabled"],
+                signal_gate_threshold=audio["signal_gate_threshold"],
+                drive_amplitude=audio["drive_amplitude"],
+                mapping_mode=audio_mapping["mode"],
+                mapping_alpha=audio_mapping["alpha"],
+                mapping_f0=audio_mapping["f0"],
+                mapping_fc=audio_mapping["fc"],
+                linear_scale=audio_mapping["linear_scale"],
+                linear_offset=audio_mapping["linear_offset"],
+            ),
+            camera_frame=CameraFrameSourceConfig(
+                enabled=camera_frame["enabled"],
+                camera_index=camera_frame["camera_index"],
+                gain=camera_frame["gain"],
+            ),
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=prediction_error["enabled"],
+                inputs=tuple(prediction_error["inputs"]),
+                predictor_source=prediction_error_predictor["source"],
+                sigma=prediction_error_predictor["sigma"],
+                output_mode=prediction_error_output["mode"],
+                activation_function=prediction_error_output["activation"]["function"],
+                activation_scale=prediction_error_output["activation"]["scale"],
+                gain=prediction_error_output["gain"],
+                learning_enabled=prediction_error_learning["enabled"],
+                learning_rate=prediction_error_learning["learning_rate"],
+                learning_weight_decay=prediction_error_learning["weight_decay"],
+                learning_weight_clip=prediction_error_learning["weight_clip"],
+                learning_gradient_clip=prediction_error_learning["gradient_clip"],
+            ),
+        ),
+        "pose_config": RipplePoseConfig(
+            enabled=pose["enabled"],
+            render_mode=pose["render_mode"],
+            model_path=pose["model_path"],
+            camera_index=pose["camera_index"],
+            debug_view=pose["debug_view"],
+            graph_stiffness=pose_medium["graph_stiffness"],
+            field_width_fraction=pose_medium["field_width_fraction"],
+            field_height_fraction=pose_medium["field_height_fraction"],
+            body_boundary_transmission=pose_boundary["transmission"],
+            body_boundary_dissipation=pose_boundary["dissipation"],
+        ),
         "use_gpu": backend == "gpu",
         "use_shader": backend == "opengl",
         "auto_color_activation_threshold": renderer["auto_color_activation_threshold"],

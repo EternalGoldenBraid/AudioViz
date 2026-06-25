@@ -16,6 +16,11 @@ from audioviz.visualization.ripple_wave_visualizer import (
     RippleWaveVisualizer,
     normalize_pose_render_mode,
 )
+from audioviz.visualization.ripple_visualizer_config import (
+    RipplePoseConfig,
+    RippleSourceOrchestratorConfig,
+    SyntheticSourceConfig,
+)
 
 DEFAULT_OUTPUT_DIR = Path("outputs/pose_ripple_validation")
 DEFAULT_VIDEO_NAME = "pose_ripple_validation.gif"
@@ -205,10 +210,16 @@ def run_offline_pose_ripple(
         speed=1.0,
         damping=0.995,
         amplitude=1.0,
-        frequency=list(synthetic_frequencies) if synthetic_frequencies else 440.0,
-        use_synthetic=bool(synthetic_frequencies),
-        use_pose_sources=True,
-        pose_render_mode=resolved_pose_render_mode,
+        source_orchestrator_config=RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(
+                enabled=bool(synthetic_frequencies),
+                frequency=list(synthetic_frequencies) if synthetic_frequencies else 440.0,
+            ),
+        ),
+        pose_config=RipplePoseConfig(
+            enabled=True,
+            render_mode=resolved_pose_render_mode,
+        ),
         pose_capture=capture,
         pose_extractor=extractor,
     )

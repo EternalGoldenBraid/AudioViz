@@ -30,18 +30,21 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
 
     assert flattened["use_shader"] is True
     assert flattened["use_gpu"] is False
-    assert flattened["use_audio_source"] is False
-    assert flattened["use_camera_source"] is True
-    assert flattened["camera_source_index"] == 2
-    assert flattened["prediction_error_transform_enabled"] is True
-    assert flattened["prediction_error_inputs"] == ("camera_frame",)
-    assert flattened["prediction_error_sigma"] == 0.25
-    assert flattened["prediction_error_activation_function"] == "tanh"
-    assert flattened["prediction_error_activation_scale"] == 2.0
-    assert flattened["prediction_error_learning_enabled"] is True
-    assert flattened["prediction_error_learning_rate"] == 0.01
-    assert flattened["pose_camera_index"] == config["sources"]["pose"]["camera_index"]
+    orchestrator_config = flattened["source_orchestrator_config"]
+    pose_config = flattened["pose_config"]
+
+    assert orchestrator_config.audio.enabled is False
+    assert orchestrator_config.camera_frame.enabled is True
+    assert orchestrator_config.camera_frame.camera_index == 2
+    assert orchestrator_config.prediction_error.enabled is True
+    assert orchestrator_config.prediction_error.inputs == ("camera_frame",)
+    assert orchestrator_config.prediction_error.sigma == 0.25
+    assert orchestrator_config.prediction_error.activation_function == "tanh"
+    assert orchestrator_config.prediction_error.activation_scale == 2.0
+    assert orchestrator_config.prediction_error.learning_enabled is True
+    assert orchestrator_config.prediction_error.learning_rate == 0.01
+    assert pose_config.camera_index == config["sources"]["pose"]["camera_index"]
     assert (
-        flattened["body_boundary_transmission"]
+        pose_config.body_boundary_transmission
         == config["sources"]["pose"]["boundary"]["transmission"]
     )

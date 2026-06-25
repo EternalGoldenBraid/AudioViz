@@ -684,9 +684,7 @@ def test_ripple_visualizer_scales_audio_only_excitation_by_signal_level():
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
 
-    amplitude = visualizer.source_orchestrator.resolve(
-        base_amplitude=visualizer.base_amplitude,
-    ).amplitude
+    amplitude = visualizer.source_orchestrator.resolve().amplitude
 
     assert amplitude == 0.5
 

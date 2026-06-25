@@ -4,6 +4,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from audioviz.sources import AudioRippleSource, CameraFrameSource, SyntheticRippleSource
+from audioviz.visualization.prediction_error_transform import PredictionErrorTransform
+from audioviz.visualization.ripple_visualizer_config import (
+    RippleSourceOrchestratorConfig,
+)
+
 
 @dataclass(frozen=True)
 class ResolvedSourceFrame:
@@ -16,29 +22,62 @@ class RippleSourceOrchestrator:
     def __init__(
         self,
         *,
-        audio_source,
-        synthetic_source,
-        camera_source,
-        prediction_error_transform,
+        config: RippleSourceOrchestratorConfig,
+        processor,
         engine,
         resolution: tuple[int, int],
         n_sources: int,
+        camera_capture=None,
     ) -> None:
-        self.audio_source = audio_source
-        self.synthetic_source = synthetic_source
-        self.camera_source = camera_source
-        self.prediction_error_transform = prediction_error_transform
+        self.config = config
         self.engine = engine
         self.resolution = resolution
         self.n_sources = int(n_sources)
+        self.base_amplitude = 1.0
+        self.synthetic_source = SyntheticRippleSource(
+            frequency=config.synthetic.frequency,
+            n_sources=self.n_sources,
+            enabled=bool(config.synthetic.enabled),
+        )
+        audio_enabled = (
+            processor is not None and not config.synthetic.enabled
+            if config.audio.enabled is None
+            else processor is not None and bool(config.audio.enabled)
+        )
+        self.audio_source = AudioRippleSource(
+            processor=processor,
+            enabled=audio_enabled,
+            signal_gate_threshold=config.audio.signal_gate_threshold,
+            drive_amplitude=config.audio.drive_amplitude,
+            mapping_mode=config.audio.mapping_mode,
+            mapping_alpha=config.audio.mapping_alpha,
+            mapping_f0=config.audio.mapping_f0,
+            mapping_fc=config.audio.mapping_fc,
+            linear_scale=config.audio.linear_scale,
+            linear_offset=config.audio.linear_offset,
+        )
+        self.camera_source = CameraFrameSource(
+            resolution=resolution,
+            camera_index=config.camera_frame.camera_index,
+            gain=config.camera_frame.gain,
+            enabled=bool(config.camera_frame.enabled),
+            capture=camera_capture,
+        )
+        self.prediction_error_transform = PredictionErrorTransform(
+            config=config.prediction_error,
+            resolution=resolution,
+        )
 
-    def resolve(self, *, base_amplitude: float) -> ResolvedSourceFrame:
+    def set_base_amplitude(self, amplitude: float) -> None:
+        self.base_amplitude = float(amplitude)
+
+    def resolve(self) -> ResolvedSourceFrame:
         audio_frequencies = self.audio_source.frequencies(n_sources=self.n_sources)
         grid_excitation = self.resolve_excitation_grid(
             audio_frequencies=audio_frequencies,
         )
         amplitude = self.audio_source.excitation_amplitude(
-            base_amplitude=base_amplitude,
+            base_amplitude=self.base_amplitude,
             frequencies=audio_frequencies,
             synthetic_enabled=self.synthetic_source.enabled,
         )

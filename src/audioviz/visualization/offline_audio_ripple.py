@@ -12,6 +12,12 @@ from audioviz.visualization.offline_pose_ripple import (
     _write_render_artifacts,
 )
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+from audioviz.visualization.ripple_visualizer_config import (
+    AudioSourceConfig,
+    RipplePoseConfig,
+    RippleSourceOrchestratorConfig,
+    SyntheticSourceConfig,
+)
 
 DEFAULT_OUTPUT_DIR = Path("outputs/audio_ripple_validation")
 DEFAULT_VIDEO_NAME = "audio_ripple_validation.gif"
@@ -103,14 +109,19 @@ def run_offline_audio_ripple(
         damping=damping,
         amplitude=amplitude,
         decay_alpha=decay_alpha,
-        use_synthetic=False,
-        use_pose_sources=False,
-        audio_visual_mapping_mode=audio_visual_mapping_mode,
-        audio_visual_mapping_alpha=audio_visual_mapping_alpha,
-        audio_visual_mapping_f0=audio_visual_mapping_f0,
-        audio_visual_mapping_fc=audio_visual_mapping_fc,
-        audio_visual_linear_scale=audio_visual_linear_scale,
-        audio_visual_linear_offset=audio_visual_linear_offset,
+        source_orchestrator_config=RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(enabled=False, frequency=440.0),
+            audio=AudioSourceConfig(
+                enabled=True,
+                mapping_mode=audio_visual_mapping_mode,
+                mapping_alpha=audio_visual_mapping_alpha,
+                mapping_f0=audio_visual_mapping_f0,
+                mapping_fc=audio_visual_mapping_fc,
+                linear_scale=audio_visual_linear_scale,
+                linear_offset=audio_visual_linear_offset,
+            ),
+        ),
+        pose_config=RipplePoseConfig(enabled=False),
     )
     visualizer.timer.stop()
     visualizer.renderer = renderer
