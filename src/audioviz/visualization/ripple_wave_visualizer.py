@@ -514,7 +514,8 @@ class RippleWaveVisualizer(VisualizerBase):
             )
         render_rgb_frame = getattr(self.renderer, "render_rgb_frame", None)
         if (
-            self.pose_render_mode == POSE_RENDER_MODE_STANDING_BODY
+            self.use_pose_sources
+            and self.pose_render_mode == POSE_RENDER_MODE_STANDING_BODY
             and callable(render_rgb_frame)
         ):
             render_rgb_frame(self._render_standing_body_rgb_frame())

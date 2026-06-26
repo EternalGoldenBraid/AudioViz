@@ -245,6 +245,28 @@ def test_ripple_visualizer_pose_medium_standing_body_with_numpy_renderer_smoke(q
     assert extractor.closed
 
 
+def test_ripple_visualizer_non_pose_mode_does_not_apply_standing_body_projection(qapp):
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        source_orchestrator_config=_source_config(use_synthetic=False),
+        pose_config=_pose_config(enabled=False, render_mode="standing-body"),
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _StandingRenderer()
+
+    visualizer.update_visualization()
+
+    assert visualizer.renderer.render_count == 1
+    assert visualizer.renderer.rgb_frame is None
+
+
 def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render(qapp):
     from audioviz.visualization.ripple_renderers import NumpyImageRenderer
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
@@ -343,6 +365,42 @@ def test_ripple_visualizer_updates_learning_overlay_in_normal_render_loop(qapp):
 
     visualizer.update_visualization()
 
+    xs, ys = visualizer.renderer.prediction_overlay_lines.getData()
+    assert xs is not None
+    assert ys is not None
+    assert len(xs) > 0
+    assert len(ys) > 0
+
+
+def test_ripple_visualizer_updates_learning_overlay_with_standing_body_config_disabled_pose(
+    qapp,
+):
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        source_orchestrator_config=_source_config(use_synthetic=False),
+        pose_config=_pose_config(enabled=False, render_mode="standing-body"),
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = NumpyImageRenderer()
+    visualizer.show_learning_overlay = True
+    visualizer.learning_overlay_stride = 4
+    visualizer.learning_overlay_threshold = 0.0
+    visualizer.learning_overlay_scale = 2.0
+    visualizer.engine.prediction_horizontal_edge_weights = np.full((8, 7), 0.5, dtype=np.float32)
+    visualizer.engine.prediction_vertical_edge_weights = np.zeros((7, 8), dtype=np.float32)
+
+    visualizer.update_visualization()
+
+    assert visualizer.renderer.image_item.image is not None
+    assert visualizer.renderer.image_item.image.ndim == 2
     xs, ys = visualizer.renderer.prediction_overlay_lines.getData()
     assert xs is not None
     assert ys is not None
