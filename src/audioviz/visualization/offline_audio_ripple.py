@@ -8,6 +8,7 @@ import numpy as np
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.sources import (
     AudioSourceConfig,
+    RipplePoseConfig,
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
@@ -17,9 +18,6 @@ from audioviz.visualization.offline_pose_ripple import (
     _write_render_artifacts,
 )
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-from audioviz.visualization.ripple_visualizer_config import (
-    RipplePoseConfig,
-)
 
 DEFAULT_OUTPUT_DIR = Path("outputs/audio_ripple_validation")
 DEFAULT_VIDEO_NAME = "audio_ripple_validation.gif"

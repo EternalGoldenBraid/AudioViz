@@ -10,6 +10,7 @@ from audioviz.sources.pose import (
     PoseFrameSource,
     PoseGraphExtractor,
     PoseGraphState,
+    RipplePoseConfig,
     build_pose_graph_segmentation_mask,
     centered_field_rect,
     map_pose_coords_to_field_positions,
@@ -30,9 +31,6 @@ from audioviz.ui.ripple_control_panel import (
 )
 from audioviz.ui.ripple_source_controls import (
     RippleSourceControlBinding,
-)
-from audioviz.visualization.ripple_visualizer_config import (
-    RipplePoseConfig,
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor

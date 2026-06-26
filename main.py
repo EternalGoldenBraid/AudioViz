@@ -18,14 +18,12 @@ from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
 from audioviz.sources import (
     AudioSourceConfig,
     CameraFrameSourceConfig,
+    RipplePoseConfig,
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
 from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
-)
-from audioviz.visualization.ripple_visualizer_config import (
-    RipplePoseConfig,
 )
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 

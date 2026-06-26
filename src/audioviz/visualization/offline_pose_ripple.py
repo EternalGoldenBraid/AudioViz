@@ -7,6 +7,7 @@ import numpy as np
 from matplotlib import colormaps
 
 from audioviz.sources import (
+    RipplePoseConfig,
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
@@ -19,9 +20,6 @@ from audioviz.visualization.ripple_wave_visualizer import (
     POSE_RENDER_MODE_OVERLAY,
     RippleWaveVisualizer,
     normalize_pose_render_mode,
-)
-from audioviz.visualization.ripple_visualizer_config import (
-    RipplePoseConfig,
 )
 
 DEFAULT_OUTPUT_DIR = Path("outputs/pose_ripple_validation")
