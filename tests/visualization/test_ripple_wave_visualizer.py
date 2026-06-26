@@ -286,3 +286,34 @@ def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render(qapp):
     third_levels = renderer.histogram.getLevels()
 
     np.testing.assert_allclose(third_levels, (-0.05, 0.05))
+
+
+def test_ripple_visualizer_renders_learning_overlay_vectors(qapp):
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        source_orchestrator_config=_source_config(use_synthetic=False),
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = NumpyImageRenderer()
+    visualizer.show_learning_overlay = True
+    visualizer.learning_overlay_stride = 4
+    visualizer.learning_overlay_threshold = 0.0
+    visualizer.learning_overlay_scale = 2.0
+    visualizer.engine.prediction_horizontal_edge_weights = np.full((8, 7), 0.5, dtype=np.float32)
+    visualizer.engine.prediction_vertical_edge_weights = np.zeros((7, 8), dtype=np.float32)
+
+    visualizer._render_scene()
+
+    xs, ys = visualizer.renderer.prediction_overlay_lines.getData()
+    assert xs is not None
+    assert ys is not None
+    assert len(xs) > 0
+    assert len(ys) > 0

@@ -5,6 +5,7 @@ from audioviz.source_controls import (
     AudioSourceControls,
     CameraFrameSourceControls,
     PredictionLearningControls,
+    PredictionOverlayControls,
 )
 
 
@@ -46,3 +47,19 @@ def test_prediction_learning_controls_expose_toggle_and_learning_parameters():
     assert keys["learning_weight_decay"].default == 0.02
     assert keys["learning_weight_clip"].default == 3.0
     assert keys["learning_gradient_clip"].default == 4.0
+
+
+def test_prediction_overlay_controls_expose_overlay_parameters():
+    controls = PredictionOverlayControls(
+        enabled=True,
+        stride=6,
+        threshold=0.2,
+        scale=8.0,
+    ).get_controls()
+    keys = {control.key: control for control in controls}
+
+    assert keys["show_learning_overlay"].kind == "toggle"
+    assert keys["show_learning_overlay"].default is True
+    assert keys["overlay_stride"].default == 6
+    assert keys["overlay_threshold"].default == 0.2
+    assert keys["overlay_scale"].default == 8.0

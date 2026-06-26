@@ -557,6 +557,10 @@ class RippleControlPanel(QtWidgets.QWidget):
             section = self.section_widgets.get(section_key)
             if section is not None:
                 section.set_expanded(bool(value))
+        if section_key == "learning-overlay" and control_key == "show_learning_overlay":
+            section = self.section_widgets.get(section_key)
+            if section is not None:
+                section.set_expanded(bool(value))
 
     def set_source_control_value(
         self,

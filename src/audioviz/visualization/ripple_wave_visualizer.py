@@ -173,6 +173,10 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_debug_view = pose_config.debug_view
         self.pose_debug_frame_count = 0
         self.auto_color_levels_enabled = True
+        self.show_learning_overlay = False
+        self.learning_overlay_stride = 8
+        self.learning_overlay_threshold = 0.05
+        self.learning_overlay_scale = 6.0
         self.body_boundary_transmission = float(pose_config.body_boundary_transmission)
         self.body_boundary_dissipation = float(pose_config.body_boundary_dissipation)
         self.pose_field_rect = centered_field_rect(
@@ -495,6 +499,19 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _render_scene(self) -> None:
         self.renderer.render(self.engine)
+        render_learning_overlay = getattr(
+            self.renderer,
+            "render_prediction_coupling_overlay",
+            None,
+        )
+        if callable(render_learning_overlay):
+            render_learning_overlay(
+                self.engine,
+                enabled=self.show_learning_overlay,
+                stride=self.learning_overlay_stride,
+                threshold=self.learning_overlay_threshold,
+                scale=self.learning_overlay_scale,
+            )
         render_rgb_frame = getattr(self.renderer, "render_rgb_frame", None)
         if (
             self.pose_render_mode == POSE_RENDER_MODE_STANDING_BODY
@@ -515,6 +532,18 @@ class RippleWaveVisualizer(VisualizerBase):
         self.close_pose_sources()
         self.close_camera_source()
         super().closeEvent(event)
+
+    def set_learning_overlay_enabled(self, enabled: bool) -> None:
+        self.show_learning_overlay = bool(enabled)
+
+    def set_learning_overlay_stride(self, stride: int) -> None:
+        self.learning_overlay_stride = max(int(stride), 1)
+
+    def set_learning_overlay_threshold(self, threshold: float) -> None:
+        self.learning_overlay_threshold = max(float(threshold), 0.0)
+
+    def set_learning_overlay_scale(self, scale: float) -> None:
+        self.learning_overlay_scale = max(float(scale), 0.1)
 
     def close_pose_sources(self) -> None:
         self.pose_source.close()

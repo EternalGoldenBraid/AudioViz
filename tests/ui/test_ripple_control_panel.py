@@ -153,6 +153,53 @@ def test_ripple_control_panel_supports_toggle_controls_and_section_expansion(
     assert source_events[-1] == ("learning-dynamics", "learning_enabled", True)
 
 
+def test_ripple_control_panel_expands_learning_overlay_section_on_toggle(
+    ripple_panel_deps,
+):
+    QtWidgets, RippleControlPanel = ripple_panel_deps
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    engine = RippleEngine(
+        resolution=(8, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=10.0,
+        damping=0.999,
+        amplitude=1.0,
+        use_gpu=False,
+    )
+    source_events = []
+    panel = RippleControlPanel(
+        engine,
+        source_sections=(
+            ControlPanelSection(
+                key="learning-overlay",
+                title="Learning Overlay",
+                controls=(
+                    SourceControl(
+                        key="show_learning_overlay",
+                        label="Show Overlay",
+                        default=False,
+                        kind="toggle",
+                    ),
+                ),
+                expanded=False,
+            ),
+        ),
+        on_source_control_changed=lambda section, key, value: source_events.append(
+            (section, key, value)
+        ),
+    )
+
+    section = panel.section_widgets["learning-overlay"]
+    checkbox = panel.source_control_widgets[("learning-overlay", "show_learning_overlay")]
+
+    assert not section.is_expanded()
+    checkbox.click()
+    app.processEvents()
+
+    assert section.is_expanded()
+    assert source_events[-1] == ("learning-overlay", "show_learning_overlay", True)
+
+
 def test_ripple_control_panel_expands_active_source_sections_by_default(
     ripple_panel_deps,
 ):

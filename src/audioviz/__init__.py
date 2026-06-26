@@ -3,6 +3,7 @@ from audioviz.source_controls import (
     AudioSourceControls,
     CameraFrameSourceControls,
     PredictionLearningControls,
+    PredictionOverlayControls,
     SourceControl,
     SourceControlProvider,
     SourceControls,
@@ -19,4 +20,5 @@ __all__ = [
     "AudioSourceControls",
     "CameraFrameSourceControls",
     "PredictionLearningControls",
+    "PredictionOverlayControls",
 ]

@@ -254,3 +254,45 @@ class PredictionLearningControls(SourceControlProvider):
                 step=0.01,
             ),
         )
+
+
+@dataclass
+class PredictionOverlayControls(SourceControlProvider):
+    enabled: bool = False
+    stride: int = 8
+    threshold: float = 0.05
+    scale: float = 6.0
+
+    def get_controls(self) -> Sequence[SourceControl]:
+        return (
+            SourceControl(
+                key="show_learning_overlay",
+                label="Show Overlay",
+                default=self.enabled,
+                kind="toggle",
+            ),
+            SourceControl(
+                key="overlay_stride",
+                label="Overlay Stride",
+                default=int(self.stride),
+                minimum=1,
+                maximum=64,
+                step=1,
+            ),
+            SourceControl(
+                key="overlay_threshold",
+                label="Overlay Threshold",
+                default=self.threshold,
+                minimum=0.0,
+                maximum=10.0,
+                step=0.01,
+            ),
+            SourceControl(
+                key="overlay_scale",
+                label="Overlay Scale",
+                default=self.scale,
+                minimum=0.1,
+                maximum=50.0,
+                step=0.1,
+            ),
+        )

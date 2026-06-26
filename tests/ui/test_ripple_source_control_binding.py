@@ -176,3 +176,49 @@ def test_ripple_source_binding_updates_learning_dynamics_config(qapp):
     assert config.learning_weight_decay == 0.02
     assert config.learning_weight_clip == 3.0
     assert config.learning_gradient_clip == 4.0
+
+
+def test_ripple_source_binding_updates_learning_overlay_state(qapp):
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(24, 32),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+            ),
+        ),
+    )
+    visualizer.timer.stop()
+
+    visualizer.source_control_binding.update_control(
+        "learning-overlay",
+        "show_learning_overlay",
+        True,
+    )
+    visualizer.source_control_binding.update_control(
+        "learning-overlay",
+        "overlay_stride",
+        6,
+    )
+    visualizer.source_control_binding.update_control(
+        "learning-overlay",
+        "overlay_threshold",
+        0.2,
+    )
+    visualizer.source_control_binding.update_control(
+        "learning-overlay",
+        "overlay_scale",
+        8.0,
+    )
+
+    assert visualizer.show_learning_overlay is True
+    assert visualizer.learning_overlay_stride == 6
+    assert visualizer.learning_overlay_threshold == 0.2
+    assert visualizer.learning_overlay_scale == 8.0

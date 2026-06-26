@@ -103,7 +103,7 @@ class RippleEngine:
 
     @property
     def prediction_horizontal_edge_weights(self) -> np.ndarray:
-        return np.asarray(self.propagator.horizontal_edge_weights, dtype=np.float32)
+        return self._edge_weights_to_numpy(self.propagator.horizontal_edge_weights)
 
     @prediction_horizontal_edge_weights.setter
     def prediction_horizontal_edge_weights(self, weights: np.ndarray) -> None:
@@ -114,7 +114,7 @@ class RippleEngine:
 
     @property
     def prediction_vertical_edge_weights(self) -> np.ndarray:
-        return np.asarray(self.propagator.vertical_edge_weights, dtype=np.float32)
+        return self._edge_weights_to_numpy(self.propagator.vertical_edge_weights)
 
     @prediction_vertical_edge_weights.setter
     def prediction_vertical_edge_weights(self, weights: np.ndarray) -> None:
@@ -524,6 +524,63 @@ class RippleEngine:
         if array.shape != expected_shape:
             raise ValueError("edge weight array shape must match propagator operator")
         return array
+
+    def get_prediction_coupling_vectors(
+        self,
+        *,
+        stride: int = 8,
+        threshold: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        stride = max(int(stride), 1)
+        threshold = max(float(threshold), 0.0)
+        horizontal = self.prediction_horizontal_edge_weights
+        vertical = self.prediction_vertical_edge_weights
+        rows, cols = self.resolution
+        positions: list[tuple[float, float]] = []
+        vectors: list[tuple[float, float]] = []
+        magnitudes: list[float] = []
+        for row_start in range(0, rows, stride):
+            row_end = min(row_start + stride, rows)
+            for col_start in range(0, cols, stride):
+                col_end = min(col_start + stride, cols)
+                vx = 0.0
+                vy = 0.0
+                horizontal_patch = horizontal[
+                    row_start:row_end,
+                    col_start:max(col_end - 1, col_start),
+                ]
+                vertical_patch = vertical[
+                    row_start:max(row_end - 1, row_start),
+                    col_start:col_end,
+                ]
+                if horizontal_patch.size:
+                    vx = float(np.mean(horizontal_patch))
+                if vertical_patch.size:
+                    vy = float(np.mean(vertical_patch))
+                magnitude = float(np.hypot(vx, vy))
+                if magnitude <= threshold:
+                    continue
+                positions.append(
+                    (
+                        0.5 * (col_start + col_end),
+                        0.5 * (row_start + row_end),
+                    )
+                )
+                vectors.append((vx, vy))
+                magnitudes.append(magnitude)
+        if not positions:
+            empty = np.zeros((0, 2), dtype=np.float32)
+            return empty, empty, np.zeros((0,), dtype=np.float32)
+        return (
+            np.asarray(positions, dtype=np.float32),
+            np.asarray(vectors, dtype=np.float32),
+            np.asarray(magnitudes, dtype=np.float32),
+        )
+
+    def _edge_weights_to_numpy(self, weights) -> np.ndarray:
+        if self.use_gpu:
+            return self.backend.asnumpy(weights).astype(np.float32, copy=False)
+        return np.asarray(weights, dtype=np.float32)
 
     def _grid_laplacian_with_internal_boundaries(self, field: np.ndarray) -> np.ndarray:
         if self.body_boundary_mask is None:

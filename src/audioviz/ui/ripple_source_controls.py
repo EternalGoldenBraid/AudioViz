@@ -4,6 +4,7 @@ from audioviz.source_controls import (
     CameraFrameSourceControls,
     ControlValue,
     PredictionLearningControls,
+    PredictionOverlayControls,
 )
 from audioviz.ui.ripple_control_panel import (
     ControlPanelSection,
@@ -81,6 +82,20 @@ class RippleSourceControlBinding:
                     expanded=transform_config.learning_enabled,
                 )
             )
+            if not visualizer.use_shader:
+                sections.append(
+                    ControlPanelSection(
+                        key="learning-overlay",
+                        title="Learning Overlay",
+                        controls=PredictionOverlayControls(
+                            enabled=visualizer.show_learning_overlay,
+                            stride=visualizer.learning_overlay_stride,
+                            threshold=visualizer.learning_overlay_threshold,
+                            scale=visualizer.learning_overlay_scale,
+                        ).get_controls(),
+                        expanded=visualizer.show_learning_overlay,
+                    )
+                )
         return tuple(sections)
 
     def build_toggles(self) -> tuple[SourceToggle, ...]:
@@ -126,6 +141,9 @@ class RippleSourceControlBinding:
             return
         if section_key == "learning-dynamics":
             self._update_learning_control(control_key, value)
+            return
+        if section_key == "learning-overlay":
+            self._update_learning_overlay_control(control_key, value)
             return
         self._update_synthetic_control(section_key, control_key, value)
 
@@ -236,3 +254,23 @@ class RippleSourceControlBinding:
             transform.update_config(learning_gradient_clip=float(value))
             return
         raise KeyError(f"Unknown learning dynamics control: {control_key}")
+
+    def _update_learning_overlay_control(
+        self,
+        control_key: str,
+        value: ControlValue,
+    ) -> None:
+        visualizer = self.visualizer
+        if control_key == "show_learning_overlay":
+            visualizer.set_learning_overlay_enabled(bool(value))
+            return
+        if control_key == "overlay_stride":
+            visualizer.set_learning_overlay_stride(int(round(float(value))))
+            return
+        if control_key == "overlay_threshold":
+            visualizer.set_learning_overlay_threshold(float(value))
+            return
+        if control_key == "overlay_scale":
+            visualizer.set_learning_overlay_scale(float(value))
+            return
+        raise KeyError(f"Unknown learning overlay control: {control_key}")

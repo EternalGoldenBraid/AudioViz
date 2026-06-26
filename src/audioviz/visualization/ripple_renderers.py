@@ -108,6 +108,19 @@ class NumpyImageRenderer:
         self.plot.setTitle(title)
         self.plot.invertY(True)
         self.plot.addItem(self.image_item)
+        self.prediction_overlay_lines = pg.PlotDataItem(
+            pen=pg.mkPen(0, 255, 255, 180, width=1.2),
+            connect="finite",
+        )
+        self.prediction_overlay_lines.setZValue(10)
+        self.plot.addItem(self.prediction_overlay_lines)
+        self.prediction_overlay_tips = pg.ScatterPlotItem(
+            size=4,
+            brush=pg.mkBrush(0, 255, 255, 200),
+            pen=pg.mkPen(None),
+        )
+        self.prediction_overlay_tips.setZValue(11)
+        self.plot.addItem(self.prediction_overlay_tips)
 
         self.widget = pg.GraphicsLayoutWidget()
         self.widget.addItem(self.plot, row=0, col=0)
@@ -177,6 +190,44 @@ class NumpyImageRenderer:
             autoLevels=False,
             levels=(0, 255),
         )
+
+    def render_prediction_coupling_overlay(
+        self,
+        field_source,
+        *,
+        enabled: bool,
+        stride: int,
+        threshold: float,
+        scale: float,
+    ) -> None:
+        if not enabled or not hasattr(field_source, "get_prediction_coupling_vectors"):
+            self.clear_prediction_coupling_overlay()
+            return
+        positions, vectors, _magnitudes = field_source.get_prediction_coupling_vectors(
+            stride=stride,
+            threshold=threshold,
+        )
+        if positions.size == 0:
+            self.clear_prediction_coupling_overlay()
+            return
+        scaled_vectors = np.asarray(vectors, dtype=np.float32) * np.float32(scale)
+        tips = positions + scaled_vectors
+        segments = np.empty((len(positions) * 3, 2), dtype=np.float32)
+        segments[0::3] = positions
+        segments[1::3] = tips
+        segments[2::3] = np.nan
+        self.prediction_overlay_lines.setData(
+            x=segments[:, 0],
+            y=segments[:, 1],
+        )
+        self.prediction_overlay_tips.setData(
+            x=tips[:, 0],
+            y=tips[:, 1],
+        )
+
+    def clear_prediction_coupling_overlay(self) -> None:
+        self.prediction_overlay_lines.setData(x=np.array([]), y=np.array([]))
+        self.prediction_overlay_tips.setData(x=np.array([]), y=np.array([]))
 
 
 class OpenGLFieldRenderer:
