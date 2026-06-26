@@ -10,7 +10,7 @@ from audioviz.offline.offline_audio_ripple import run_offline_audio_ripple
 
 
 _OUTPUT_ROOT = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[2]
     / "outputs"
     / "audio_ripple_validation"
     / "test_offline_audio_ripple"

@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def _load_main_module():
-    module_path = Path(__file__).resolve().parents[1] / "main.py"
+    module_path = Path(__file__).resolve().parents[2] / "main.py"
     spec = importlib.util.spec_from_file_location("audioviz_main", module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

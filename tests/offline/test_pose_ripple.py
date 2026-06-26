@@ -8,7 +8,7 @@ from audioviz.offline.offline_pose_ripple import run_offline_pose_ripple
 
 
 _OUTPUT_ROOT = (
-    Path(__file__).resolve().parents[1]
+    Path(__file__).resolve().parents[2]
     / "outputs"
     / "pose_ripple_validation"
     / "test_offline_pose_ripple"
