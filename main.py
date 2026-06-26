@@ -15,15 +15,17 @@ from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.spectrogram_visualizer import SpectrogramVisualizer
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
+from audioviz.sources import (
+    AudioSourceConfig,
+    CameraFrameSourceConfig,
+    RippleSourceOrchestratorConfig,
+    SyntheticSourceConfig,
+)
 from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
 from audioviz.visualization.ripple_visualizer_config import (
-    AudioSourceConfig,
-    CameraFrameSourceConfig,
     RipplePoseConfig,
-    RippleSourceOrchestratorConfig,
-    SyntheticSourceConfig,
 )
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 

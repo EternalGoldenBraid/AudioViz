@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from audioviz.source_controls import AudioSourceControls, ControlValue
@@ -8,6 +10,19 @@ from audioviz.utils.signal_processing import (
     map_audio_freq_to_visual_freq,
     normalize_audio_visual_mapping_mode,
 )
+
+
+@dataclass(frozen=True)
+class AudioSourceConfig:
+    enabled: bool | None = None
+    signal_gate_threshold: float = 0.05
+    drive_amplitude: float = 1.0
+    mapping_mode: str = "legacy"
+    mapping_alpha: float = 50.0
+    mapping_f0: float = 50.0
+    mapping_fc: float = 2000.0
+    linear_scale: float = 0.05
+    linear_offset: float = 0.0
 
 
 class AudioRippleSource:

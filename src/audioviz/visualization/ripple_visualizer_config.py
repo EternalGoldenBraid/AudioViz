@@ -1,46 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
-from audioviz.transforms.prediction_error import (
-    PredictionErrorTransformConfig,
-)
-
-
-@dataclass(frozen=True)
-class SyntheticSourceConfig:
-    enabled: bool = True
-    frequency: float | list[float] | tuple[float, ...] = 440.0
-
-
-@dataclass(frozen=True)
-class AudioSourceConfig:
-    enabled: bool | None = None
-    signal_gate_threshold: float = 0.05
-    drive_amplitude: float = 1.0
-    mapping_mode: str = "legacy"
-    mapping_alpha: float = 50.0
-    mapping_f0: float = 50.0
-    mapping_fc: float = 2000.0
-    linear_scale: float = 0.05
-    linear_offset: float = 0.0
-
-
-@dataclass(frozen=True)
-class CameraFrameSourceConfig:
-    enabled: bool = False
-    camera_index: int = 0
-    gain: float = 1.0
-
-
-@dataclass(frozen=True)
-class RippleSourceOrchestratorConfig:
-    synthetic: SyntheticSourceConfig = field(default_factory=SyntheticSourceConfig)
-    audio: AudioSourceConfig = field(default_factory=AudioSourceConfig)
-    camera_frame: CameraFrameSourceConfig = field(default_factory=CameraFrameSourceConfig)
-    prediction_error: PredictionErrorTransformConfig = field(
-        default_factory=PredictionErrorTransformConfig
-    )
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

@@ -1,16 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from audioviz.sources.audio import AudioRippleSource
-from audioviz.sources.camera import CameraFrameSource
-from audioviz.sources.synthetic import SyntheticRippleSource
+from audioviz.sources.audio import AudioRippleSource, AudioSourceConfig
+from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
+from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
 from audioviz.transforms.prediction_error import PredictionErrorTransform
-from audioviz.visualization.ripple_visualizer_config import (
-    RippleSourceOrchestratorConfig,
-)
+from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
+
+
+@dataclass(frozen=True)
+class RippleSourceOrchestratorConfig:
+    synthetic: SyntheticSourceConfig = field(default_factory=SyntheticSourceConfig)
+    audio: AudioSourceConfig = field(default_factory=AudioSourceConfig)
+    camera_frame: CameraFrameSourceConfig = field(
+        default_factory=CameraFrameSourceConfig
+    )
+    prediction_error: PredictionErrorTransformConfig = field(
+        default_factory=PredictionErrorTransformConfig
+    )
 
 
 @dataclass(frozen=True)

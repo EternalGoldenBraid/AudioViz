@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from audioviz.source_controls import SourceControl
 from audioviz.sources.ripple_grid import frequency_excitation_grid
+
+
+@dataclass(frozen=True)
+class SyntheticSourceConfig:
+    enabled: bool = True
+    frequency: float | list[float] | tuple[float, ...] = 440.0
 
 
 class SyntheticRippleSource:

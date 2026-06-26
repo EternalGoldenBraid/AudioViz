@@ -6,6 +6,11 @@ from pathlib import Path
 import numpy as np
 
 from audioviz.audio_processing.audio_processor import AudioProcessor
+from audioviz.sources import (
+    AudioSourceConfig,
+    RippleSourceOrchestratorConfig,
+    SyntheticSourceConfig,
+)
 from audioviz.visualization.offline_pose_ripple import (
     RecordingFieldRenderer,
     _ALLOWED_VIDEO_SUFFIXES,
@@ -13,10 +18,7 @@ from audioviz.visualization.offline_pose_ripple import (
 )
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 from audioviz.visualization.ripple_visualizer_config import (
-    AudioSourceConfig,
     RipplePoseConfig,
-    RippleSourceOrchestratorConfig,
-    SyntheticSourceConfig,
 )
 
 DEFAULT_OUTPUT_DIR = Path("outputs/audio_ripple_validation")

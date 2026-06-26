@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class CameraFrameSourceConfig:
+    enabled: bool = False
+    camera_index: int = 0
+    gain: float = 1.0
 
 
 def load_cv2():

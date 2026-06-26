@@ -5,7 +5,7 @@ import numpy as np
 from PyQt5 import QtCore, QtWidgets
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
-from audioviz.sources import RippleSourceOrchestrator
+from audioviz.sources import RippleSourceOrchestrator, RippleSourceOrchestratorConfig
 from audioviz.sources.pose import (
     PoseFrameSource,
     PoseGraphExtractor,
@@ -33,7 +33,6 @@ from audioviz.visualization.ripple_source_controls import (
 )
 from audioviz.visualization.ripple_visualizer_config import (
     RipplePoseConfig,
-    RippleSourceOrchestratorConfig,
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor

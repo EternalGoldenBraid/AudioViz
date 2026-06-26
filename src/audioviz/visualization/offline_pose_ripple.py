@@ -6,6 +6,10 @@ from pathlib import Path
 import numpy as np
 from matplotlib import colormaps
 
+from audioviz.sources import (
+    RippleSourceOrchestratorConfig,
+    SyntheticSourceConfig,
+)
 from audioviz.sources.pose import (
     PoseGraphFrame,
     adjacency_from_edges,
@@ -18,8 +22,6 @@ from audioviz.visualization.ripple_wave_visualizer import (
 )
 from audioviz.visualization.ripple_visualizer_config import (
     RipplePoseConfig,
-    RippleSourceOrchestratorConfig,
-    SyntheticSourceConfig,
 )
 
 DEFAULT_OUTPUT_DIR = Path("outputs/pose_ripple_validation")
