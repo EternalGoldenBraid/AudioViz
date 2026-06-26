@@ -5,7 +5,7 @@ from audioviz.source_controls import (
     ControlValue,
     PredictionLearningControls,
 )
-from audioviz.visualization.ripple_control_panel import (
+from audioviz.ui.ripple_control_panel import (
     ControlPanelSection,
     RippleControlPanel,
     SourceToggle,

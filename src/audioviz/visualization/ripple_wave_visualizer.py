@@ -25,10 +25,10 @@ from audioviz.visualization.standing_body_renderer import (
     StandingBodyRenderer,
     lookup_table_from_renderer,
 )
-from audioviz.visualization.ripple_control_panel import (
+from audioviz.ui.ripple_control_panel import (
     RippleControlPanel,
 )
-from audioviz.visualization.ripple_source_controls import (
+from audioviz.ui.ripple_source_controls import (
     RippleSourceControlBinding,
 )
 from audioviz.visualization.ripple_visualizer_config import (

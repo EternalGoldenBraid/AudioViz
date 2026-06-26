@@ -2,13 +2,13 @@ import pytest
 
 from audioviz.engine import RippleEngine
 from audioviz.source_controls import SourceControl
-from audioviz.visualization.ripple_control_panel import ControlPanelSection, SourceToggle
+from audioviz.ui.ripple_control_panel import ControlPanelSection, SourceToggle
 
 
 @pytest.fixture
 def ripple_panel_deps():
     qt_widgets = pytest.importorskip("PyQt5.QtWidgets")
-    from audioviz.visualization.ripple_control_panel import RippleControlPanel
+    from audioviz.ui.ripple_control_panel import RippleControlPanel
 
     return qt_widgets, RippleControlPanel
 
