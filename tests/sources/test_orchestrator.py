@@ -132,3 +132,45 @@ def test_ripple_source_orchestrator_scales_audio_only_excitation_by_signal_level
     resolved = orchestrator.resolve()
 
     assert resolved.amplitude == 0.5
+
+
+def test_ripple_source_orchestrator_uses_zero_observation_when_camera_feed_is_off():
+    engine = _build_engine()
+    engine.Z[:] = np.array(
+        [
+            [0.5, -0.25] + [0.0] * 30,
+            [0.75, -0.5] + [0.0] * 30,
+        ]
+        + [[0.0] * 32 for _ in range(22)],
+        dtype=np.float32,
+    )
+    orchestrator = RippleSourceOrchestrator(
+        config=RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(enabled=False, frequency=440.0),
+            audio=AudioSourceConfig(enabled=False),
+            camera_frame=CameraFrameSourceConfig(enabled=False),
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                inputs=("camera_frame",),
+                output_mode="raw_error",
+                activation_function="linear_clipped",
+                gain=1.0,
+                learning_enabled=False,
+                max_output=10.0,
+            ),
+        ),
+        processor=None,
+        engine=engine,
+        resolution=engine.resolution,
+        n_sources=1,
+    )
+
+    excitation = orchestrator.resolve_camera_frame_excitation()
+
+    assert excitation is not None
+    np.testing.assert_allclose(
+        excitation[:2, :2],
+        -engine.Z[:2, :2],
+        rtol=1e-6,
+        atol=1e-6,
+    )

@@ -46,6 +46,7 @@ class RippleSourceOrchestrator:
         self.resolution = resolution
         self.n_sources = int(n_sources)
         self.base_amplitude = 1.0
+        self._zero_observation = np.zeros(resolution, dtype=np.float32)
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
             n_sources=self.n_sources,
@@ -136,7 +137,9 @@ class RippleSourceOrchestrator:
     def resolve_camera_frame_excitation(self) -> np.ndarray | None:
         excitation = self.camera_source.excitation()
         if excitation is None:
-            return None
+            if not self.prediction_error_transform.applies_to("camera_frame"):
+                return None
+            return self.apply_source_transforms("camera_frame", self._zero_observation)
         return self.apply_source_transforms("camera_frame", excitation)
 
     def apply_source_transforms(

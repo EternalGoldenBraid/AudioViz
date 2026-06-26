@@ -335,7 +335,7 @@ class RippleWaveVisualizer(VisualizerBase):
                 return
             self.engine.step_without_excitation()
             self.time = self.engine.time
-            self.renderer.render(self.engine)
+            self._render_scene()
             self.source_control_binding.sync_audio_panel(
                 self.control_panel,
                 source_frame.audio_frequencies,
@@ -347,7 +347,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.engine.step_grid_excitation(source_frame.grid_excitation)
         self.time = self.engine.time
-        self.renderer.render(self.engine)
+        self._render_scene()
         self.source_control_binding.sync_audio_panel(
             self.control_panel,
             source_frame.audio_frequencies,
