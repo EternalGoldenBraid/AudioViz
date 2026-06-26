@@ -98,11 +98,30 @@ class RippleEngine:
         self.pose_positions = None
         self.pose_valid = None
         self.body_boundary_mask = None
-        self.prediction_horizontal_edge_weights: np.ndarray | None = None
-        self.prediction_vertical_edge_weights: np.ndarray | None = None
-
     def _stable_dt(self) -> float:
         return (self.grid_spacing / self.speed) * 1 / np.sqrt(2)
+
+    @property
+    def prediction_horizontal_edge_weights(self) -> np.ndarray:
+        return np.asarray(self.propagator.horizontal_edge_weights, dtype=np.float32)
+
+    @prediction_horizontal_edge_weights.setter
+    def prediction_horizontal_edge_weights(self, weights: np.ndarray) -> None:
+        self.propagator.horizontal_edge_weights[...] = self._coerce_edge_weight_array(
+            weights,
+            expected_shape=self.propagator.horizontal_edge_weights.shape,
+        )
+
+    @property
+    def prediction_vertical_edge_weights(self) -> np.ndarray:
+        return np.asarray(self.propagator.vertical_edge_weights, dtype=np.float32)
+
+    @prediction_vertical_edge_weights.setter
+    def prediction_vertical_edge_weights(self, weights: np.ndarray) -> None:
+        self.propagator.vertical_edge_weights[...] = self._coerce_edge_weight_array(
+            weights,
+            expected_shape=self.propagator.vertical_edge_weights.shape,
+        )
 
     def _make_source_positions(self):
         rng = np.random.default_rng(42)
@@ -156,8 +175,6 @@ class RippleEngine:
         self.propagator.reset()
         self.Z[:] = 0
         self.Z_old[:] = 0
-        self.prediction_horizontal_edge_weights = None
-        self.prediction_vertical_edge_weights = None
         if self.pose_values is not None:
             self.pose_values[:] = 0
         if self.pose_values_old is not None:
@@ -220,7 +237,6 @@ class RippleEngine:
         )
         if not transform.config.learning_enabled:
             return field
-        self._ensure_prediction_edge_weights()
         prediction = field.astype(np.float64) + self._shared_neighbor_sum(field)
         clip = np.float32(transform.config.prediction_clip)
         return np.clip(prediction, -clip, clip).astype(np.float32, copy=False)
@@ -389,28 +405,7 @@ class RippleEngine:
         field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
         return np.clip(field, -clip, clip).astype(np.float32, copy=False)
 
-    def _ensure_prediction_edge_weights(self) -> None:
-        rows, cols = self.resolution
-        if (
-            self.prediction_horizontal_edge_weights is None
-            or self.prediction_horizontal_edge_weights.shape != (rows, max(cols - 1, 0))
-        ):
-            self.prediction_horizontal_edge_weights = np.zeros(
-                (rows, max(cols - 1, 0)),
-                dtype=np.float32,
-            )
-        if (
-            self.prediction_vertical_edge_weights is None
-            or self.prediction_vertical_edge_weights.shape != (max(rows - 1, 0), cols)
-        ):
-            self.prediction_vertical_edge_weights = np.zeros(
-                (max(rows - 1, 0), cols),
-                dtype=np.float32,
-            )
-
     def _shared_neighbor_sum(self, field: np.ndarray) -> np.ndarray:
-        assert self.prediction_horizontal_edge_weights is not None
-        assert self.prediction_vertical_edge_weights is not None
         field64 = field.astype(np.float64, copy=False)
         prediction = np.zeros(self.resolution, dtype=np.float64)
         horizontal = self.prediction_horizontal_edge_weights.astype(
@@ -451,7 +446,6 @@ class RippleEngine:
         config = transform.config
         if not config.learning_enabled or config.learning_rate == 0.0:
             return
-        self._ensure_prediction_edge_weights()
         field = self._coerce_prediction_field(
             self.get_field_numpy(),
             prediction_clip=config.prediction_clip,
@@ -487,8 +481,6 @@ class RippleEngine:
             -config.learning_gradient_clip,
             config.learning_gradient_clip,
         )
-        assert self.prediction_horizontal_edge_weights is not None
-        assert self.prediction_vertical_edge_weights is not None
         horizontal_weights = self.prediction_horizontal_edge_weights.astype(
             np.float64,
             copy=False,
@@ -522,33 +514,68 @@ class RippleEngine:
             copy=False,
         )
 
+    @staticmethod
+    def _coerce_edge_weight_array(
+        weights: np.ndarray,
+        *,
+        expected_shape: tuple[int, ...],
+    ) -> np.ndarray:
+        array = np.asarray(weights, dtype=np.float32)
+        if array.shape != expected_shape:
+            raise ValueError("edge weight array shape must match propagator operator")
+        return array
+
     def _grid_laplacian_with_internal_boundaries(self, field: np.ndarray) -> np.ndarray:
         if self.body_boundary_mask is None:
             return (
-                _laplacian_periodic(np, field)
+                _laplacian_periodic(
+                    np,
+                    field,
+                    horizontal_edge_weights=self.prediction_horizontal_edge_weights,
+                    vertical_edge_weights=self.prediction_vertical_edge_weights,
+                )
                 if self.boundary_condition is BoundaryCondition.CYCLIC
-                else _laplacian_neumann(np, field)
+                else _laplacian_neumann(
+                    np,
+                    field,
+                    horizontal_edge_weights=self.prediction_horizontal_edge_weights,
+                    vertical_edge_weights=self.prediction_vertical_edge_weights,
+                )
             )
 
         mask = self.body_boundary_mask
         laplacian = np.zeros_like(field)
         transmission = np.float32(self.body_boundary_transmission)
+        horizontal_conductance = 1.0 + self.prediction_horizontal_edge_weights
+        vertical_conductance = 1.0 + self.prediction_vertical_edge_weights
 
         vertical_open = mask[:-1, :] == mask[1:, :]
         vertical_diff = field[1:, :] - field[:-1, :]
-        laplacian[:-1, :] += vertical_open * vertical_diff
-        laplacian[1:, :] -= vertical_open * vertical_diff
+        laplacian[:-1, :] += vertical_open * (vertical_conductance * vertical_diff)
+        laplacian[1:, :] -= vertical_open * (vertical_conductance * vertical_diff)
         vertical_closed = ~vertical_open
-        laplacian[:-1, :] += vertical_closed * (transmission * vertical_diff)
-        laplacian[1:, :] -= vertical_closed * (transmission * vertical_diff)
+        laplacian[:-1, :] += vertical_closed * (
+            transmission * vertical_conductance * vertical_diff
+        )
+        laplacian[1:, :] -= vertical_closed * (
+            transmission * vertical_conductance * vertical_diff
+        )
 
         horizontal_open = mask[:, :-1] == mask[:, 1:]
         horizontal_diff = field[:, 1:] - field[:, :-1]
-        laplacian[:, :-1] += horizontal_open * horizontal_diff
-        laplacian[:, 1:] -= horizontal_open * horizontal_diff
+        laplacian[:, :-1] += horizontal_open * (
+            horizontal_conductance * horizontal_diff
+        )
+        laplacian[:, 1:] -= horizontal_open * (
+            horizontal_conductance * horizontal_diff
+        )
         horizontal_closed = ~horizontal_open
-        laplacian[:, :-1] += horizontal_closed * (transmission * horizontal_diff)
-        laplacian[:, 1:] -= horizontal_closed * (transmission * horizontal_diff)
+        laplacian[:, :-1] += horizontal_closed * (
+            transmission * horizontal_conductance * horizontal_diff
+        )
+        laplacian[:, 1:] -= horizontal_closed * (
+            transmission * horizontal_conductance * horizontal_diff
+        )
 
         if self.boundary_condition is BoundaryCondition.CYCLIC:
             vertical_wrap_open = mask[-1, :] == mask[0, :]

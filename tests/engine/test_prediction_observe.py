@@ -81,8 +81,14 @@ def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation(
         observation=observation,
         transform=transform,
     )
-    assert engine.prediction_horizontal_edge_weights is None
-    assert engine.prediction_vertical_edge_weights is None
+    np.testing.assert_array_equal(
+        engine.prediction_horizontal_edge_weights,
+        np.zeros((2, 1), dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        engine.prediction_vertical_edge_weights,
+        np.zeros((1, 2), dtype=np.float32),
+    )
 
     transform.update_config(learning_enabled=True)
     engine.observe(

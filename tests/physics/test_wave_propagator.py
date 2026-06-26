@@ -124,3 +124,26 @@ def test_neumann_boundary_uses_reduced_edge_degree():
 
     # Corner uses degree 2: (2 + 4) - 2 * 1 = 4
     assert propagator.Z[0, 0] == pytest.approx(6.0)
+
+
+def test_wave_propagator_learned_horizontal_edge_changes_stencil_strength():
+    propagator = WavePropagatorCPU(
+        shape=(1, 2),
+        dx=1.0,
+        dt=1.0,
+        speed=1.0,
+        damping=1.0,
+        boundary_condition=BoundaryCondition.NEUMANN,
+    )
+    propagator.Z[:] = np.array([[1.0, 0.0]], dtype=np.float32)
+
+    propagator.step()
+    baseline = propagator.Z.copy()
+
+    propagator.reset()
+    propagator.Z[:] = np.array([[1.0, 0.0]], dtype=np.float32)
+    propagator.horizontal_edge_weights[:] = np.array([[1.0]], dtype=np.float32)
+    propagator.step()
+
+    assert propagator.Z[0, 1] > baseline[0, 1]
+    assert propagator.Z[0, 0] < baseline[0, 0]

@@ -29,31 +29,84 @@ def load_cupy() -> Any:
     return cp
 
 
-def _laplacian_periodic(xp, Z):
-    return (
+def _weighted_laplacian_periodic(
+    xp,
+    Z,
+    *,
+    horizontal_edge_weights=None,
+    vertical_edge_weights=None,
+):
+    laplacian = (
         -4 * Z
         + xp.roll(Z, 1, axis=0)
         + xp.roll(Z, -1, axis=0)
         + xp.roll(Z, 1, axis=1)
         + xp.roll(Z, -1, axis=1)
     )
-
-
-def _laplacian_neumann(xp, Z):
-    laplacian = xp.zeros_like(Z)
-    degree = xp.zeros_like(Z)
-
-    laplacian[1:, :] += Z[:-1, :]
-    degree[1:, :] += 1
-    laplacian[:-1, :] += Z[1:, :]
-    degree[:-1, :] += 1
-    laplacian[:, 1:] += Z[:, :-1]
-    degree[:, 1:] += 1
-    laplacian[:, :-1] += Z[:, 1:]
-    degree[:, :-1] += 1
-
-    laplacian -= degree * Z
+    if horizontal_edge_weights is not None and horizontal_edge_weights.size:
+        horizontal_delta = horizontal_edge_weights * (Z[:, 1:] - Z[:, :-1])
+        laplacian[:, :-1] += horizontal_delta
+        laplacian[:, 1:] -= horizontal_delta
+    if vertical_edge_weights is not None and vertical_edge_weights.size:
+        vertical_delta = vertical_edge_weights * (Z[1:, :] - Z[:-1, :])
+        laplacian[:-1, :] += vertical_delta
+        laplacian[1:, :] -= vertical_delta
     return laplacian
+
+
+def _weighted_laplacian_neumann(
+    xp,
+    Z,
+    *,
+    horizontal_edge_weights=None,
+    vertical_edge_weights=None,
+):
+    laplacian = xp.zeros_like(Z)
+    vertical_conductance = 1.0
+    horizontal_conductance = 1.0
+    if vertical_edge_weights is not None:
+        vertical_conductance = 1.0 + vertical_edge_weights
+    if horizontal_edge_weights is not None:
+        horizontal_conductance = 1.0 + horizontal_edge_weights
+
+    vertical_diff = Z[1:, :] - Z[:-1, :]
+    laplacian[:-1, :] += vertical_conductance * vertical_diff
+    laplacian[1:, :] -= vertical_conductance * vertical_diff
+
+    horizontal_diff = Z[:, 1:] - Z[:, :-1]
+    laplacian[:, :-1] += horizontal_conductance * horizontal_diff
+    laplacian[:, 1:] -= horizontal_conductance * horizontal_diff
+    return laplacian
+
+
+def _laplacian_periodic(
+    xp,
+    Z,
+    *,
+    horizontal_edge_weights=None,
+    vertical_edge_weights=None,
+):
+    return _weighted_laplacian_periodic(
+        xp,
+        Z,
+        horizontal_edge_weights=horizontal_edge_weights,
+        vertical_edge_weights=vertical_edge_weights,
+    )
+
+
+def _laplacian_neumann(
+    xp,
+    Z,
+    *,
+    horizontal_edge_weights=None,
+    vertical_edge_weights=None,
+):
+    return _weighted_laplacian_neumann(
+        xp,
+        Z,
+        horizontal_edge_weights=horizontal_edge_weights,
+        vertical_edge_weights=vertical_edge_weights,
+    )
 
 
 class WavePropagatorCPU:
@@ -76,6 +129,15 @@ class WavePropagatorCPU:
         self.Z = np.zeros(shape, dtype=np.float32)
         self.Z_old = np.zeros_like(self.Z)
         self.Z_new = np.zeros_like(self.Z)
+        rows, cols = shape
+        self.horizontal_edge_weights = np.zeros(
+            (rows, max(cols - 1, 0)),
+            dtype=np.float32,
+        )
+        self.vertical_edge_weights = np.zeros(
+            (max(rows - 1, 0), cols),
+            dtype=np.float32,
+        )
 
         self.c2_dt2 = (self.c * self.dt / self.dx) ** 2
 
@@ -86,9 +148,19 @@ class WavePropagatorCPU:
     def step(self):
         Z = self.Z
         laplacian = (
-            _laplacian_periodic(np, Z)
+            _weighted_laplacian_periodic(
+                np,
+                Z,
+                horizontal_edge_weights=self.horizontal_edge_weights,
+                vertical_edge_weights=self.vertical_edge_weights,
+            )
             if self.boundary_condition is BoundaryCondition.CYCLIC
-            else _laplacian_neumann(np, Z)
+            else _weighted_laplacian_neumann(
+                np,
+                Z,
+                horizontal_edge_weights=self.horizontal_edge_weights,
+                vertical_edge_weights=self.vertical_edge_weights,
+            )
         )
         self.Z_new = 2 * Z - self.Z_old + self.c2_dt2 * laplacian
         self.Z_new *= self.damping
@@ -102,6 +174,8 @@ class WavePropagatorCPU:
         self.Z[:] = 0
         self.Z_old[:] = 0
         self.Z_new[:] = 0
+        self.horizontal_edge_weights[:] = 0
+        self.vertical_edge_weights[:] = 0
 
 
 class WavePropagatorGPU:
@@ -127,6 +201,15 @@ class WavePropagatorGPU:
         self.Z = cp.zeros(shape, dtype=cp.float32)
         self.Z_old = cp.zeros_like(self.Z)
         self.Z_new = cp.zeros_like(self.Z)
+        rows, cols = shape
+        self.horizontal_edge_weights = cp.zeros(
+            (rows, max(cols - 1, 0)),
+            dtype=cp.float32,
+        )
+        self.vertical_edge_weights = cp.zeros(
+            (max(rows - 1, 0), cols),
+            dtype=cp.float32,
+        )
 
         self.c2_dt2 = (self.c * self.dt / self.dx) ** 2
 
@@ -138,9 +221,19 @@ class WavePropagatorGPU:
         cp = self.cp
         Z = self.Z
         laplacian = (
-            _laplacian_periodic(cp, Z)
+            _weighted_laplacian_periodic(
+                cp,
+                Z,
+                horizontal_edge_weights=self.horizontal_edge_weights,
+                vertical_edge_weights=self.vertical_edge_weights,
+            )
             if self.boundary_condition is BoundaryCondition.CYCLIC
-            else _laplacian_neumann(cp, Z)
+            else _weighted_laplacian_neumann(
+                cp,
+                Z,
+                horizontal_edge_weights=self.horizontal_edge_weights,
+                vertical_edge_weights=self.vertical_edge_weights,
+            )
         )
         self.Z_new = 2 * Z - self.Z_old + self.c2_dt2 * laplacian
         self.Z_new *= self.damping
@@ -154,3 +247,5 @@ class WavePropagatorGPU:
         self.Z[:] = 0
         self.Z_old[:] = 0
         self.Z_new[:] = 0
+        self.horizontal_edge_weights[:] = 0
+        self.vertical_edge_weights[:] = 0
