@@ -80,12 +80,17 @@ def test_prediction_error_learning_updates_edge_weights():
         ripple_state=ripple_state,
     )
 
-    neighbors = transform.neighbor_fields(ripple_state)
-    expected = 0.5 * neighbors / np.log(2.0)
-    assert transform.edge_weights is not None
+    assert transform.horizontal_edge_weights is not None
+    assert transform.vertical_edge_weights is not None
     np.testing.assert_allclose(
-        transform.edge_weights,
-        expected,
+        transform.horizontal_edge_weights,
+        0.5 * np.array([[3.0], [7.0]], dtype=np.float32) / np.log(2.0),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        transform.vertical_edge_weights,
+        0.5 * np.array([[4.0, 6.0]], dtype=np.float32) / np.log(2.0),
         rtol=1e-6,
         atol=1e-6,
     )
@@ -155,7 +160,8 @@ def test_prediction_error_transform_learning_toggle_takes_effect_on_next_apply()
         observation=observation,
         ripple_state=ripple_state,
     )
-    assert transform.edge_weights is None
+    assert transform.horizontal_edge_weights is None
+    assert transform.vertical_edge_weights is None
 
     transform.update_config(learning_enabled=True)
     transform.apply(
@@ -164,6 +170,7 @@ def test_prediction_error_transform_learning_toggle_takes_effect_on_next_apply()
         ripple_state=ripple_state,
     )
 
-    edge_weights = transform.edge_weights
-    assert edge_weights is not None
-    assert np.any(edge_weights != 0.0)
+    assert transform.horizontal_edge_weights is not None
+    assert transform.vertical_edge_weights is not None
+    assert np.any(transform.horizontal_edge_weights != 0.0)
+    assert np.any(transform.vertical_edge_weights != 0.0)
