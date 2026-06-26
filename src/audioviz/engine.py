@@ -12,6 +12,7 @@ from audioviz.physics.wave_propagator import (
     load_cupy,
 )
 from audioviz.physics.opengl_wave_propagator import WavePropagatorOpenGL
+from audioviz.transforms.prediction_error import PredictionErrorTransform
 
 
 class RippleEngine:
@@ -97,6 +98,8 @@ class RippleEngine:
         self.pose_positions = None
         self.pose_valid = None
         self.body_boundary_mask = None
+        self.prediction_horizontal_edge_weights: np.ndarray | None = None
+        self.prediction_vertical_edge_weights: np.ndarray | None = None
 
     def _stable_dt(self) -> float:
         return (self.grid_spacing / self.speed) * 1 / np.sqrt(2)
@@ -153,6 +156,8 @@ class RippleEngine:
         self.propagator.reset()
         self.Z[:] = 0
         self.Z_old[:] = 0
+        self.prediction_horizontal_edge_weights = None
+        self.prediction_vertical_edge_weights = None
         if self.pose_values is not None:
             self.pose_values[:] = 0
         if self.pose_values_old is not None:
@@ -181,6 +186,44 @@ class RippleEngine:
             self.Z_old = np.array(self.propagator.Z_old, copy=True)
         self.Z[:] = self.propagator.get_state()
         return self.Z
+
+    def observe(
+        self,
+        *,
+        source_key: str,
+        observation: np.ndarray,
+        transform: PredictionErrorTransform,
+    ) -> np.ndarray:
+        observed = self._coerce_prediction_field(
+            observation,
+            prediction_clip=transform.config.prediction_clip,
+        )
+        if not transform.applies_to(source_key):
+            return observed
+
+        prediction = self.predict_observation(transform=transform)
+        error = observed.astype(np.float64, copy=False) - prediction.astype(
+            np.float64,
+            copy=False,
+        )
+        self._update_prediction_edge_weights(error=error, transform=transform)
+        return transform.shape_error(error)
+
+    def predict_observation(
+        self,
+        *,
+        transform: PredictionErrorTransform,
+    ) -> np.ndarray:
+        field = self._coerce_prediction_field(
+            self.get_field_numpy(),
+            prediction_clip=transform.config.prediction_clip,
+        )
+        if not transform.config.learning_enabled:
+            return field
+        self._ensure_prediction_edge_weights()
+        prediction = field.astype(np.float64) + self._shared_neighbor_sum(field)
+        clip = np.float32(transform.config.prediction_clip)
+        return np.clip(prediction, -clip, clip).astype(np.float32, copy=False)
 
     def step_without_excitation(self):
         self.time += self.dt
@@ -332,6 +375,152 @@ class RippleEngine:
         if excitation.shape != self.resolution:
             raise ValueError("excitation_grid must match engine resolution")
         return excitation
+
+    def _coerce_prediction_field(
+        self,
+        values: np.ndarray,
+        *,
+        prediction_clip: float,
+    ) -> np.ndarray:
+        field = np.asarray(values, dtype=np.float32)
+        if field.shape != self.resolution:
+            raise ValueError("prediction field must match engine resolution")
+        clip = np.float32(prediction_clip)
+        field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
+        return np.clip(field, -clip, clip).astype(np.float32, copy=False)
+
+    def _ensure_prediction_edge_weights(self) -> None:
+        rows, cols = self.resolution
+        if (
+            self.prediction_horizontal_edge_weights is None
+            or self.prediction_horizontal_edge_weights.shape != (rows, max(cols - 1, 0))
+        ):
+            self.prediction_horizontal_edge_weights = np.zeros(
+                (rows, max(cols - 1, 0)),
+                dtype=np.float32,
+            )
+        if (
+            self.prediction_vertical_edge_weights is None
+            or self.prediction_vertical_edge_weights.shape != (max(rows - 1, 0), cols)
+        ):
+            self.prediction_vertical_edge_weights = np.zeros(
+                (max(rows - 1, 0), cols),
+                dtype=np.float32,
+            )
+
+    def _shared_neighbor_sum(self, field: np.ndarray) -> np.ndarray:
+        assert self.prediction_horizontal_edge_weights is not None
+        assert self.prediction_vertical_edge_weights is not None
+        field64 = field.astype(np.float64, copy=False)
+        prediction = np.zeros(self.resolution, dtype=np.float64)
+        horizontal = self.prediction_horizontal_edge_weights.astype(
+            np.float64,
+            copy=False,
+        )
+        vertical = self.prediction_vertical_edge_weights.astype(np.float64, copy=False)
+        if horizontal.size:
+            prediction[:, :-1] += horizontal * field64[:, 1:]
+            prediction[:, 1:] += horizontal * field64[:, :-1]
+        if vertical.size:
+            prediction[:-1, :] += vertical * field64[1:, :]
+            prediction[1:, :] += vertical * field64[:-1, :]
+        return prediction
+
+    @staticmethod
+    def _shared_edge_gradients(
+        *,
+        error: np.ndarray,
+        field: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        field64 = field.astype(np.float64, copy=False)
+        error64 = error.astype(np.float64, copy=False)
+        horizontal_gradient = (
+            error64[:, :-1] * field64[:, 1:] + error64[:, 1:] * field64[:, :-1]
+        )
+        vertical_gradient = (
+            error64[:-1, :] * field64[1:, :] + error64[1:, :] * field64[:-1, :]
+        )
+        return horizontal_gradient, vertical_gradient
+
+    def _update_prediction_edge_weights(
+        self,
+        *,
+        error: np.ndarray,
+        transform: PredictionErrorTransform,
+    ) -> None:
+        config = transform.config
+        if not config.learning_enabled or config.learning_rate == 0.0:
+            return
+        self._ensure_prediction_edge_weights()
+        field = self._coerce_prediction_field(
+            self.get_field_numpy(),
+            prediction_clip=config.prediction_clip,
+        )
+        denom = (
+            np.float64(config.sigma)
+            * np.float64(config.sigma)
+            * np.float64(np.log(2.0))
+        )
+        horizontal_gradient, vertical_gradient = self._shared_edge_gradients(
+            error=error,
+            field=field,
+        )
+        horizontal_gradient = np.nan_to_num(
+            horizontal_gradient / denom,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        vertical_gradient = np.nan_to_num(
+            vertical_gradient / denom,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+        horizontal_gradient = np.clip(
+            horizontal_gradient,
+            -config.learning_gradient_clip,
+            config.learning_gradient_clip,
+        )
+        vertical_gradient = np.clip(
+            vertical_gradient,
+            -config.learning_gradient_clip,
+            config.learning_gradient_clip,
+        )
+        assert self.prediction_horizontal_edge_weights is not None
+        assert self.prediction_vertical_edge_weights is not None
+        horizontal_weights = self.prediction_horizontal_edge_weights.astype(
+            np.float64,
+            copy=False,
+        )
+        vertical_weights = self.prediction_vertical_edge_weights.astype(
+            np.float64,
+            copy=False,
+        )
+        if config.learning_weight_decay:
+            decay = np.float64(1.0 - config.learning_weight_decay)
+            horizontal_weights *= decay
+            vertical_weights *= decay
+        horizontal_weights += np.float64(config.learning_rate) * horizontal_gradient
+        vertical_weights += np.float64(config.learning_rate) * vertical_gradient
+        horizontal_weights = np.clip(
+            horizontal_weights,
+            -config.learning_weight_clip,
+            config.learning_weight_clip,
+        )
+        vertical_weights = np.clip(
+            vertical_weights,
+            -config.learning_weight_clip,
+            config.learning_weight_clip,
+        )
+        self.prediction_horizontal_edge_weights = horizontal_weights.astype(
+            np.float32,
+            copy=False,
+        )
+        self.prediction_vertical_edge_weights = vertical_weights.astype(
+            np.float32,
+            copy=False,
+        )
 
     def _grid_laplacian_with_internal_boundaries(self, field: np.ndarray) -> np.ndarray:
         if self.body_boundary_mask is None:

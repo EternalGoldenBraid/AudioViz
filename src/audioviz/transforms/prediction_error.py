@@ -33,8 +33,6 @@ class PredictionErrorTransform:
     ):
         self.config = config
         self.resolution = resolution
-        self.horizontal_edge_weights: np.ndarray | None = None
-        self.vertical_edge_weights: np.ndarray | None = None
         self._validate_config()
 
     def update_config(self, **changes) -> None:
@@ -60,42 +58,13 @@ class PredictionErrorTransform:
         if not self.applies_to(source_key):
             return observation
 
-        prediction = self.predict(ripple_state)
-        observed = np.nan_to_num(
-            np.asarray(observation, dtype=np.float64),
-            nan=0.0,
-            posinf=self.config.prediction_clip,
-            neginf=-self.config.prediction_clip,
+        prediction = self._coerce_field(ripple_state)
+        observed = self._coerce_field(observation)
+        error = observed.astype(np.float64, copy=False) - prediction.astype(
+            np.float64,
+            copy=False,
         )
-        error = observed - prediction.astype(np.float64, copy=False)
-        self._update_edge_weights(error, ripple_state)
-        transformed = self._error_to_output(error)
-        transformed = self._activate_output(
-            transformed,
-            signed=self.config.output_mode == "raw_error",
-        )
-        transformed = transformed * np.float64(self.config.gain)
-        max_output = np.float64(self.config.max_output)
-        transformed = np.nan_to_num(
-            transformed,
-            nan=0.0,
-            posinf=max_output,
-            neginf=-max_output,
-        )
-        if self.config.output_mode == "raw_error":
-            transformed = np.clip(transformed, -max_output, max_output)
-        else:
-            transformed = np.clip(transformed, 0.0, max_output)
-        return transformed.astype(np.float32, copy=False)
-
-    def predict(self, ripple_state: np.ndarray) -> np.ndarray:
-        field = self._coerce_ripple_state(ripple_state)
-        if not self.config.learning_enabled:
-            return field
-        self._ensure_edge_weights()
-        prediction = field.astype(np.float64) + self._shared_neighbor_sum(field)
-        clip = np.float32(self.config.prediction_clip)
-        return np.clip(prediction, -clip, clip).astype(np.float32, copy=False)
+        return self.shape_error(error)
 
     @staticmethod
     def neighbor_fields(field: np.ndarray) -> np.ndarray:
@@ -144,122 +113,33 @@ class PredictionErrorTransform:
             activated = np.maximum(activated, 0.0)
         return activated
 
-    def _update_edge_weights(self, error: np.ndarray, ripple_state: np.ndarray) -> None:
-        if not self.config.learning_enabled or self.config.learning_rate == 0.0:
-            return
-        self._ensure_edge_weights()
-        field = self._coerce_ripple_state(ripple_state)
-        denom = (
-            np.float64(self.config.sigma)
-            * np.float64(self.config.sigma)
-            * np.float64(np.log(2.0))
+    def shape_error(self, error: np.ndarray) -> np.ndarray:
+        transformed = self._error_to_output(error)
+        transformed = self._activate_output(
+            transformed,
+            signed=self.config.output_mode == "raw_error",
         )
-        horizontal_gradient, vertical_gradient = self._shared_edge_gradients(
-            error=error,
-            field=field,
-        )
-        horizontal_gradient = np.nan_to_num(
-            horizontal_gradient / denom,
+        transformed = transformed * np.float64(self.config.gain)
+        max_output = np.float64(self.config.max_output)
+        transformed = np.nan_to_num(
+            transformed,
             nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
+            posinf=max_output,
+            neginf=-max_output,
         )
-        vertical_gradient = np.nan_to_num(
-            vertical_gradient / denom,
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
-        horizontal_gradient = np.clip(
-            horizontal_gradient,
-            -self.config.learning_gradient_clip,
-            self.config.learning_gradient_clip,
-        )
-        vertical_gradient = np.clip(
-            vertical_gradient,
-            -self.config.learning_gradient_clip,
-            self.config.learning_gradient_clip,
-        )
-        assert self.horizontal_edge_weights is not None
-        assert self.vertical_edge_weights is not None
-        horizontal_weights = self.horizontal_edge_weights.astype(np.float64, copy=False)
-        vertical_weights = self.vertical_edge_weights.astype(np.float64, copy=False)
-        if self.config.learning_weight_decay:
-            decay = np.float64(1.0 - self.config.learning_weight_decay)
-            horizontal_weights *= decay
-            vertical_weights *= decay
-        horizontal_weights += np.float64(self.config.learning_rate) * horizontal_gradient
-        vertical_weights += np.float64(self.config.learning_rate) * vertical_gradient
-        horizontal_weights = np.clip(
-            horizontal_weights,
-            -self.config.learning_weight_clip,
-            self.config.learning_weight_clip,
-        )
-        vertical_weights = np.clip(
-            vertical_weights,
-            -self.config.learning_weight_clip,
-            self.config.learning_weight_clip,
-        )
-        self.horizontal_edge_weights = horizontal_weights.astype(np.float32, copy=False)
-        self.vertical_edge_weights = vertical_weights.astype(np.float32, copy=False)
+        if self.config.output_mode == "raw_error":
+            transformed = np.clip(transformed, -max_output, max_output)
+        else:
+            transformed = np.clip(transformed, 0.0, max_output)
+        return transformed.astype(np.float32, copy=False)
 
-    def _coerce_ripple_state(self, ripple_state: np.ndarray) -> np.ndarray:
-        field = np.asarray(ripple_state, dtype=np.float32)
+    def _coerce_field(self, values: np.ndarray) -> np.ndarray:
+        field = np.asarray(values, dtype=np.float32)
         if field.shape != self.resolution:
             raise ValueError("ripple-state prediction must match engine resolution")
         clip = np.float32(self.config.prediction_clip)
         field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
         return np.clip(field, -clip, clip).astype(np.float32, copy=False)
-
-    def _ensure_edge_weights(self) -> None:
-        rows, cols = self.resolution
-        if self.horizontal_edge_weights is None or self.horizontal_edge_weights.shape != (
-            rows,
-            max(cols - 1, 0),
-        ):
-            self.horizontal_edge_weights = np.zeros(
-                (rows, max(cols - 1, 0)),
-                dtype=np.float32,
-            )
-        if self.vertical_edge_weights is None or self.vertical_edge_weights.shape != (
-            max(rows - 1, 0),
-            cols,
-        ):
-            self.vertical_edge_weights = np.zeros(
-                (max(rows - 1, 0), cols),
-                dtype=np.float32,
-            )
-
-    def _shared_neighbor_sum(self, field: np.ndarray) -> np.ndarray:
-        assert self.horizontal_edge_weights is not None
-        assert self.vertical_edge_weights is not None
-        field64 = field.astype(np.float64, copy=False)
-        prediction = np.zeros(self.resolution, dtype=np.float64)
-        horizontal = self.horizontal_edge_weights.astype(np.float64, copy=False)
-        vertical = self.vertical_edge_weights.astype(np.float64, copy=False)
-        if horizontal.size:
-            prediction[:, :-1] += horizontal * field64[:, 1:]
-            prediction[:, 1:] += horizontal * field64[:, :-1]
-        if vertical.size:
-            prediction[:-1, :] += vertical * field64[1:, :]
-            prediction[1:, :] += vertical * field64[:-1, :]
-        return prediction
-
-    @staticmethod
-    def _shared_edge_gradients(
-        *,
-        error: np.ndarray,
-        field: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        field64 = field.astype(np.float64, copy=False)
-        error64 = error.astype(np.float64, copy=False)
-        horizontal_gradient = (
-            error64[:, :-1] * field64[:, 1:] + error64[:, 1:] * field64[:, :-1]
-        )
-        vertical_gradient = (
-            error64[:-1, :] * field64[1:, :] + error64[1:, :] * field64[:-1, :]
-        )
-        return horizontal_gradient, vertical_gradient
 
     def _validate_config(self) -> None:
         if self.config.sigma <= 0.0:

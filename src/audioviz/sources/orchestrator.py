@@ -144,8 +144,8 @@ class RippleSourceOrchestrator:
         source_key: str,
         excitation: np.ndarray,
     ) -> np.ndarray:
-        return self.prediction_error_transform.apply(
+        return self.engine.observe(
             source_key=source_key,
             observation=excitation,
-            ripple_state=self.engine.get_field_numpy(),
+            transform=self.prediction_error_transform,
         )
