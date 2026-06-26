@@ -4,7 +4,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from audioviz.visualization.offline_pose_ripple import run_offline_pose_ripple
+from audioviz.offline.offline_pose_ripple import run_offline_pose_ripple
 
 
 _OUTPUT_ROOT = (

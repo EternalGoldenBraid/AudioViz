@@ -12,7 +12,7 @@ from audioviz.sources import (
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
-from audioviz.visualization.offline_pose_ripple import (
+from audioviz.offline.offline_pose_ripple import (
     RecordingFieldRenderer,
     _ALLOWED_VIDEO_SUFFIXES,
     _write_render_artifacts,

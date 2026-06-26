@@ -6,7 +6,7 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from audioviz.visualization.offline_audio_ripple import run_offline_audio_ripple
+from audioviz.offline.offline_audio_ripple import run_offline_audio_ripple
 
 
 _OUTPUT_ROOT = (
