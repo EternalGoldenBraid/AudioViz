@@ -15,7 +15,7 @@ from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.spectrogram_visualizer import SpectrogramVisualizer
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
-from audioviz.visualization.prediction_error_transform import (
+from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
 from audioviz.visualization.ripple_visualizer_config import (

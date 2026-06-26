@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from audioviz.sources import AudioRippleSource, CameraFrameSource, SyntheticRippleSource
-from audioviz.visualization.prediction_error_transform import PredictionErrorTransform
+from audioviz.transforms.prediction_error import PredictionErrorTransform
 from audioviz.visualization.ripple_visualizer_config import (
     RippleSourceOrchestratorConfig,
 )

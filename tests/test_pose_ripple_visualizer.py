@@ -3,7 +3,7 @@ import numpy as np
 from audioviz.sources import CameraFrameSource
 from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
 from audioviz.utils.signal_processing import map_audio_freq_to_visual_freq
-from audioviz.visualization.prediction_error_transform import (
+from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
 from audioviz.visualization.ripple_visualizer_config import (

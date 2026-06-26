@@ -201,7 +201,10 @@ class PredictionErrorTransform:
             raise ValueError("prediction_error_activation_scale must be positive")
         if self.config.learning_rate < 0.0:
             raise ValueError("prediction_error_learning_rate must be non-negative")
-        if self.config.learning_weight_decay < 0.0 or self.config.learning_weight_decay > 1.0:
+        if (
+            self.config.learning_weight_decay < 0.0
+            or self.config.learning_weight_decay > 1.0
+        ):
             raise ValueError(
                 "prediction_error_learning_weight_decay must be between 0 and 1"
             )

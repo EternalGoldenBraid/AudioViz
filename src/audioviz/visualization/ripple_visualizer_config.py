@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from audioviz.visualization.prediction_error_transform import (
+from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
 
