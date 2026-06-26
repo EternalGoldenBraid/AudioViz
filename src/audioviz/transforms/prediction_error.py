@@ -34,7 +34,6 @@ class PredictionErrorTransform:
         self.config = config
         self.resolution = resolution
         self.edge_weights: np.ndarray | None = None
-        self._previous_observations: dict[str, np.ndarray] = {}
         self._validate_config()
 
     def update_config(self, **changes) -> None:
@@ -60,20 +59,15 @@ class PredictionErrorTransform:
         if not self.applies_to(source_key):
             return observation
 
-        observed = self._coerce_field(np.asarray(observation, dtype=np.float64))
-        prediction, predictor_field = self.predict(
-            source_key=source_key,
-            observation=observed,
-            ripple_state=ripple_state,
-        )
+        prediction = self.predict(ripple_state)
         observed = np.nan_to_num(
-            observed.astype(np.float64, copy=False),
+            np.asarray(observation, dtype=np.float64),
             nan=0.0,
             posinf=self.config.prediction_clip,
             neginf=-self.config.prediction_clip,
         )
         error = observed - prediction.astype(np.float64, copy=False)
-        self._update_edge_weights(error, predictor_field)
+        self._update_edge_weights(error, ripple_state)
         transformed = self._error_to_output(error)
         transformed = self._activate_output(
             transformed,
@@ -91,23 +85,12 @@ class PredictionErrorTransform:
             transformed = np.clip(transformed, -max_output, max_output)
         else:
             transformed = np.clip(transformed, 0.0, max_output)
-        self._previous_observations[source_key] = observed.astype(np.float32, copy=True)
         return transformed.astype(np.float32, copy=False)
 
-    def predict(
-        self,
-        *,
-        source_key: str,
-        observation: np.ndarray,
-        ripple_state: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        field = self._predictor_field(
-            source_key=source_key,
-            observation=observation,
-            ripple_state=ripple_state,
-        )
+    def predict(self, ripple_state: np.ndarray) -> np.ndarray:
+        field = self._coerce_ripple_state(ripple_state)
         if not self.config.learning_enabled:
-            return field, field
+            return field
         self._ensure_edge_weights()
         assert self.edge_weights is not None
         neighbors = self.neighbor_fields(field)
@@ -116,7 +99,7 @@ class PredictionErrorTransform:
             axis=0,
         )
         clip = np.float32(self.config.prediction_clip)
-        return np.clip(prediction, -clip, clip).astype(np.float32, copy=False), field
+        return np.clip(prediction, -clip, clip).astype(np.float32, copy=False)
 
     @staticmethod
     def neighbor_fields(field: np.ndarray) -> np.ndarray:
@@ -165,12 +148,12 @@ class PredictionErrorTransform:
             activated = np.maximum(activated, 0.0)
         return activated
 
-    def _update_edge_weights(self, error: np.ndarray, predictor_field: np.ndarray) -> None:
+    def _update_edge_weights(self, error: np.ndarray, ripple_state: np.ndarray) -> None:
         if not self.config.learning_enabled or self.config.learning_rate == 0.0:
             return
         self._ensure_edge_weights()
         assert self.edge_weights is not None
-        field = self._coerce_field(predictor_field)
+        field = self._coerce_ripple_state(ripple_state)
         neighbors = self.neighbor_fields(field)
         denom = (
             np.float64(self.config.sigma)
@@ -195,32 +178,13 @@ class PredictionErrorTransform:
         )
         self.edge_weights = weights.astype(np.float32, copy=False)
 
-    def _coerce_field(self, values: np.ndarray) -> np.ndarray:
-        field = np.asarray(values, dtype=np.float32)
+    def _coerce_ripple_state(self, ripple_state: np.ndarray) -> np.ndarray:
+        field = np.asarray(ripple_state, dtype=np.float32)
         if field.shape != self.resolution:
-            raise ValueError("prediction field must match engine resolution")
+            raise ValueError("ripple-state prediction must match engine resolution")
         clip = np.float32(self.config.prediction_clip)
         field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
         return np.clip(field, -clip, clip).astype(np.float32, copy=False)
-
-    def _predictor_field(
-        self,
-        *,
-        source_key: str,
-        observation: np.ndarray,
-        ripple_state: np.ndarray,
-    ) -> np.ndarray:
-        if self.config.predictor_source == "ripple_state":
-            return self._coerce_field(ripple_state)
-        if self.config.predictor_source == "previous_observation":
-            previous = self._previous_observations.get(source_key)
-            if previous is None or previous.shape != self.resolution:
-                return self._coerce_field(observation)
-            return self._coerce_field(previous)
-        raise ValueError(
-            "prediction_error_predictor_source must be one of "
-            "['previous_observation', 'ripple_state']"
-        )
 
     def _ensure_edge_weights(self) -> None:
         if self.edge_weights is None or self.edge_weights.shape != (4, *self.resolution):
@@ -248,12 +212,8 @@ class PredictionErrorTransform:
             raise ValueError("prediction_error_learning_weight_clip must be positive")
         if self.config.learning_gradient_clip <= 0.0:
             raise ValueError("prediction_error_learning_gradient_clip must be positive")
-        valid_predictor_sources = {"ripple_state", "previous_observation"}
-        if self.config.predictor_source not in valid_predictor_sources:
-            raise ValueError(
-                "prediction_error_predictor_source must be one of "
-                f"{sorted(valid_predictor_sources)}"
-            )
+        if self.config.predictor_source != "ripple_state":
+            raise ValueError("prediction_error_predictor_source must be 'ripple_state'")
         valid_output_modes = {"raw_error", "abs_error", "squared_error", "bits"}
         if self.config.output_mode not in valid_output_modes:
             raise ValueError(

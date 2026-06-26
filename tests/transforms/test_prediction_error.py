@@ -167,33 +167,3 @@ def test_prediction_error_transform_learning_toggle_takes_effect_on_next_apply()
     edge_weights = transform.edge_weights
     assert edge_weights is not None
     assert np.any(edge_weights != 0.0)
-
-
-def test_prediction_error_transform_supports_previous_observation_predictor():
-    transform = PredictionErrorTransform(
-        config=PredictionErrorTransformConfig(
-            enabled=True,
-            predictor_source="previous_observation",
-            output_mode="abs_error",
-            activation_function="linear_clipped",
-            max_output=10.0,
-        ),
-        resolution=(2, 2),
-    )
-    ripple_state = np.full((2, 2), 99.0, dtype=np.float32)
-    first_observation = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
-    second_observation = first_observation + 1.0
-
-    first = transform.apply(
-        source_key="camera_frame",
-        observation=first_observation,
-        ripple_state=ripple_state,
-    )
-    second = transform.apply(
-        source_key="camera_frame",
-        observation=second_observation,
-        ripple_state=ripple_state,
-    )
-
-    np.testing.assert_allclose(first, np.zeros((2, 2), dtype=np.float32))
-    np.testing.assert_allclose(second, np.ones((2, 2), dtype=np.float32))
