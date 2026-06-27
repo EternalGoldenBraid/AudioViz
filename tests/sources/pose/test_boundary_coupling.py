@@ -1,10 +1,14 @@
 import numpy as np
 
 from audioviz.engine import RippleEngine
-from audioviz.sources.pose import adjacency_from_edges
+from audioviz.sources.pose import PoseMediumController, adjacency_from_edges
 
 
-def _build_boundary_engine(*, transmission: float = 0.0, dissipation: float = 0.0) -> RippleEngine:
+def _build_boundary_engine(
+    *,
+    transmission: float = 0.0,
+    dissipation: float = 0.0,
+) -> tuple[RippleEngine, PoseMediumController]:
     engine = RippleEngine(
         resolution=(5, 5),
         plane_size_m=(1.0, 1.0),
@@ -15,7 +19,8 @@ def _build_boundary_engine(*, transmission: float = 0.0, dissipation: float = 0.
         body_boundary_transmission=transmission,
         body_boundary_dissipation=dissipation,
     )
-    engine.update_pose_medium(
+    pose_medium = PoseMediumController(engine=engine)
+    pose_medium.update(
         positions=np.array([[4.0, 2.0]], dtype=np.float32),
         valid=np.array([False]),
         adjacency=adjacency_from_edges(1, []),
@@ -24,26 +29,34 @@ def _build_boundary_engine(*, transmission: float = 0.0, dissipation: float = 0.
     body_mask[:, 2:] = True
     engine.set_body_boundary_mask(body_mask)
     engine.Z[2, 1] = 1.0
-    return engine
+    return engine, pose_medium
 
 
 def test_pose_coupled_medium_boundary_transmission_allows_crossing_signal():
-    hard_cut = _build_boundary_engine()
-    transmissive = _build_boundary_engine(transmission=0.5)
+    hard_cut_engine, hard_cut = _build_boundary_engine()
+    transmissive_engine, transmissive = _build_boundary_engine(transmission=0.5)
 
-    hard_cut.step_pose_medium()
-    transmissive.step_pose_medium()
+    hard_cut.step()
+    transmissive.step()
 
-    assert hard_cut.get_field_numpy()[2, 2] == 0.0
-    assert transmissive.get_field_numpy()[2, 2] > 0.0
+    assert hard_cut_engine.get_field_numpy()[2, 2] == 0.0
+    assert transmissive_engine.get_field_numpy()[2, 2] > 0.0
 
 
 def test_pose_coupled_medium_boundary_dissipation_reduces_same_transmission_energy():
-    low_loss = _build_boundary_engine(transmission=0.5, dissipation=0.0)
-    high_loss = _build_boundary_engine(transmission=0.5, dissipation=1.0)
+    low_loss_engine, low_loss = _build_boundary_engine(
+        transmission=0.5,
+        dissipation=0.0,
+    )
+    high_loss_engine, high_loss = _build_boundary_engine(
+        transmission=0.5,
+        dissipation=1.0,
+    )
 
     for _ in range(3):
-        low_loss.step_pose_medium()
-        high_loss.step_pose_medium()
+        low_loss.step()
+        high_loss.step()
 
-    assert np.sum(np.abs(high_loss.get_field_numpy())) < np.sum(np.abs(low_loss.get_field_numpy()))
+    assert np.sum(np.abs(high_loss_engine.get_field_numpy())) < np.sum(
+        np.abs(low_loss_engine.get_field_numpy())
+    )

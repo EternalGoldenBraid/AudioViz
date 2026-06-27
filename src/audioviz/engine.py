@@ -29,7 +29,6 @@ class RippleEngine:
         use_gpu: bool = False,
         use_shader: bool = False,
         boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
-        pose_graph_stiffness: float = 0.25,
         body_boundary_transmission: float = 0.0,
         body_boundary_dissipation: float = 1.0,
         use_external_opengl_context: bool = False,
@@ -47,7 +46,6 @@ class RippleEngine:
         self.use_gpu = use_gpu
         self.use_shader = use_shader
         self.boundary_condition = coerce_boundary_condition(boundary_condition)
-        self.pose_graph_stiffness = pose_graph_stiffness
         self.body_boundary_transmission = self._validate_unit_interval(
             body_boundary_transmission,
             name="body_boundary_transmission",
@@ -90,14 +88,8 @@ class RippleEngine:
 
         self.Z = self.backend.zeros(self.resolution, dtype=self.backend.float32)
         self.Z_old = self.backend.zeros(self.resolution, dtype=self.backend.float32)
-        self.pose_medium_enabled = False
-        self.pose_values = None
-        self.pose_values_old = None
-        self.pose_adjacency = None
-        self.pose_degree = None
-        self.pose_positions = None
-        self.pose_valid = None
         self.body_boundary_mask = None
+
     def _stable_dt(self) -> float:
         return (self.grid_spacing / self.speed) * 1 / np.sqrt(2)
 
@@ -179,10 +171,6 @@ class RippleEngine:
         self.propagator.reset()
         self.Z[:] = 0
         self.Z_old[:] = 0
-        if self.pose_values is not None:
-            self.pose_values[:] = 0
-        if self.pose_values_old is not None:
-            self.pose_values_old[:] = 0
         self.time = 0.0
 
     def set_body_boundary_mask(self, body_boundary_mask: np.ndarray | None) -> None:
@@ -273,114 +261,6 @@ class RippleEngine:
                 "OpenGL field textures are only available with use_shader=True."
             )
         return self.propagator.get_texture_shape()
-
-    def configure_pose_medium(self, adjacency: np.ndarray) -> None:
-        if self.use_gpu or self.use_shader:
-            raise NotImplementedError(
-                "Pose-medium coupling is currently implemented for the CPU backend only."
-            )
-
-        adjacency_array = np.asarray(adjacency, dtype=np.float32)
-        if adjacency_array.ndim != 2 or adjacency_array.shape[0] != adjacency_array.shape[1]:
-            raise ValueError("pose adjacency must be a square matrix")
-
-        num_nodes = adjacency_array.shape[0]
-        if (
-            self.pose_adjacency is not None
-            and self.pose_adjacency.shape == adjacency_array.shape
-            and np.array_equal(self.pose_adjacency, adjacency_array)
-        ):
-            return
-
-        self.pose_medium_enabled = True
-        self.pose_adjacency = adjacency_array
-        self.pose_degree = adjacency_array.sum(axis=1).astype(np.float32)
-        self.pose_values = np.zeros(num_nodes, dtype=np.float32)
-        self.pose_values_old = np.zeros(num_nodes, dtype=np.float32)
-        self.pose_positions = np.zeros((num_nodes, 2), dtype=np.float32)
-        self.pose_valid = np.zeros(num_nodes, dtype=bool)
-
-    def update_pose_medium(
-        self,
-        *,
-        positions: np.ndarray,
-        valid: np.ndarray,
-        adjacency: np.ndarray | None = None,
-    ) -> None:
-        if adjacency is not None or self.pose_adjacency is None:
-            self.configure_pose_medium(
-                adjacency if adjacency is not None else np.zeros((len(positions), len(positions)), dtype=np.float32)
-            )
-
-        assert self.pose_positions is not None
-        assert self.pose_valid is not None
-        positions_array = np.asarray(positions, dtype=np.float32)
-        valid_array = np.asarray(valid, dtype=bool)
-        num_nodes = len(valid_array)
-        if positions_array.shape != (num_nodes, 2):
-            raise ValueError("positions must have shape (num_nodes, 2)")
-        if self.pose_positions.shape != (num_nodes, 2):
-            raise ValueError("pose medium size does not match current pose graph")
-
-        self.pose_positions[:] = positions_array
-        self.pose_valid[:] = valid_array
-
-    def step_pose_medium(
-        self,
-        grid_excitation: np.ndarray | None = None,
-    ) -> np.ndarray:
-        if not self.pose_medium_enabled:
-            raise RuntimeError("Pose medium has not been configured.")
-        assert self.pose_values is not None
-        assert self.pose_values_old is not None
-        assert self.pose_adjacency is not None
-        assert self.pose_degree is not None
-        assert self.pose_positions is not None
-        assert self.pose_valid is not None
-
-        self.time += self.dt
-        grid = self.Z
-        pose = self.pose_values
-        driven_grid = grid.copy()
-        driven_pose = pose.copy()
-        if grid_excitation is not None:
-            driven_grid += self._coerce_grid_excitation(grid_excitation) * np.float32(
-                self.amplitude
-            )
-
-        grid_laplacian = self._grid_laplacian_with_internal_boundaries(driven_grid)
-        pose_laplacian = self.pose_adjacency @ driven_pose - self.pose_degree * driven_pose
-        pose_laplacian *= self.pose_graph_stiffness
-        new_grid = 2 * driven_grid - self.Z_old + self.propagator.c2_dt2 * grid_laplacian
-        new_pose = (
-            2 * driven_pose
-            - self.pose_values_old
-            + self.propagator.c2_dt2 * pose_laplacian
-        )
-        new_grid *= self.damping
-        new_pose *= self.damping
-        if self.body_boundary_mask is not None:
-            new_grid[self.body_boundary_mask] *= np.float32(
-                1.0 - self.body_boundary_dissipation
-            )
-
-        self.Z_old = grid.copy()
-        self.Z = new_grid.astype(np.float32, copy=False)
-        self.pose_values_old = pose.copy()
-        self.pose_values = new_pose.astype(np.float32, copy=False)
-        return self.Z
-
-    def get_pose_medium_state(self) -> np.ndarray:
-        if self.pose_values is None:
-            raise RuntimeError("Pose medium has not been configured.")
-        return self.pose_values.copy()
-
-    def get_pose_medium_positions(self, *, valid_only: bool = False) -> np.ndarray:
-        if self.pose_positions is None:
-            raise RuntimeError("Pose medium has not been configured.")
-        if not valid_only or self.pose_valid is None:
-            return self.pose_positions.copy()
-        return self.pose_positions[self.pose_valid].copy()
 
     def _add_grid_excitation(self, excitation_grid: np.ndarray) -> None:
         self.propagator.add_excitation(

@@ -10,6 +10,7 @@ from audioviz.sources.pose import (
     PoseFrameSource,
     PoseGraphExtractor,
     PoseGraphState,
+    PoseMediumController,
     RipplePoseConfig,
     build_pose_graph_segmentation_mask,
     centered_field_rect,
@@ -200,10 +201,13 @@ class RippleWaveVisualizer(VisualizerBase):
             use_gpu=self.use_gpu,
             use_shader=self.use_shader,
             boundary_condition=self.boundary_condition,
-            pose_graph_stiffness=self.pose_graph_stiffness,
             body_boundary_transmission=self.body_boundary_transmission,
             body_boundary_dissipation=self.body_boundary_dissipation,
             use_external_opengl_context=self.use_shader,
+        )
+        self.pose_medium = PoseMediumController(
+            engine=self.engine,
+            graph_stiffness=self.pose_graph_stiffness,
         )
         self.dt = self.engine.dt
         self.source_orchestrator = RippleSourceOrchestrator(
@@ -368,12 +372,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.engine.set_body_boundary_mask(None)
 
     def _clear_pose_medium_state(self) -> None:
-        if self.engine.pose_values is not None:
-            self.engine.pose_values[:] = 0
-        if self.engine.pose_values_old is not None:
-            self.engine.pose_values_old[:] = 0
-        if self.engine.pose_valid is not None:
-            self.engine.pose_valid[:] = False
+        self.pose_medium.reset()
         self._latest_pose_coords = np.zeros((0, 2), dtype=np.float32)
         self._latest_pose_adjacency = np.zeros((0, 0), dtype=np.float32)
         self._latest_pose_segmentation_mask = None
@@ -453,7 +452,7 @@ class RippleWaveVisualizer(VisualizerBase):
         valid = pose_coords_in_image_support(positions)
         mapped_positions = self._map_pose_positions_to_render_positions(positions)
 
-        self.engine.update_pose_medium(
+        self.pose_medium.update(
             positions=mapped_positions,
             valid=valid,
             adjacency=pose.adjacency,
@@ -477,7 +476,7 @@ class RippleWaveVisualizer(VisualizerBase):
             self._render_scene()
             return
 
-        self.engine.update_pose_medium(
+        self.pose_medium.update(
             positions=np.zeros((self.pose_state.num_nodes, 2), dtype=np.float32),
             valid=np.zeros(self.pose_state.num_nodes, dtype=bool),
             adjacency=self.pose_state.adjacency,
@@ -491,9 +490,9 @@ class RippleWaveVisualizer(VisualizerBase):
         if not self.renderer.prepare_frame():
             return
 
-        self.engine.step_pose_medium(grid_excitation=source_excitation)
+        self.pose_medium.step(grid_excitation=source_excitation)
         if self.pose_state is not None:
-            self.pose_state.set_ripple_states(self.engine.get_pose_medium_state())
+            self.pose_state.set_ripple_states(self.pose_medium.get_state())
         self.time = self.engine.time
         self._render_scene()
 
