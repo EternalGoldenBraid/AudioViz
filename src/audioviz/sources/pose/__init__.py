@@ -18,14 +18,12 @@ from audioviz.sources.pose.grid_mapping import (
     pose_coords_in_image_support,
     pose_graph_state_to_ripple_sources,
 )
-from audioviz.sources.pose.medium import PoseMediumController
 from audioviz.sources.pose.mediapipe_pose_source import MediaPipePoseExtractor
 from audioviz.sources.pose.pose_graph_state import PoseGraphState
 
 __all__ = [
     "MEDIAPIPE_POSE_CONNECTIONS",
     "MediaPipePoseExtractor",
-    "PoseMediumController",
     "PoseGraphExtractor",
     "PoseGraphFrame",
     "PoseFrameSource",

@@ -187,7 +187,13 @@ class RippleEngine:
         excitation_grid: np.ndarray,
     ):
         self.time += self.dt
-        self._add_grid_excitation(excitation_grid)
+        excitation = self._coerce_grid_excitation(excitation_grid) * np.float32(
+            self.amplitude
+        )
+        if self._uses_custom_grid_step():
+            self._step_cpu_grid(excitation=excitation)
+            return self.Z
+        self.propagator.add_excitation(excitation)
         self.propagator.step()
         if self.use_shader:
             return self.Z
@@ -233,6 +239,9 @@ class RippleEngine:
 
     def step_without_excitation(self):
         self.time += self.dt
+        if self._uses_custom_grid_step():
+            self._step_cpu_grid(excitation=None)
+            return self.Z
         self.propagator.step()
         if self.use_shader:
             return self.Z
@@ -262,10 +271,33 @@ class RippleEngine:
             )
         return self.propagator.get_texture_shape()
 
-    def _add_grid_excitation(self, excitation_grid: np.ndarray) -> None:
-        self.propagator.add_excitation(
-            self._coerce_grid_excitation(excitation_grid) * self.amplitude
+    def _uses_custom_grid_step(self) -> bool:
+        return (
+            self.body_boundary_mask is not None
+            and not self.use_gpu
+            and not self.use_shader
         )
+
+    def _step_cpu_grid(self, *, excitation: np.ndarray | None) -> None:
+        grid = np.asarray(self.Z, dtype=np.float32)
+        driven_grid = grid.copy()
+        if excitation is not None:
+            driven_grid += np.asarray(excitation, dtype=np.float32)
+        grid_laplacian = self._grid_laplacian_with_internal_boundaries(driven_grid)
+        new_grid = (
+            2 * driven_grid - self.Z_old + self.propagator.c2_dt2 * grid_laplacian
+        )
+        new_grid *= self.damping
+        if self.body_boundary_mask is not None:
+            new_grid[self.body_boundary_mask] *= np.float32(
+                1.0 - self.body_boundary_dissipation
+            )
+        old_grid = grid.copy()
+        self.Z[:] = new_grid.astype(np.float32, copy=False)
+        self.Z_old[:] = old_grid
+        self.propagator.Z[:] = self.Z
+        if hasattr(self.propagator, "Z_old"):
+            self.propagator.Z_old[:] = self.Z_old
 
     def _coerce_grid_excitation(self, excitation_grid: np.ndarray):
         xp = self.backend

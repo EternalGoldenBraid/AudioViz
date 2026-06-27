@@ -134,11 +134,11 @@ def test_ripple_visualizer_pose_medium_overlay_smoke(qapp):
     visualizer.renderer = _FakeRenderer()
 
     visualizer.update_visualization()
-    first_pose_positions = visualizer.pose_medium.get_positions(valid_only=True)
+    first_pose_positions = visualizer._latest_pose_render_positions[visualizer._latest_pose_valid]
     first_field = visualizer.engine.get_field_numpy().copy()
 
     visualizer.update_visualization()
-    second_pose_positions = visualizer.pose_medium.get_positions(valid_only=True)
+    second_pose_positions = visualizer._latest_pose_render_positions[visualizer._latest_pose_valid]
     second_field = visualizer.engine.get_field_numpy().copy()
 
     np.testing.assert_allclose(first_pose_positions, [[14.25, 2.25], [4.75, 6.75]])

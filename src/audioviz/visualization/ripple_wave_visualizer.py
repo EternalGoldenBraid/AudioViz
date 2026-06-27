@@ -10,7 +10,6 @@ from audioviz.sources.pose import (
     PoseFrameSource,
     PoseGraphExtractor,
     PoseGraphState,
-    PoseMediumController,
     RipplePoseConfig,
     build_pose_graph_segmentation_mask,
     centered_field_rect,
@@ -190,6 +189,8 @@ class RippleWaveVisualizer(VisualizerBase):
         self._latest_pose_coords = np.zeros((0, 2), dtype=np.float32)
         self._latest_pose_adjacency = np.zeros((0, 0), dtype=np.float32)
         self._latest_pose_segmentation_mask: np.ndarray | None = None
+        self._latest_pose_render_positions = np.zeros((0, 2), dtype=np.float32)
+        self._latest_pose_valid = np.zeros((0,), dtype=bool)
         self.engine = RippleEngine(
             resolution=self.resolution,
             plane_size_m=self.plane_size_m,
@@ -204,10 +205,6 @@ class RippleWaveVisualizer(VisualizerBase):
             body_boundary_transmission=self.body_boundary_transmission,
             body_boundary_dissipation=self.body_boundary_dissipation,
             use_external_opengl_context=self.use_shader,
-        )
-        self.pose_medium = PoseMediumController(
-            engine=self.engine,
-            graph_stiffness=self.pose_graph_stiffness,
         )
         self.dt = self.engine.dt
         self.source_orchestrator = RippleSourceOrchestrator(
@@ -368,14 +365,19 @@ class RippleWaveVisualizer(VisualizerBase):
         else:
             self.pose_source.set_enabled(False)
         self.pose_state = None
-        self._clear_pose_medium_state()
+        self._clear_pose_runtime_state()
         self.engine.set_body_boundary_mask(None)
 
-    def _clear_pose_medium_state(self) -> None:
-        self.pose_medium.reset()
+    def _clear_pose_runtime_state(self) -> None:
         self._latest_pose_coords = np.zeros((0, 2), dtype=np.float32)
         self._latest_pose_adjacency = np.zeros((0, 0), dtype=np.float32)
         self._latest_pose_segmentation_mask = None
+        self._latest_pose_render_positions = np.zeros((0, 2), dtype=np.float32)
+        self._latest_pose_valid = np.zeros((0,), dtype=bool)
+        if self.pose_state is not None:
+            self.pose_state.set_ripple_states(
+                np.zeros(self.pose_state.num_nodes, dtype=np.float32)
+            )
 
     def _map_pose_segmentation_to_render_mask(
         self,
@@ -431,9 +433,15 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.pose_debug_view:
             self._update_pose_debug_view(frame, pose, segmentation_mask=segmentation_mask)
         if not pose.coords.size:
-            self._render_pose_field_without_detection(
-                source_excitation,
-            )
+            self._latest_pose_render_positions = np.zeros((0, 2), dtype=np.float32)
+            self._latest_pose_valid = np.zeros((0,), dtype=bool)
+            self._step_engine_for_pose_mode(source_excitation)
+            if self.pose_state is not None:
+                self.pose_state.set_ripple_states(
+                    np.zeros(self.pose_state.num_nodes, dtype=np.float32)
+                )
+                self.time = self.engine.time
+                self._render_scene()
             return
 
         now = time.monotonic()
@@ -451,50 +459,53 @@ class RippleWaveVisualizer(VisualizerBase):
         positions = self.pose_state.get_positions()
         valid = pose_coords_in_image_support(positions)
         mapped_positions = self._map_pose_positions_to_render_positions(positions)
+        self._latest_pose_render_positions = mapped_positions.copy()
+        self._latest_pose_valid = valid.copy()
+        self._step_engine_for_pose_mode(source_excitation)
+        self._update_pose_ripple_states(mapped_positions, valid)
+        self.time = self.engine.time
+        self._render_scene()
 
-        self.pose_medium.update(
-            positions=mapped_positions,
-            valid=valid,
-            adjacency=pose.adjacency,
-        )
-        self._render_pose_medium(source_excitation)
-
-    def _render_pose_field_without_detection(
-        self,
-        source_excitation: np.ndarray | None,
-    ) -> None:
-        if self.pose_state is None:
-            if source_excitation is not None:
-                if not self.renderer.prepare_frame():
-                    return
-                self.engine.step_grid_excitation(source_excitation)
-                self.time = self.engine.time
-                self._render_scene()
-                return
-            if not self.renderer.prepare_frame():
-                return
-            self._render_scene()
-            return
-
-        self.pose_medium.update(
-            positions=np.zeros((self.pose_state.num_nodes, 2), dtype=np.float32),
-            valid=np.zeros(self.pose_state.num_nodes, dtype=bool),
-            adjacency=self.pose_state.adjacency,
-        )
-        self._render_pose_medium(source_excitation)
-
-    def _render_pose_medium(
+    def _step_engine_for_pose_mode(
         self,
         source_excitation: np.ndarray | None,
     ) -> None:
         if not self.renderer.prepare_frame():
             return
+        if source_excitation is None:
+            self.engine.step_without_excitation()
+            return
+        self.engine.step_grid_excitation(source_excitation)
 
-        self.pose_medium.step(grid_excitation=source_excitation)
-        if self.pose_state is not None:
-            self.pose_state.set_ripple_states(self.pose_medium.get_state())
-        self.time = self.engine.time
-        self._render_scene()
+    def _update_pose_ripple_states(
+        self,
+        mapped_positions: np.ndarray,
+        valid: np.ndarray,
+    ) -> None:
+        if self.pose_state is None:
+            return
+        ripple_states = np.zeros(self.pose_state.num_nodes, dtype=np.float32)
+        if mapped_positions.size and np.any(valid):
+            field = self.engine.get_field_numpy()
+            cols = field.shape[1]
+            rows = field.shape[0]
+            valid_indices = np.flatnonzero(valid)
+            sampled_positions = mapped_positions[valid]
+            sample_cols = np.clip(
+                np.rint(sampled_positions[:, 0]).astype(np.int32),
+                0,
+                cols - 1,
+            )
+            sample_rows = np.clip(
+                np.rint(sampled_positions[:, 1]).astype(np.int32),
+                0,
+                rows - 1,
+            )
+            ripple_states[valid_indices] = field[sample_rows, sample_cols].astype(
+                np.float32,
+                copy=False,
+            )
+        self.pose_state.set_ripple_states(ripple_states)
 
     def _render_scene(self) -> None:
         self.renderer.render(self.engine)
