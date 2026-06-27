@@ -448,8 +448,8 @@ class RippleEngine:
     ) -> tuple[np.ndarray, np.ndarray]:
         stride = max(int(stride), 1)
         threshold = max(float(threshold), 0.0)
-        horizontal = self.prediction_horizontal_edge_weights - 1.0
-        vertical = self.prediction_vertical_edge_weights - 1.0
+        horizontal = self.prediction_horizontal_edge_weights
+        vertical = self.prediction_vertical_edge_weights
         rows, cols = self.resolution
         row_ranges = [
             (row_start, min(row_start + stride, rows))

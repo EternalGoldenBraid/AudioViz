@@ -210,6 +210,6 @@ def test_ripple_engine_aggregates_patch_edge_strengths_from_symmetric_operator()
     )
     np.testing.assert_allclose(
         strengths,
-        np.array([0.05, 0.025, -0.2, -0.2], dtype=np.float32),
+        np.array([1.05, 1.025, 0.8, 0.8], dtype=np.float32),
         atol=1e-6,
     )

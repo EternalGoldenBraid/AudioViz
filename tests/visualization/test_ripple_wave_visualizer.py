@@ -329,7 +329,7 @@ def test_ripple_visualizer_renders_learning_overlay_edges(qapp):
     visualizer.learning_overlay_stride = 4
     visualizer.learning_overlay_threshold = 0.0
     visualizer.learning_overlay_scale = 2.0
-    visualizer.engine.prediction_horizontal_edge_weights = np.full((8, 7), 1.0001, dtype=np.float32)
+    visualizer.engine.prediction_horizontal_edge_weights = np.ones((8, 7), dtype=np.float32)
     visualizer.engine.prediction_vertical_edge_weights = np.ones((7, 8), dtype=np.float32)
 
     visualizer._render_scene()
@@ -359,7 +359,7 @@ def test_ripple_visualizer_updates_learning_overlay_in_normal_render_loop(qapp):
     visualizer.learning_overlay_stride = 4
     visualizer.learning_overlay_threshold = 0.0
     visualizer.learning_overlay_scale = 2.0
-    visualizer.engine.prediction_horizontal_edge_weights = np.full((8, 7), 1.0001, dtype=np.float32)
+    visualizer.engine.prediction_horizontal_edge_weights = np.ones((8, 7), dtype=np.float32)
     visualizer.engine.prediction_vertical_edge_weights = np.ones((7, 8), dtype=np.float32)
 
     visualizer.update_visualization()
@@ -391,7 +391,7 @@ def test_ripple_visualizer_updates_learning_overlay_with_standing_body_config_di
     visualizer.learning_overlay_stride = 4
     visualizer.learning_overlay_threshold = 0.0
     visualizer.learning_overlay_scale = 2.0
-    visualizer.engine.prediction_horizontal_edge_weights = np.full((8, 7), 1.0001, dtype=np.float32)
+    visualizer.engine.prediction_horizontal_edge_weights = np.ones((8, 7), dtype=np.float32)
     visualizer.engine.prediction_vertical_edge_weights = np.ones((7, 8), dtype=np.float32)
 
     visualizer.update_visualization()

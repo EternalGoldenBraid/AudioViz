@@ -236,14 +236,19 @@ def _prediction_overlay_rgba(
     max_strength: float,
     gain: float,
 ) -> np.ndarray:
-    normalized = 0.0 if max_strength <= 0.0 else np.clip(strength / max_strength, -1.0, 1.0)
+    baseline_strength = 1.0
+    delta = float(strength - baseline_strength)
+    normalized = 0.0 if max_strength <= 0.0 else np.clip(delta / max_strength, -1.0, 1.0)
     intensity = np.clip(abs(normalized) * gain, 0.0, 1.0)
-    if normalized >= 0.0:
-        base = np.array([120, 255, 120], dtype=np.float32)
+    neutral = np.array([235, 235, 245], dtype=np.float32)
+    if normalized > 0.0:
+        accent = np.array([120, 255, 120], dtype=np.float32)
+    elif normalized < 0.0:
+        accent = np.array([64, 220, 255], dtype=np.float32)
     else:
-        base = np.array([64, 220, 255], dtype=np.float32)
-    alpha = 64.0 + 191.0 * intensity
-    rgb = np.rint(base * (0.35 + 0.65 * intensity)).astype(np.uint8)
+        accent = neutral
+    alpha = 96.0 + 159.0 * intensity
+    rgb = np.rint((1.0 - intensity) * neutral + intensity * accent).astype(np.uint8)
     return np.array([rgb[0], rgb[1], rgb[2], np.uint8(np.rint(alpha))], dtype=np.uint8)
 
 
