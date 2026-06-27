@@ -559,19 +559,21 @@ class RippleEngine:
             row_end = min(row_start + stride, rows)
             for col_start in range(0, cols, stride):
                 col_end = min(col_start + stride, cols)
-                tile_magnitudes = magnitude_field[row_start:row_end, col_start:col_end]
-                if tile_magnitudes.size == 0:
+                vx_patch = vx_field[row_start:row_end, col_start:col_end]
+                vy_patch = vy_field[row_start:row_end, col_start:col_end]
+                if vx_patch.size == 0 or vy_patch.size == 0:
                     continue
-                flat_index = int(np.argmax(tile_magnitudes))
-                local_row, local_col = np.unravel_index(flat_index, tile_magnitudes.shape)
-                row = row_start + local_row
-                col = col_start + local_col
-                vx = float(vx_field[row, col])
-                vy = float(vy_field[row, col])
-                magnitude = float(tile_magnitudes[local_row, local_col])
+                vx = float(np.mean(vx_patch, dtype=np.float64))
+                vy = float(np.mean(vy_patch, dtype=np.float64))
+                magnitude = float(np.hypot(vx, vy))
                 if magnitude <= threshold:
                     continue
-                positions.append((float(col) + 0.5, float(row) + 0.5))
+                positions.append(
+                    (
+                        0.5 * (col_start + col_end),
+                        0.5 * (row_start + row_end),
+                    )
+                )
                 vectors.append((vx, vy))
                 magnitudes.append(magnitude)
         if not positions:
