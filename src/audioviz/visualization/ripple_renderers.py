@@ -203,14 +203,22 @@ class NumpyImageRenderer:
         if not enabled or not hasattr(field_source, "get_prediction_coupling_vectors"):
             self.clear_prediction_coupling_overlay()
             return
-        positions, vectors, _magnitudes = field_source.get_prediction_coupling_vectors(
+        positions, vectors, magnitudes = field_source.get_prediction_coupling_vectors(
             stride=stride,
             threshold=threshold,
         )
         if positions.size == 0:
             self.clear_prediction_coupling_overlay()
             return
-        scaled_vectors = np.asarray(vectors, dtype=np.float32) * np.float32(scale)
+        magnitudes = np.asarray(magnitudes, dtype=np.float32)
+        max_magnitude = float(np.max(magnitudes, initial=0.0))
+        if max_magnitude <= np.finfo(np.float32).eps:
+            self.clear_prediction_coupling_overlay()
+            return
+        scaled_vectors = (
+            np.asarray(vectors, dtype=np.float32)
+            * (np.float32(scale) / np.float32(max_magnitude))
+        )
         tips = positions + scaled_vectors
         segments = np.empty((len(positions) * 3, 2), dtype=np.float32)
         segments[0::3] = positions

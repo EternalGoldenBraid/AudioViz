@@ -260,7 +260,7 @@ class PredictionLearningControls(SourceControlProvider):
 class PredictionOverlayControls(SourceControlProvider):
     enabled: bool = False
     stride: int = 8
-    threshold: float = 0.05
+    threshold: float = 0.0
     scale: float = 6.0
 
     def get_controls(self) -> Sequence[SourceControl]:

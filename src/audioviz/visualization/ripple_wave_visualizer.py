@@ -175,7 +175,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.auto_color_levels_enabled = True
         self.show_learning_overlay = False
         self.learning_overlay_stride = 8
-        self.learning_overlay_threshold = 0.05
+        self.learning_overlay_threshold = 0.0
         self.learning_overlay_scale = 6.0
         self.body_boundary_transmission = float(pose_config.body_boundary_transmission)
         self.body_boundary_dissipation = float(pose_config.body_boundary_dissipation)
