@@ -108,19 +108,9 @@ class NumpyImageRenderer:
         self.plot.setTitle(title)
         self.plot.invertY(True)
         self.plot.addItem(self.image_item)
-        self.prediction_overlay_lines = pg.PlotDataItem(
-            pen=pg.mkPen(0, 255, 255, 180, width=1.2),
-            connect="finite",
-        )
-        self.prediction_overlay_lines.setZValue(10)
-        self.plot.addItem(self.prediction_overlay_lines)
-        self.prediction_overlay_tips = pg.ScatterPlotItem(
-            size=4,
-            brush=pg.mkBrush(0, 255, 255, 200),
-            pen=pg.mkPen(None),
-        )
-        self.prediction_overlay_tips.setZValue(11)
-        self.plot.addItem(self.prediction_overlay_tips)
+        self.prediction_overlay_image = pg.ImageItem(axisOrder="row-major")
+        self.prediction_overlay_image.setZValue(10)
+        self.plot.addItem(self.prediction_overlay_image)
 
         self.widget = pg.GraphicsLayoutWidget()
         self.widget.addItem(self.plot, row=0, col=0)
@@ -200,42 +190,100 @@ class NumpyImageRenderer:
         threshold: float,
         scale: float,
     ) -> None:
-        if not enabled or not hasattr(field_source, "get_prediction_coupling_vectors"):
+        if not enabled or not hasattr(field_source, "get_prediction_coupling_overlay_edges"):
             self.clear_prediction_coupling_overlay()
             return
-        positions, vectors, magnitudes = field_source.get_prediction_coupling_vectors(
+        segments, strengths = field_source.get_prediction_coupling_overlay_edges(
             stride=stride,
             threshold=threshold,
         )
-        if positions.size == 0:
+        if segments.size == 0:
             self.clear_prediction_coupling_overlay()
             return
-        magnitudes = np.asarray(magnitudes, dtype=np.float32)
-        max_magnitude = float(np.max(magnitudes, initial=0.0))
-        if max_magnitude <= np.finfo(np.float32).eps:
+        field_shape = field_source.get_field_numpy().shape
+        overlay = np.zeros((field_shape[0], field_shape[1], 4), dtype=np.uint8)
+        max_strength = float(np.max(np.abs(strengths), initial=0.0))
+        if max_strength <= np.finfo(np.float32).eps:
             self.clear_prediction_coupling_overlay()
             return
-        scaled_vectors = (
-            np.asarray(vectors, dtype=np.float32)
-            * (np.float32(scale) / np.float32(max_magnitude))
-        )
-        tips = positions + scaled_vectors
-        segments = np.empty((len(positions) * 3, 2), dtype=np.float32)
-        segments[0::3] = positions
-        segments[1::3] = tips
-        segments[2::3] = np.nan
-        self.prediction_overlay_lines.setData(
-            x=segments[:, 0],
-            y=segments[:, 1],
-        )
-        self.prediction_overlay_tips.setData(
-            x=tips[:, 0],
-            y=tips[:, 1],
-        )
+        line_width = max(1, int(round(max(1.0, stride * 0.15))))
+        strength_gain = max(float(scale), 0.1)
+        for segment, strength in zip(segments, strengths, strict=True):
+            color = _prediction_overlay_rgba(
+                float(strength),
+                max_strength=max_strength,
+                gain=strength_gain,
+            )
+            _draw_overlay_segment(
+                overlay,
+                segment=segment,
+                color=color,
+                line_width=line_width,
+            )
+        self.prediction_overlay_image.setImage(overlay, autoLevels=False, levels=(0, 255))
 
     def clear_prediction_coupling_overlay(self) -> None:
-        self.prediction_overlay_lines.setData(x=np.array([]), y=np.array([]))
-        self.prediction_overlay_tips.setData(x=np.array([]), y=np.array([]))
+        self.prediction_overlay_image.setImage(
+            np.zeros((0, 0, 4), dtype=np.uint8),
+            autoLevels=False,
+            levels=(0, 255),
+        )
+
+
+def _prediction_overlay_rgba(
+    strength: float,
+    *,
+    max_strength: float,
+    gain: float,
+) -> np.ndarray:
+    normalized = 0.0 if max_strength <= 0.0 else np.clip(strength / max_strength, -1.0, 1.0)
+    intensity = np.clip(abs(normalized) * gain, 0.0, 1.0)
+    if normalized >= 0.0:
+        base = np.array([120, 255, 120], dtype=np.float32)
+    else:
+        base = np.array([64, 220, 255], dtype=np.float32)
+    alpha = 64.0 + 191.0 * intensity
+    rgb = np.rint(base * (0.35 + 0.65 * intensity)).astype(np.uint8)
+    return np.array([rgb[0], rgb[1], rgb[2], np.uint8(np.rint(alpha))], dtype=np.uint8)
+
+
+def _draw_overlay_segment(
+    overlay: np.ndarray,
+    *,
+    segment: np.ndarray,
+    color: np.ndarray,
+    line_width: int,
+) -> None:
+    start, end = np.asarray(segment, dtype=np.float32)
+    x0 = int(round(float(start[0])))
+    y0 = int(round(float(start[1])))
+    x1 = int(round(float(end[0])))
+    y1 = int(round(float(end[1])))
+    rows, cols = overlay.shape[:2]
+    half_width = max(line_width // 2, 0)
+    if y0 == y1:
+        y_start = max(y0 - half_width, 0)
+        y_stop = min(y0 + half_width + 1, rows)
+        x_start = max(min(x0, x1), 0)
+        x_stop = min(max(x0, x1) + 1, cols)
+        overlay[y_start:y_stop, x_start:x_stop] = color
+        return
+    if x0 == x1:
+        x_start = max(x0 - half_width, 0)
+        x_stop = min(x0 + half_width + 1, cols)
+        y_start = max(min(y0, y1), 0)
+        y_stop = min(max(y0, y1) + 1, rows)
+        overlay[y_start:y_stop, x_start:x_stop] = color
+        return
+    steps = int(max(abs(x1 - x0), abs(y1 - y0))) + 1
+    xs = np.rint(np.linspace(x0, x1, steps)).astype(np.int32)
+    ys = np.rint(np.linspace(y0, y1, steps)).astype(np.int32)
+    for x, y in zip(xs, ys, strict=True):
+        x_start = max(x - half_width, 0)
+        x_stop = min(x + half_width + 1, cols)
+        y_start = max(y - half_width, 0)
+        y_stop = min(y + half_width + 1, rows)
+        overlay[y_start:y_stop, x_start:x_stop] = color
 
 
 class OpenGLFieldRenderer:

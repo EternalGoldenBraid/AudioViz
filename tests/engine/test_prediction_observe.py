@@ -162,3 +162,54 @@ def test_ripple_engine_normalizes_prediction_conductances_to_stable_degree_budge
     assert np.all(horizontal >= 0.0)
     assert np.all(vertical >= 0.0)
     assert np.max(degree) <= 4.0 + 1e-6
+
+
+def test_ripple_engine_aggregates_patch_edge_strengths_from_symmetric_operator():
+    engine = RippleEngine(
+        resolution=(4, 4),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_gpu=False,
+    )
+    engine.prediction_vertical_edge_weights = np.array(
+        [
+            [1.0, 1.0, 1.0, 1.0],
+            [0.8, 0.8, 0.8, 0.8],
+            [1.0, 1.0, 1.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    engine.prediction_horizontal_edge_weights = np.array(
+        [
+            [1.0, 1.05, 1.0],
+            [1.0, 1.05, 1.0],
+            [1.0, 1.025, 1.0],
+            [1.0, 1.025, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+    segments, strengths = engine.get_prediction_coupling_overlay_edges(
+        stride=2,
+        threshold=0.0,
+    )
+
+    np.testing.assert_allclose(
+        segments,
+        np.array(
+            [
+                [[1.0, 1.0], [3.0, 1.0]],
+                [[1.0, 3.0], [3.0, 3.0]],
+                [[1.0, 1.0], [1.0, 3.0]],
+                [[3.0, 1.0], [3.0, 3.0]],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    np.testing.assert_allclose(
+        strengths,
+        np.array([0.05, 0.025, -0.2, -0.2], dtype=np.float32),
+        atol=1e-6,
+    )

@@ -310,7 +310,7 @@ def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render(qapp):
     np.testing.assert_allclose(third_levels, (-0.05, 0.05))
 
 
-def test_ripple_visualizer_renders_learning_overlay_vectors(qapp):
+def test_ripple_visualizer_renders_learning_overlay_edges(qapp):
     from audioviz.visualization.ripple_renderers import NumpyImageRenderer
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
@@ -334,11 +334,10 @@ def test_ripple_visualizer_renders_learning_overlay_vectors(qapp):
 
     visualizer._render_scene()
 
-    xs, ys = visualizer.renderer.prediction_overlay_lines.getData()
-    assert xs is not None
-    assert ys is not None
-    assert len(xs) > 0
-    assert len(ys) > 0
+    overlay = visualizer.renderer.prediction_overlay_image.image
+    assert overlay is not None
+    assert overlay.shape == (8, 8, 4)
+    assert np.count_nonzero(overlay[..., 3]) > 0
 
 
 def test_ripple_visualizer_updates_learning_overlay_in_normal_render_loop(qapp):
@@ -365,11 +364,9 @@ def test_ripple_visualizer_updates_learning_overlay_in_normal_render_loop(qapp):
 
     visualizer.update_visualization()
 
-    xs, ys = visualizer.renderer.prediction_overlay_lines.getData()
-    assert xs is not None
-    assert ys is not None
-    assert len(xs) > 0
-    assert len(ys) > 0
+    overlay = visualizer.renderer.prediction_overlay_image.image
+    assert overlay is not None
+    assert np.count_nonzero(overlay[..., 3]) > 0
 
 
 def test_ripple_visualizer_updates_learning_overlay_with_standing_body_config_disabled_pose(
@@ -401,8 +398,6 @@ def test_ripple_visualizer_updates_learning_overlay_with_standing_body_config_di
 
     assert visualizer.renderer.image_item.image is not None
     assert visualizer.renderer.image_item.image.ndim == 2
-    xs, ys = visualizer.renderer.prediction_overlay_lines.getData()
-    assert xs is not None
-    assert ys is not None
-    assert len(xs) > 0
-    assert len(ys) > 0
+    overlay = visualizer.renderer.prediction_overlay_image.image
+    assert overlay is not None
+    assert np.count_nonzero(overlay[..., 3]) > 0

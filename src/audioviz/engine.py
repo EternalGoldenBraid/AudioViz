@@ -440,61 +440,71 @@ class RippleEngine:
             raise ValueError("edge weight array shape must match propagator operator")
         return array
 
-    def get_prediction_coupling_vectors(
+    def get_prediction_coupling_overlay_edges(
         self,
         *,
         stride: int = 8,
         threshold: float = 0.0,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         stride = max(int(stride), 1)
         threshold = max(float(threshold), 0.0)
-        horizontal = self.prediction_horizontal_edge_weights
-        vertical = self.prediction_vertical_edge_weights
+        horizontal = self.prediction_horizontal_edge_weights - 1.0
+        vertical = self.prediction_vertical_edge_weights - 1.0
         rows, cols = self.resolution
-        vx_field = np.zeros((rows, cols), dtype=np.float32)
-        vy_field = np.zeros((rows, cols), dtype=np.float32)
-        if horizontal.size:
-            vx_field[:, 0] = horizontal[:, 0]
-            vx_field[:, -1] = horizontal[:, -1]
-            if cols > 2:
-                vx_field[:, 1:-1] = 0.5 * (horizontal[:, :-1] + horizontal[:, 1:])
-        if vertical.size:
-            vy_field[0, :] = vertical[0, :]
-            vy_field[-1, :] = vertical[-1, :]
-            if rows > 2:
-                vy_field[1:-1, :] = 0.5 * (vertical[:-1, :] + vertical[1:, :])
-        magnitude_field = np.hypot(vx_field, vy_field)
-        positions: list[tuple[float, float]] = []
-        vectors: list[tuple[float, float]] = []
-        magnitudes: list[float] = []
-        for row_start in range(0, rows, stride):
-            row_end = min(row_start + stride, rows)
-            for col_start in range(0, cols, stride):
-                col_end = min(col_start + stride, cols)
-                vx_patch = vx_field[row_start:row_end, col_start:col_end]
-                vy_patch = vy_field[row_start:row_end, col_start:col_end]
-                if vx_patch.size == 0 or vy_patch.size == 0:
+        row_ranges = [
+            (row_start, min(row_start + stride, rows))
+            for row_start in range(0, rows, stride)
+        ]
+        col_ranges = [
+            (col_start, min(col_start + stride, cols))
+            for col_start in range(0, cols, stride)
+        ]
+        centers_y = [0.5 * (row_start + row_end) for row_start, row_end in row_ranges]
+        centers_x = [0.5 * (col_start + col_end) for col_start, col_end in col_ranges]
+        segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+        strengths: list[float] = []
+        for row_index, (row_start, row_end) in enumerate(row_ranges):
+            for col_index in range(len(col_ranges) - 1):
+                _, col_end = col_ranges[col_index]
+                boundary_col = col_end - 1
+                boundary_patch = horizontal[row_start:row_end, boundary_col : boundary_col + 1]
+                if boundary_patch.size == 0:
                     continue
-                vx = float(np.mean(vx_patch, dtype=np.float64))
-                vy = float(np.mean(vy_patch, dtype=np.float64))
-                magnitude = float(np.hypot(vx, vy))
-                if magnitude <= threshold:
+                strength = float(np.mean(boundary_patch, dtype=np.float64))
+                if abs(strength) <= threshold:
                     continue
-                positions.append(
+                segments.append(
                     (
-                        0.5 * (col_start + col_end),
-                        0.5 * (row_start + row_end),
+                        (centers_x[col_index], centers_y[row_index]),
+                        (centers_x[col_index + 1], centers_y[row_index]),
                     )
                 )
-                vectors.append((vx, vy))
-                magnitudes.append(magnitude)
-        if not positions:
-            empty = np.zeros((0, 2), dtype=np.float32)
-            return empty, empty, np.zeros((0,), dtype=np.float32)
+                strengths.append(strength)
+        for row_index in range(len(row_ranges) - 1):
+            _, row_end = row_ranges[row_index]
+            boundary_row = row_end - 1
+            for col_index, (col_start, col_end) in enumerate(col_ranges):
+                boundary_patch = vertical[
+                    boundary_row : boundary_row + 1,
+                    col_start:col_end,
+                ]
+                if boundary_patch.size == 0:
+                    continue
+                strength = float(np.mean(boundary_patch, dtype=np.float64))
+                if abs(strength) <= threshold:
+                    continue
+                segments.append(
+                    (
+                        (centers_x[col_index], centers_y[row_index]),
+                        (centers_x[col_index], centers_y[row_index + 1]),
+                    )
+                )
+                strengths.append(strength)
+        if not segments:
+            return np.zeros((0, 2, 2), dtype=np.float32), np.zeros((0,), dtype=np.float32)
         return (
-            np.asarray(positions, dtype=np.float32),
-            np.asarray(vectors, dtype=np.float32),
-            np.asarray(magnitudes, dtype=np.float32),
+            np.asarray(segments, dtype=np.float32),
+            np.asarray(strengths, dtype=np.float32),
         )
 
     def _edge_weights_to_numpy(self, weights) -> np.ndarray:
@@ -574,8 +584,8 @@ class RippleEngine:
         mask = self.body_boundary_mask
         laplacian = np.zeros_like(field)
         transmission = np.float32(self.body_boundary_transmission)
-        horizontal_conductance = 1.0 + self.prediction_horizontal_edge_weights
-        vertical_conductance = 1.0 + self.prediction_vertical_edge_weights
+        horizontal_conductance = self.prediction_horizontal_edge_weights
+        vertical_conductance = self.prediction_vertical_edge_weights
 
         vertical_open = mask[:-1, :] == mask[1:, :]
         vertical_diff = field[1:, :] - field[:-1, :]
