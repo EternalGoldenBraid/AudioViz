@@ -536,6 +536,19 @@ class RippleEngine:
         horizontal = self.prediction_horizontal_edge_weights
         vertical = self.prediction_vertical_edge_weights
         rows, cols = self.resolution
+        vx_field = np.zeros((rows, cols), dtype=np.float32)
+        vy_field = np.zeros((rows, cols), dtype=np.float32)
+        if horizontal.size:
+            vx_field[:, 0] = horizontal[:, 0]
+            vx_field[:, -1] = horizontal[:, -1]
+            if cols > 2:
+                vx_field[:, 1:-1] = 0.5 * (horizontal[:, :-1] + horizontal[:, 1:])
+        if vertical.size:
+            vy_field[0, :] = vertical[0, :]
+            vy_field[-1, :] = vertical[-1, :]
+            if rows > 2:
+                vy_field[1:-1, :] = 0.5 * (vertical[:-1, :] + vertical[1:, :])
+        magnitude_field = np.hypot(vx_field, vy_field)
         positions: list[tuple[float, float]] = []
         vectors: list[tuple[float, float]] = []
         magnitudes: list[float] = []
@@ -543,29 +556,19 @@ class RippleEngine:
             row_end = min(row_start + stride, rows)
             for col_start in range(0, cols, stride):
                 col_end = min(col_start + stride, cols)
-                vx = 0.0
-                vy = 0.0
-                horizontal_patch = horizontal[
-                    row_start:row_end,
-                    col_start:max(col_end - 1, col_start),
-                ]
-                vertical_patch = vertical[
-                    row_start:max(row_end - 1, row_start),
-                    col_start:col_end,
-                ]
-                if horizontal_patch.size:
-                    vx = float(np.mean(horizontal_patch))
-                if vertical_patch.size:
-                    vy = float(np.mean(vertical_patch))
-                magnitude = float(np.hypot(vx, vy))
+                tile_magnitudes = magnitude_field[row_start:row_end, col_start:col_end]
+                if tile_magnitudes.size == 0:
+                    continue
+                flat_index = int(np.argmax(tile_magnitudes))
+                local_row, local_col = np.unravel_index(flat_index, tile_magnitudes.shape)
+                row = row_start + local_row
+                col = col_start + local_col
+                vx = float(vx_field[row, col])
+                vy = float(vy_field[row, col])
+                magnitude = float(tile_magnitudes[local_row, local_col])
                 if magnitude <= threshold:
                     continue
-                positions.append(
-                    (
-                        0.5 * (col_start + col_end),
-                        0.5 * (row_start + row_end),
-                    )
-                )
+                positions.append((float(col) + 0.5, float(row) + 0.5))
                 vectors.append((vx, vy))
                 magnitudes.append(magnitude)
         if not positions:

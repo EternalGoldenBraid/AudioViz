@@ -83,11 +83,10 @@ def test_offline_render_validation_shows_learning_overlay_pixels(qapp):
     visualizer.learning_overlay_stride = 4
     visualizer.learning_overlay_threshold = 0.0
     visualizer.learning_overlay_scale = 2.0
-    visualizer.engine.prediction_horizontal_edge_weights = np.full(
-        (24, 31),
-        1e-4,
-        dtype=np.float32,
-    )
+    horizontal = np.zeros((24, 31), dtype=np.float32)
+    horizontal[:, ::2] = 1e-4
+    horizontal[:, 1::2] = -1e-4
+    visualizer.engine.prediction_horizontal_edge_weights = horizontal
     visualizer.engine.prediction_vertical_edge_weights = np.zeros(
         (23, 32),
         dtype=np.float32,
