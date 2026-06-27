@@ -27,7 +27,7 @@ def test_ripple_engine_observe_updates_symmetric_prediction_edges():
             activation_function="linear_clipped",
             sigma=1.0,
             learning_enabled=True,
-            learning_rate=0.5,
+            learning_rate=0.05,
             learning_weight_decay=0.0,
             learning_weight_clip=100.0,
             learning_gradient_clip=100.0,
@@ -47,13 +47,13 @@ def test_ripple_engine_observe_updates_symmetric_prediction_edges():
     assert engine.prediction_vertical_edge_weights is not None
     np.testing.assert_allclose(
         engine.prediction_horizontal_edge_weights,
-        0.5 * np.array([[3.0], [7.0]], dtype=np.float32) / np.log(2.0),
+        1.0 + 0.05 * np.array([[3.0], [7.0]], dtype=np.float32) / np.log(2.0),
         rtol=1e-6,
         atol=1e-6,
     )
     np.testing.assert_allclose(
         engine.prediction_vertical_edge_weights,
-        0.5 * np.array([[4.0, 6.0]], dtype=np.float32) / np.log(2.0),
+        1.0 + 0.05 * np.array([[4.0, 6.0]], dtype=np.float32) / np.log(2.0),
         rtol=1e-6,
         atol=1e-6,
     )
@@ -83,11 +83,11 @@ def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation(
     )
     np.testing.assert_array_equal(
         engine.prediction_horizontal_edge_weights,
-        np.zeros((2, 1), dtype=np.float32),
+        np.ones((2, 1), dtype=np.float32),
     )
     np.testing.assert_array_equal(
         engine.prediction_vertical_edge_weights,
-        np.zeros((1, 2), dtype=np.float32),
+        np.ones((1, 2), dtype=np.float32),
     )
 
     transform.update_config(learning_enabled=True)
@@ -99,17 +99,17 @@ def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation(
 
     assert engine.prediction_horizontal_edge_weights is not None
     assert engine.prediction_vertical_edge_weights is not None
-    assert np.any(engine.prediction_horizontal_edge_weights != 0.0)
-    assert np.any(engine.prediction_vertical_edge_weights != 0.0)
+    assert np.any(engine.prediction_horizontal_edge_weights != 1.0)
+    assert np.any(engine.prediction_vertical_edge_weights != 1.0)
 
 
-def test_ripple_engine_predict_observation_uses_learned_symmetric_edges():
+def test_ripple_engine_predict_observation_uses_operator_even_when_learning_disabled():
     engine = _build_engine()
     transform = PredictionErrorTransform(
         config=PredictionErrorTransformConfig(
             enabled=True,
             sigma=1.0,
-            learning_enabled=True,
+            learning_enabled=False,
             learning_rate=0.0,
             learning_weight_decay=0.0,
             learning_weight_clip=100.0,
@@ -119,11 +119,11 @@ def test_ripple_engine_predict_observation_uses_learned_symmetric_edges():
     )
     engine.Z[:] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
     engine.prediction_horizontal_edge_weights = np.array(
-        [[0.5], [1.0]],
+        [[1.5], [2.0]],
         dtype=np.float32,
     )
     engine.prediction_vertical_edge_weights = np.array(
-        [[0.25, 0.75]],
+        [[1.25, 1.75]],
         dtype=np.float32,
     )
 
@@ -137,3 +137,28 @@ def test_ripple_engine_predict_observation_uses_learned_symmetric_edges():
         dtype=np.float32,
     )
     np.testing.assert_allclose(prediction, expected, rtol=1e-6, atol=1e-6)
+
+
+def test_ripple_engine_normalizes_prediction_conductances_to_stable_degree_budget():
+    engine = RippleEngine(
+        resolution=(3, 3),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        use_gpu=False,
+    )
+    engine.prediction_horizontal_edge_weights = np.full((3, 2), 4.0, dtype=np.float32)
+    engine.prediction_vertical_edge_weights = np.full((2, 3), 4.0, dtype=np.float32)
+
+    horizontal = engine.prediction_horizontal_edge_weights
+    vertical = engine.prediction_vertical_edge_weights
+    degree = np.zeros((3, 3), dtype=np.float32)
+    degree[:, :-1] += horizontal
+    degree[:, 1:] += horizontal
+    degree[:-1, :] += vertical
+    degree[1:, :] += vertical
+
+    assert np.all(horizontal >= 0.0)
+    assert np.all(vertical >= 0.0)
+    assert np.max(degree) <= 4.0 + 1e-6

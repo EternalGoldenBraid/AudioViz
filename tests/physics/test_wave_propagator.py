@@ -142,7 +142,7 @@ def test_wave_propagator_learned_horizontal_edge_changes_stencil_strength():
 
     propagator.reset()
     propagator.Z[:] = np.array([[1.0, 0.0]], dtype=np.float32)
-    propagator.horizontal_edge_weights[:] = np.array([[1.0]], dtype=np.float32)
+    propagator.horizontal_edge_weights[:] = np.array([[2.0]], dtype=np.float32)
     propagator.step()
 
     assert propagator.Z[0, 1] > baseline[0, 1]

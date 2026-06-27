@@ -44,11 +44,11 @@ def _weighted_laplacian_periodic(
         + xp.roll(Z, -1, axis=1)
     )
     if horizontal_edge_weights is not None and horizontal_edge_weights.size:
-        horizontal_delta = horizontal_edge_weights * (Z[:, 1:] - Z[:, :-1])
+        horizontal_delta = (horizontal_edge_weights - 1.0) * (Z[:, 1:] - Z[:, :-1])
         laplacian[:, :-1] += horizontal_delta
         laplacian[:, 1:] -= horizontal_delta
     if vertical_edge_weights is not None and vertical_edge_weights.size:
-        vertical_delta = vertical_edge_weights * (Z[1:, :] - Z[:-1, :])
+        vertical_delta = (vertical_edge_weights - 1.0) * (Z[1:, :] - Z[:-1, :])
         laplacian[:-1, :] += vertical_delta
         laplacian[1:, :] -= vertical_delta
     return laplacian
@@ -65,9 +65,9 @@ def _weighted_laplacian_neumann(
     vertical_conductance = 1.0
     horizontal_conductance = 1.0
     if vertical_edge_weights is not None:
-        vertical_conductance = 1.0 + vertical_edge_weights
+        vertical_conductance = vertical_edge_weights
     if horizontal_edge_weights is not None:
-        horizontal_conductance = 1.0 + horizontal_edge_weights
+        horizontal_conductance = horizontal_edge_weights
 
     vertical_diff = Z[1:, :] - Z[:-1, :]
     laplacian[:-1, :] += vertical_conductance * vertical_diff
@@ -130,11 +130,11 @@ class WavePropagatorCPU:
         self.Z_old = np.zeros_like(self.Z)
         self.Z_new = np.zeros_like(self.Z)
         rows, cols = shape
-        self.horizontal_edge_weights = np.zeros(
+        self.horizontal_edge_weights = np.ones(
             (rows, max(cols - 1, 0)),
             dtype=np.float32,
         )
-        self.vertical_edge_weights = np.zeros(
+        self.vertical_edge_weights = np.ones(
             (max(rows - 1, 0), cols),
             dtype=np.float32,
         )
@@ -174,8 +174,8 @@ class WavePropagatorCPU:
         self.Z[:] = 0
         self.Z_old[:] = 0
         self.Z_new[:] = 0
-        self.horizontal_edge_weights[:] = 0
-        self.vertical_edge_weights[:] = 0
+        self.horizontal_edge_weights[:] = 1
+        self.vertical_edge_weights[:] = 1
 
 
 class WavePropagatorGPU:
@@ -202,11 +202,11 @@ class WavePropagatorGPU:
         self.Z_old = cp.zeros_like(self.Z)
         self.Z_new = cp.zeros_like(self.Z)
         rows, cols = shape
-        self.horizontal_edge_weights = cp.zeros(
+        self.horizontal_edge_weights = cp.ones(
             (rows, max(cols - 1, 0)),
             dtype=cp.float32,
         )
-        self.vertical_edge_weights = cp.zeros(
+        self.vertical_edge_weights = cp.ones(
             (max(rows - 1, 0), cols),
             dtype=cp.float32,
         )
@@ -247,5 +247,5 @@ class WavePropagatorGPU:
         self.Z[:] = 0
         self.Z_old[:] = 0
         self.Z_new[:] = 0
-        self.horizontal_edge_weights[:] = 0
-        self.vertical_edge_weights[:] = 0
+        self.horizontal_edge_weights[:] = 1
+        self.vertical_edge_weights[:] = 1

@@ -107,9 +107,11 @@ class RippleEngine:
 
     @prediction_horizontal_edge_weights.setter
     def prediction_horizontal_edge_weights(self, weights: np.ndarray) -> None:
-        self.propagator.horizontal_edge_weights[...] = self._coerce_edge_weight_array(
-            weights,
-            expected_shape=self.propagator.horizontal_edge_weights.shape,
+        self._set_prediction_conductances(
+            horizontal=self._coerce_edge_weight_array(
+                weights,
+                expected_shape=self.propagator.horizontal_edge_weights.shape,
+            )
         )
 
     @property
@@ -118,9 +120,11 @@ class RippleEngine:
 
     @prediction_vertical_edge_weights.setter
     def prediction_vertical_edge_weights(self, weights: np.ndarray) -> None:
-        self.propagator.vertical_edge_weights[...] = self._coerce_edge_weight_array(
-            weights,
-            expected_shape=self.propagator.vertical_edge_weights.shape,
+        self._set_prediction_conductances(
+            vertical=self._coerce_edge_weight_array(
+                weights,
+                expected_shape=self.propagator.vertical_edge_weights.shape,
+            )
         )
 
     def _make_source_positions(self):
@@ -235,8 +239,6 @@ class RippleEngine:
             self.get_field_numpy(),
             prediction_clip=transform.config.prediction_clip,
         )
-        if not transform.config.learning_enabled:
-            return field
         prediction = field.astype(np.float64) + self._shared_neighbor_sum(field)
         clip = np.float32(transform.config.prediction_clip)
         return np.clip(prediction, -clip, clip).astype(np.float32, copy=False)
@@ -408,11 +410,14 @@ class RippleEngine:
     def _shared_neighbor_sum(self, field: np.ndarray) -> np.ndarray:
         field64 = field.astype(np.float64, copy=False)
         prediction = np.zeros(self.resolution, dtype=np.float64)
-        horizontal = self.prediction_horizontal_edge_weights.astype(
+        horizontal = (self.prediction_horizontal_edge_weights - 1.0).astype(
             np.float64,
             copy=False,
         )
-        vertical = self.prediction_vertical_edge_weights.astype(np.float64, copy=False)
+        vertical = (self.prediction_vertical_edge_weights - 1.0).astype(
+            np.float64,
+            copy=False,
+        )
         if horizontal.size:
             prediction[:, :-1] += horizontal * field64[:, 1:]
             prediction[:, 1:] += horizontal * field64[:, :-1]
@@ -489,29 +494,27 @@ class RippleEngine:
             np.float64,
             copy=False,
         )
+        horizontal_delta = horizontal_weights - 1.0
+        vertical_delta = vertical_weights - 1.0
         if config.learning_weight_decay:
             decay = np.float64(1.0 - config.learning_weight_decay)
-            horizontal_weights *= decay
-            vertical_weights *= decay
-        horizontal_weights += np.float64(config.learning_rate) * horizontal_gradient
-        vertical_weights += np.float64(config.learning_rate) * vertical_gradient
-        horizontal_weights = np.clip(
-            horizontal_weights,
+            horizontal_delta *= decay
+            vertical_delta *= decay
+        horizontal_delta += np.float64(config.learning_rate) * horizontal_gradient
+        vertical_delta += np.float64(config.learning_rate) * vertical_gradient
+        horizontal_delta = np.clip(
+            horizontal_delta,
             -config.learning_weight_clip,
             config.learning_weight_clip,
         )
-        vertical_weights = np.clip(
-            vertical_weights,
+        vertical_delta = np.clip(
+            vertical_delta,
             -config.learning_weight_clip,
             config.learning_weight_clip,
         )
-        self.prediction_horizontal_edge_weights = horizontal_weights.astype(
-            np.float32,
-            copy=False,
-        )
-        self.prediction_vertical_edge_weights = vertical_weights.astype(
-            np.float32,
-            copy=False,
+        self._set_prediction_conductances(
+            horizontal=(1.0 + horizontal_delta).astype(np.float32, copy=False),
+            vertical=(1.0 + vertical_delta).astype(np.float32, copy=False),
         )
 
     @staticmethod
@@ -584,6 +587,57 @@ class RippleEngine:
         if self.use_gpu:
             return self.backend.asnumpy(weights).astype(np.float32, copy=False)
         return np.asarray(weights, dtype=np.float32)
+
+    def _set_prediction_conductances(
+        self,
+        *,
+        horizontal: np.ndarray | None = None,
+        vertical: np.ndarray | None = None,
+    ) -> None:
+        horizontal_array = (
+            self._edge_weights_to_numpy(self.propagator.horizontal_edge_weights)
+            if horizontal is None
+            else np.asarray(horizontal, dtype=np.float32)
+        )
+        vertical_array = (
+            self._edge_weights_to_numpy(self.propagator.vertical_edge_weights)
+            if vertical is None
+            else np.asarray(vertical, dtype=np.float32)
+        )
+        normalized_horizontal, normalized_vertical = self._normalize_prediction_conductances(
+            horizontal_array,
+            vertical_array,
+        )
+        self.propagator.horizontal_edge_weights[...] = normalized_horizontal
+        self.propagator.vertical_edge_weights[...] = normalized_vertical
+
+    @staticmethod
+    def _normalize_prediction_conductances(
+        horizontal: np.ndarray,
+        vertical: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        horizontal = np.clip(np.asarray(horizontal, dtype=np.float32), 0.0, None)
+        vertical = np.clip(np.asarray(vertical, dtype=np.float32), 0.0, None)
+        rows = horizontal.shape[0] if horizontal.ndim == 2 else vertical.shape[0] + 1
+        cols = vertical.shape[1] if vertical.ndim == 2 else horizontal.shape[1] + 1
+        degree = np.zeros((rows, cols), dtype=np.float32)
+        if horizontal.size:
+            degree[:, :-1] += horizontal
+            degree[:, 1:] += horizontal
+        if vertical.size:
+            degree[:-1, :] += vertical
+            degree[1:, :] += vertical
+        factors = np.ones_like(degree)
+        overloaded = degree > 4.0
+        factors[overloaded] = 4.0 / degree[overloaded]
+        if horizontal.size:
+            horizontal = horizontal * np.minimum(factors[:, :-1], factors[:, 1:])
+        if vertical.size:
+            vertical = vertical * np.minimum(factors[:-1, :], factors[1:, :])
+        return horizontal.astype(np.float32, copy=False), vertical.astype(
+            np.float32,
+            copy=False,
+        )
 
     def _grid_laplacian_with_internal_boundaries(self, field: np.ndarray) -> np.ndarray:
         if self.body_boundary_mask is None:
