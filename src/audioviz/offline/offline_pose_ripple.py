@@ -131,8 +131,8 @@ class RecordingFieldRenderer:
     def prepare_frame(self) -> bool:
         return True
 
-    def render(self, field_source) -> None:
-        self.fields.append(field_source.get_field_numpy().copy())
+    def render(self, visual_prediction: np.ndarray) -> None:
+        self.fields.append(np.asarray(visual_prediction).copy())
 
     def render_rgb_frame(self, rgb_frame: np.ndarray) -> None:
         self.rgb_frames.append(np.ascontiguousarray(rgb_frame))

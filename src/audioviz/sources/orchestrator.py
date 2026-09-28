@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from audioviz.readouts import IdentityRGBReadout, VisualReadout
 from audioviz.sources.audio import AudioRippleSource, AudioSourceConfig
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
@@ -40,6 +41,7 @@ class RippleSourceOrchestrator:
         resolution: tuple[int, int],
         n_sources: int,
         camera_capture=None,
+        visual_readout: VisualReadout | None = None,
     ) -> None:
         self.config = config
         self.engine = engine
@@ -47,6 +49,11 @@ class RippleSourceOrchestrator:
         self.canvas_shape = engine.canvas_shape
         self.n_sources = int(n_sources)
         self.base_amplitude = 1.0
+        self.visual_readout = (
+            IdentityRGBReadout(canvas_shape=self.canvas_shape)
+            if visual_readout is None
+            else visual_readout
+        )
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
             n_sources=self.n_sources,
@@ -134,20 +141,42 @@ class RippleSourceOrchestrator:
         canvas_grids = [self._to_canvas_grid(grid) for grid in active]
         return np.sum(np.stack(canvas_grids, axis=0), axis=0, dtype=np.float32)
 
-    def resolve_observation_correction(self) -> np.ndarray | None:
+    def predict_visual(self) -> np.ndarray:
+        return self.visual_readout.predict(self.engine.get_prior_numpy())
+
+    def resolve_visual_observation_correction(
+        self,
+        *,
+        visual_prediction: np.ndarray,
+    ) -> np.ndarray | None:
         if not self.prediction_error_transform.applies_to("camera_frame"):
             return None
         observation = self.camera_source.excitation()
         if observation is None:
             return None
-        return self.engine.compute_observation_correction(
+        visual_error = self.prediction_error_transform.compute_error(
             source_key="camera_frame",
             observation=observation,
+            prediction=visual_prediction,
+        )
+        if visual_error is None:
+            return None
+        latent_error = self.visual_readout.backproject(visual_error)
+        self.engine.apply_legacy_conductance_learning(
+            error=latent_error,
             transform=self.prediction_error_transform,
         )
+        shaped_visual_error = self.prediction_error_transform.shape_error(visual_error)
+        return self.visual_readout.backproject(shaped_visual_error)
 
-    def correct_from_observations(self) -> np.ndarray | None:
-        correction = self.resolve_observation_correction()
+    def correct_from_observations(
+        self,
+        *,
+        visual_prediction: np.ndarray,
+    ) -> np.ndarray | None:
+        correction = self.resolve_visual_observation_correction(
+            visual_prediction=visual_prediction,
+        )
         if correction is not None:
             self.engine.apply_observation_correction(correction)
         return correction

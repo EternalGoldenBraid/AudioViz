@@ -29,6 +29,14 @@ class _FakeProcessor:
         self.current_top_k_frequencies = values
 
 
+class _OffsetVisualReadout:
+    def predict(self, prior):
+        return np.asarray(prior, dtype=np.float32) + np.float32(0.25)
+
+    def backproject(self, visual_correction):
+        return np.asarray(visual_correction, dtype=np.float32) * np.float32(2.0)
+
+
 def _build_engine(*, amplitude: float = 1.0) -> RippleEngine:
     return RippleEngine(
         resolution=(24, 32),
@@ -175,8 +183,44 @@ def test_ripple_source_orchestrator_skips_correction_when_camera_feed_is_off():
     source_frame = orchestrator.resolve()
     engine.propagate(source_frame.drive_grid)
     prior = engine.get_prior_numpy().copy()
-    correction = orchestrator.resolve_observation_correction()
+    visual_prediction = orchestrator.predict_visual()
+    correction = orchestrator.resolve_visual_observation_correction(
+        visual_prediction=visual_prediction,
+    )
 
     assert source_frame.drive_grid is None
     assert correction is None
     np.testing.assert_array_equal(engine.get_field_numpy(), prior)
+
+
+def test_ripple_source_orchestrator_routes_visual_error_through_readout():
+    engine = _build_engine()
+    orchestrator = RippleSourceOrchestrator(
+        config=RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(enabled=False),
+            audio=AudioSourceConfig(enabled=False),
+            camera_frame=CameraFrameSourceConfig(enabled=False),
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                activation_function="linear_clipped",
+                gain=1.0,
+            ),
+        ),
+        processor=None,
+        engine=engine,
+        resolution=engine.resolution,
+        n_sources=1,
+        visual_readout=_OffsetVisualReadout(),
+    )
+    observation = np.ones(engine.canvas_shape, dtype=np.float32)
+    orchestrator.camera_source.excitation = lambda: observation
+    engine.propagate()
+
+    prediction = orchestrator.predict_visual()
+    correction = orchestrator.correct_from_observations(
+        visual_prediction=prediction,
+    )
+
+    np.testing.assert_allclose(prediction, 0.25)
+    np.testing.assert_allclose(correction, 1.5)
+    np.testing.assert_allclose(engine.get_field_numpy(), 1.5)

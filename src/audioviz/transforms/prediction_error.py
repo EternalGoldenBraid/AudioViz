@@ -9,7 +9,6 @@ import numpy as np
 class PredictionErrorTransformConfig:
     enabled: bool = False
     inputs: tuple[str, ...] = ("camera_frame",)
-    predictor_source: str = "ripple_state"
     sigma: float = 0.1
     activation_function: str = "softsign"
     activation_scale: float = 1.0
@@ -52,18 +51,33 @@ class PredictionErrorTransform:
         *,
         source_key: str,
         observation: np.ndarray,
-        ripple_state: np.ndarray,
+        prediction: np.ndarray,
     ) -> np.ndarray:
-        if not self.applies_to(source_key):
+        error = self.compute_error(
+            source_key=source_key,
+            observation=observation,
+            prediction=prediction,
+        )
+        if error is None:
             return observation
+        return self.shape_error(error)
 
-        prediction = self._coerce_field(ripple_state)
+    def compute_error(
+        self,
+        *,
+        source_key: str,
+        observation: np.ndarray,
+        prediction: np.ndarray,
+    ) -> np.ndarray | None:
+        if not self.applies_to(source_key):
+            return None
+
+        predicted = self._coerce_field(prediction)
         observed = self._coerce_field(observation)
-        error = observed.astype(np.float64, copy=False) - prediction.astype(
+        return observed.astype(np.float64, copy=False) - predicted.astype(
             np.float64,
             copy=False,
         )
-        return self.shape_error(error)
 
     @staticmethod
     def neighbor_fields(field: np.ndarray) -> np.ndarray:
@@ -115,7 +129,7 @@ class PredictionErrorTransform:
     def _coerce_field(self, values: np.ndarray) -> np.ndarray:
         field = np.asarray(values, dtype=np.float32)
         if field.shape != self.resolution:
-            raise ValueError("ripple-state prediction must match engine canvas shape")
+            raise ValueError("prediction must match the configured observation shape")
         clip = np.float32(self.config.prediction_clip)
         field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
         return np.clip(field, -clip, clip).astype(np.float32, copy=False)
@@ -142,8 +156,6 @@ class PredictionErrorTransform:
             raise ValueError("prediction_error_learning_weight_clip must be positive")
         if self.config.learning_gradient_clip <= 0.0:
             raise ValueError("prediction_error_learning_gradient_clip must be positive")
-        if self.config.predictor_source != "ripple_state":
-            raise ValueError("prediction_error_predictor_source must be 'ripple_state'")
         valid_activation_functions = {
             "linear_clipped",
             "tanh",

@@ -150,7 +150,6 @@ RIPPLE_CONFIG = {
             "enabled": True,
             "inputs": ("camera_frame",),
             "predictor": {
-                "source": "ripple_state",
                 "model": "gaussian_fixed_variance",
                 "sigma": 0.1,
             },
@@ -215,7 +214,6 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             prediction_error=PredictionErrorTransformConfig(
                 enabled=prediction_error["enabled"],
                 inputs=tuple(prediction_error["inputs"]),
-                predictor_source=prediction_error_predictor["source"],
                 sigma=prediction_error_predictor["sigma"],
                 activation_function=prediction_error_output["activation"]["function"],
                 activation_scale=prediction_error_output["activation"]["scale"],

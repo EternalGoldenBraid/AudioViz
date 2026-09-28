@@ -231,42 +231,20 @@ class RippleEngine:
     def step_without_excitation(self):
         return self.propagate()
 
-    def compute_observation_correction(
+    def apply_legacy_conductance_learning(
         self,
         *,
-        source_key: str,
-        observation: np.ndarray,
+        error: np.ndarray,
         transform: PredictionErrorTransform,
-    ) -> np.ndarray | None:
-        if not transform.applies_to(source_key):
-            return None
-        observed = self._coerce_prediction_field(
-            observation,
+    ) -> None:
+        prior = self._coerce_prediction_field(
+            self.get_prior_numpy(),
             prediction_clip=transform.config.prediction_clip,
-        )
-
-        prediction = self.predict_observation(transform=transform)
-        error = observed.astype(np.float64, copy=False) - prediction.astype(
-            np.float64,
-            copy=False,
         )
         self._update_conductances_from_legacy_rule(
             error=error,
-            field=prediction,
+            field=prior,
             transform=transform,
-        )
-        return transform.shape_error(error)
-
-    def predict_observation(
-        self,
-        *,
-        transform: PredictionErrorTransform,
-    ) -> np.ndarray:
-        if not self._has_prior:
-            raise RuntimeError("propagate must be called before predicting observations")
-        return self._coerce_prediction_field(
-            self.get_prior_numpy(),
-            prediction_clip=transform.config.prediction_clip,
         )
 
     def apply_observation_correction(self, correction_grid: np.ndarray) -> np.ndarray:

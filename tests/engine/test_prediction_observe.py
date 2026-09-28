@@ -1,6 +1,7 @@
 import numpy as np
 
 from audioviz.engine import RippleEngine
+from audioviz.readouts import IdentityRGBReadout
 from audioviz.transforms.prediction_error import (
     PredictionErrorTransform,
     PredictionErrorTransformConfig,
@@ -39,6 +40,25 @@ def _prepare_stationary_prior(
     return engine.get_prior_numpy().copy()
 
 
+def _learn_from_visual_observation(
+    engine: RippleEngine,
+    transform: PredictionErrorTransform,
+    observation: np.ndarray,
+) -> None:
+    readout = IdentityRGBReadout(canvas_shape=engine.canvas_shape)
+    prediction = readout.predict(engine.get_prior_numpy())
+    visual_error = transform.compute_error(
+        source_key="camera_frame",
+        observation=observation,
+        prediction=prediction,
+    )
+    assert visual_error is not None
+    engine.apply_legacy_conductance_learning(
+        error=readout.backproject(visual_error),
+        transform=transform,
+    )
+
+
 def test_ripple_engine_observation_updates_symmetric_prediction_edges():
     engine = _build_engine()
     transform = PredictionErrorTransform(
@@ -60,11 +80,7 @@ def test_ripple_engine_observation_updates_symmetric_prediction_edges():
     )
     observation = prior + np.ones_like(prior)
 
-    engine.compute_observation_correction(
-        source_key="camera_frame",
-        observation=observation,
-        transform=transform,
-    )
+    _learn_from_visual_observation(engine, transform, observation)
 
     assert engine.prediction_horizontal_edge_weights is not None
     assert engine.prediction_vertical_edge_weights is not None
@@ -106,11 +122,7 @@ def test_ripple_engine_observation_learning_toggle_takes_effect_on_next_observat
     )
     observation = prior + 1.0
 
-    engine.compute_observation_correction(
-        source_key="camera_frame",
-        observation=observation,
-        transform=transform,
-    )
+    _learn_from_visual_observation(engine, transform, observation)
     np.testing.assert_array_equal(
         engine.prediction_horizontal_edge_weights,
         np.ones((2, 1, 3), dtype=np.float32),
@@ -121,11 +133,7 @@ def test_ripple_engine_observation_learning_toggle_takes_effect_on_next_observat
     )
 
     transform.update_config(learning_enabled=True)
-    engine.compute_observation_correction(
-        source_key="camera_frame",
-        observation=observation,
-        transform=transform,
-    )
+    _learn_from_visual_observation(engine, transform, observation)
 
     assert engine.prediction_horizontal_edge_weights is not None
     assert engine.prediction_vertical_edge_weights is not None
@@ -133,20 +141,8 @@ def test_ripple_engine_observation_learning_toggle_takes_effect_on_next_observat
     assert np.any(engine.prediction_vertical_edge_weights != 1.0)
 
 
-def test_ripple_engine_predict_observation_reads_canvas_without_graph_aggregation():
+def test_identity_readout_reads_prior_without_graph_aggregation():
     engine = _build_engine()
-    transform = PredictionErrorTransform(
-        config=PredictionErrorTransformConfig(
-            enabled=True,
-            sigma=1.0,
-            learning_enabled=False,
-            learning_rate=0.0,
-            learning_weight_decay=0.0,
-            learning_weight_clip=100.0,
-            learning_gradient_clip=100.0,
-        ),
-        resolution=engine.canvas_shape,
-    )
     prior = _prepare_stationary_prior(
         engine,
         _rgb_field([[1.0, 2.0], [3.0, 4.0]]),
@@ -160,7 +156,9 @@ def test_ripple_engine_predict_observation_reads_canvas_without_graph_aggregatio
         dtype=np.float32,
     )
 
-    prediction = engine.predict_observation(transform=transform)
+    prediction = IdentityRGBReadout(
+        canvas_shape=engine.canvas_shape,
+    ).predict(engine.get_prior_numpy())
 
     np.testing.assert_allclose(prediction, prior, rtol=1e-6, atol=1e-6)
 
@@ -186,11 +184,7 @@ def test_ripple_engine_learns_prediction_edges_per_canvas_channel():
     observation = prior.copy()
     observation[..., 0] += 1.0
 
-    engine.compute_observation_correction(
-        source_key="camera_frame",
-        observation=observation,
-        transform=transform,
-    )
+    _learn_from_visual_observation(engine, transform, observation)
 
     assert np.any(engine.prediction_horizontal_edge_weights[..., 0] != 1.0)
     assert np.any(engine.prediction_vertical_edge_weights[..., 0] != 1.0)
@@ -204,18 +198,14 @@ def test_ripple_engine_learns_prediction_edges_per_canvas_channel():
     )
 
 
-def test_ripple_engine_requires_propagation_before_observation_prediction():
+def test_ripple_engine_requires_propagation_before_reading_prior():
     engine = _build_engine()
-    transform = PredictionErrorTransform(
-        config=PredictionErrorTransformConfig(enabled=True),
-        resolution=engine.canvas_shape,
-    )
 
     with np.testing.assert_raises_regex(
         RuntimeError,
         "propagate must be called",
     ):
-        engine.predict_observation(transform=transform)
+        engine.get_prior_numpy()
 
 
 def test_ripple_engine_correction_preserves_prior_and_wave_velocity():

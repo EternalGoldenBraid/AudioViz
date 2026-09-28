@@ -59,11 +59,6 @@ void main() {
 """
 
 
-class RippleFieldSource(Protocol):
-    def get_field_numpy(self) -> np.ndarray:
-        """Return the current ripple field as a NumPy array."""
-
-
 class OpenGLFieldSource(Protocol):
     def get_opengl_field_texture_id(self) -> int:
         """Return the OpenGL texture containing the current ripple field."""
@@ -160,11 +155,15 @@ class NumpyImageRenderer:
         self._display_limit = max(self._auto_level_floor, 1e-9)
         self.histogram.setLevels(0.0, 0.0)
 
-    def render(self, field_source: RippleFieldSource) -> None:
-        canvas = np.asarray(field_source.get_field_numpy(), dtype=np.float32)
-        if canvas.ndim != 3 or canvas.shape[2] != 3:
-            raise ValueError("ripple canvas must have shape (rows, cols, 3)")
-        display_field = canvas if self._rgb_canvas_enabled else np.mean(canvas, axis=2)
+    def render(self, visual_prediction: np.ndarray) -> None:
+        prediction = np.asarray(visual_prediction, dtype=np.float32)
+        if prediction.ndim != 3 or prediction.shape[2] != 3:
+            raise ValueError("visual prediction must have shape (rows, cols, 3)")
+        display_field = (
+            prediction
+            if self._rgb_canvas_enabled
+            else np.mean(prediction, axis=2)
+        )
         if self._auto_percentile_levels:
             active_limit = _percentile_abs_limit(
                 display_field,
@@ -187,7 +186,7 @@ class NumpyImageRenderer:
             self._auto_levels_pending = False
         if self._rgb_canvas_enabled:
             rgb_frame = _canvas_to_rgb(
-                canvas,
+                prediction,
                 limit=self._display_limit,
             )
             self.image_item.setImage(

@@ -183,7 +183,7 @@ def test_ripple_visualizer_camera_source_updates_field_and_releases_capture(qapp
     assert capture.released
 
 
-def test_ripple_visualizer_rgb_canvas_preserves_camera_error_channels(qapp):
+def test_ripple_visualizer_renders_prior_before_camera_correction(qapp):
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
     frame = np.array(
@@ -216,14 +216,24 @@ def test_ripple_visualizer_rgb_canvas_preserves_camera_error_channels(qapp):
     visualizer._update_rgb_canvas(True)
 
     visualizer.update_visualization()
+    first_prediction = visualizer.visual_prediction.copy()
+    first_rendered = visualizer.renderer.image_item.image.copy()
+    posterior = visualizer.engine.get_field_numpy().copy()
 
-    canvas = visualizer.engine.get_field_numpy()
+    assert np.count_nonzero(first_prediction) == 0
+    assert np.count_nonzero(first_rendered) == 0
+    assert np.any(posterior[..., 0] != posterior[..., 1])
+    assert np.any(posterior[..., 1] != posterior[..., 2])
+
+    visualizer.update_visualization()
+
+    prediction = visualizer.visual_prediction
     rendered = visualizer.renderer.image_item.image
-    assert canvas.shape == (6, 8, 3)
+    assert prediction.shape == (6, 8, 3)
     assert rendered is not None
     assert rendered.shape == (6, 8, 3)
-    assert np.any(canvas[..., 0] != canvas[..., 1])
-    assert np.any(canvas[..., 1] != canvas[..., 2])
+    assert np.any(prediction[..., 0] != prediction[..., 1])
+    assert np.any(prediction[..., 1] != prediction[..., 2])
     assert np.any(rendered[..., 0] != rendered[..., 1])
     assert np.any(rendered[..., 1] != rendered[..., 2])
 
@@ -337,15 +347,15 @@ def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render(qapp):
         auto_level_activation_threshold=0.1,
     )
     visualizer.renderer = renderer
-    visualizer.engine.Z[:] = np.full((24, 32, 3), 0.2, dtype=np.float32)
+    visualizer.visual_prediction[:] = np.full((24, 32, 3), 0.2, dtype=np.float32)
 
-    renderer.render(visualizer.engine)
+    renderer.render(visualizer.visual_prediction)
     first_levels = renderer.histogram.getLevels()
 
     visualizer._update_auto_color_activation_threshold(0.35)
     visualizer._update_auto_color_floor(0.2)
     second_levels_before_render = renderer.histogram.getLevels()
-    renderer.render(visualizer.engine)
+    renderer.render(visualizer.visual_prediction)
     second_levels_after_render = renderer.histogram.getLevels()
 
     np.testing.assert_allclose(first_levels, (-0.2, 0.2))
@@ -353,7 +363,7 @@ def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render(qapp):
     np.testing.assert_allclose(second_levels_after_render, (-0.2, 0.2))
 
     visualizer._update_auto_color_floor(0.05)
-    renderer.render(visualizer.engine)
+    renderer.render(visualizer.visual_prediction)
     third_levels = renderer.histogram.getLevels()
 
     np.testing.assert_allclose(third_levels, (-0.05, 0.05))

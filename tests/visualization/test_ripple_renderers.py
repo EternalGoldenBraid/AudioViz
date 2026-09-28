@@ -24,22 +24,16 @@ def test_canvas_to_rgb_maps_state_channels_isomorphically():
 def test_numpy_renderer_rgb_toggle_renders_canvas_channels(qapp):
     from audioviz.visualization.ripple_renderers import NumpyImageRenderer
 
-    class FieldSource:
-        field = np.array(
-            [[[1.0, 0.0, 0.0], [0.0, 0.5, 1.0]]],
-            dtype=np.float32,
-        )
-
-        def get_field_numpy(self):
-            return self.field
-
-    source = FieldSource()
+    prediction = np.array(
+        [[[1.0, 0.0, 0.0], [0.0, 0.5, 1.0]]],
+        dtype=np.float32,
+    )
     renderer = NumpyImageRenderer(
         rgb_canvas_enabled=True,
         auto_percentile_levels=False,
     )
 
-    renderer.render(source)
+    renderer.render(prediction)
     np.testing.assert_array_equal(
         renderer.image_item.image,
         np.array([[[255, 0, 0], [0, 128, 255]]], dtype=np.uint8),

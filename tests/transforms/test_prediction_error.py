@@ -15,18 +15,18 @@ def test_prediction_error_transform_outputs_signed_raw_error():
         ),
         resolution=(2, 2),
     )
-    ripple_state = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
+    prediction = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
     observation = np.full((2, 2), 0.2, dtype=np.float32)
 
     transformed = transform.apply(
         source_key="camera_frame",
         observation=observation,
-        ripple_state=ripple_state,
+        prediction=prediction,
     )
 
     np.testing.assert_allclose(
         transformed,
-        observation - ripple_state,
+        observation - prediction,
         rtol=1e-6,
         atol=1e-6,
     )
@@ -43,12 +43,12 @@ def test_prediction_error_transform_applies_softsign_activation():
         resolution=(1, 3),
     )
     observation = np.array([[0.0, 1.0, 2.0]], dtype=np.float32)
-    ripple_state = np.zeros((1, 3), dtype=np.float32)
+    prediction = np.zeros((1, 3), dtype=np.float32)
 
     transformed = transform.apply(
         source_key="camera_frame",
         observation=observation,
-        ripple_state=ripple_state,
+        prediction=prediction,
     )
 
     expected = 5.0 * observation / (2.0 + np.abs(observation))
@@ -64,7 +64,7 @@ def test_prediction_error_transform_clips_runaway_values():
         ),
         resolution=(2, 2),
     )
-    ripple_state = np.array(
+    prediction = np.array(
         [[1e30, np.inf], [np.nan, -np.inf]],
         dtype=np.float32,
     )
@@ -77,7 +77,7 @@ def test_prediction_error_transform_clips_runaway_values():
         transformed = transform.apply(
             source_key="camera_frame",
             observation=observation,
-            ripple_state=ripple_state,
+            prediction=prediction,
         )
 
     assert np.all(np.isfinite(transformed))
