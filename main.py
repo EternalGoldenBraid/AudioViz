@@ -48,7 +48,8 @@ APP_CONFIG = {
         "ripples": {
             "enabled": True,
             "title": "Ripple Wave Visualizer",
-            "size": (600, 600),
+            # "size": (600, 600),
+            "size": (1920, 1080),
         },
     },
 }
@@ -73,14 +74,17 @@ AUDIO_CONFIG = {
 
 RIPPLE_CONFIG = {
     "field": {
-        "n_sources": 1,
+        "n_sources": 5,
         "plane_size_m": (500.0, 500.0),
-        "resolution": (480, 640),
-        # "resolution": (48, 64),
+        # "plane_size_m": (50.0, 50.0),
+        # "resolution": (480, 640),
+        # "resolution": (1080, 1920),
+        # "resolution": (600, 800),
+        "resolution": (48, 64),
     },
     "dynamics": {
-        "amplitude": 1.0,
-        "decay_alpha": 0.1,
+        "amplitude": 1.,
+        "decay_alpha": 0.01,
         "speed": 340.0,
         "damping": 0.988,
         "boundary_condition": "neumann",
@@ -97,9 +101,10 @@ RIPPLE_CONFIG = {
             "frequency": 20.0,
         },
         "audio": {
-            "enabled": False,
-            "signal_gate_threshold": 0.05,
-            "drive_amplitude": 1.0,
+            # "enabled": False,
+            "enabled": True,
+            "signal_gate_threshold": 0.60,
+            "drive_amplitude": 0.05,
             "peak_picking": {
                 "minimum_peak_magnitude": 0.1,
                 "peak_prominence_ratio": 5.0,
@@ -118,7 +123,8 @@ RIPPLE_CONFIG = {
         },
         "pose": {
             "enabled": False,
-            "render_mode": "standing-body",
+            # "render_mode": "standing-body",
+            "render_mode": "overlay",
             "model_path": "models/pose_landmarker_lite.task",
             "camera_index": 0,
             "debug_view": False,
@@ -134,7 +140,8 @@ RIPPLE_CONFIG = {
         },
         "camera_frame": {
             "enabled": True,
-            "camera_index": 1,
+            # "enabled": True,
+            "camera_index": "/dev/video0",
             "gain": 1.0,
         },
     },
