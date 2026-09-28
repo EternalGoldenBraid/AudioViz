@@ -1,6 +1,7 @@
 import numpy as np
 
 from audioviz.sources import SyntheticRippleSource
+from audioviz.sources.ripple_grid import normalized_radial_decay
 from audioviz.source_controls import SyntheticFrequencySource
 
 
@@ -61,3 +62,21 @@ def test_synthetic_ripple_source_owns_enabled_frequencies_and_controls():
         max_frequency=10.0,
         decay_alpha=0.0,
     ) is None
+
+
+def test_normalized_radial_decay_changes_gradually_across_field_diagonal():
+    distances = np.array([0.0, 50.0, 100.0], dtype=np.float32)
+
+    subtle = normalized_radial_decay(
+        distances,
+        resolution=(1, 101),
+        decay_alpha=0.1,
+    )
+    moderate = normalized_radial_decay(
+        distances,
+        resolution=(1, 101),
+        decay_alpha=1.0,
+    )
+
+    np.testing.assert_allclose(subtle, [1.0, np.exp(-0.05), np.exp(-0.1)])
+    np.testing.assert_allclose(moderate, [1.0, np.exp(-0.5), np.exp(-1.0)])

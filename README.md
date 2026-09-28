@@ -22,6 +22,7 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 - Optional synthetic tone generator for testing
 - Optional GPU acceleration (via CuPy); CPU wave propagation is the default
 - Adjustable wave physics: damping, decay, speed, amplitude
+- Three-channel canvas state with channel-wise RGB camera prediction errors
 - Modular audio processor and visualizer structure
 
 ---
@@ -80,9 +81,10 @@ This writes PNG frames under `outputs/pose_ripple_validation/` and records an an
 Accessible from GUI sliders:
 
 * **Damping**: Controls wave attenuation over time (physical energy loss)
-* **Decay α**: Sets spatial spread of excitation; higher values make sources more localized
+* **Decay α**: Sets spatial spread using distance normalized by the field diagonal
 * **Amplitude**: Controls excitation strength
 * **Speed**: Wave propagation speed in meters per second
+* **RGB Canvas**: Displays the three simulated canvas channels directly as red, green, and blue
 
 ---
 

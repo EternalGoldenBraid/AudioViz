@@ -29,7 +29,7 @@ def test_ripple_control_panel_updates_wave_physics(ripple_panel_deps):
     panel.damping_slider.setValue(500)
     panel.speed_slider.setValue(20)
     panel.amplitude_slider.setValue(250)
-    panel.decay_slider.setValue(42)
+    panel.decay_slider.setValue(420)
     panel.boundary_transmission_slider.setValue(25)
     panel.boundary_dissipation_slider.setValue(60)
     app.processEvents()
@@ -59,8 +59,10 @@ def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_d
     source_events = []
     auto_floor_values = []
     auto_threshold_values = []
+    rgb_canvas_values = []
     panel = RippleControlPanel(
         engine,
+        on_rgb_canvas_changed=rgb_canvas_values.append,
         auto_color_activation_threshold=0.1,
         on_auto_color_activation_threshold_changed=auto_threshold_values.append,
         auto_color_floor=0.1,
@@ -98,12 +100,14 @@ def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_d
     panel.set_source_control_value("audio-source", "signal_level", "0.42")
     panel.auto_color_threshold_slider.setValue(30)
     panel.auto_color_floor_slider.setValue(25)
+    panel.rgb_canvas_checkbox.click()
     app.processEvents()
 
     assert source_events[-1] == ("audio-source", "mapping_mode", "linear")
     assert panel.source_control_widgets[("audio-source", "signal_level")].text() == "0.42"
     assert auto_threshold_values[-1] == 0.3
     assert auto_floor_values[-1] == 0.25
+    assert rgb_canvas_values == [True]
 
 
 def test_ripple_control_panel_supports_toggle_controls_and_section_expansion(

@@ -35,7 +35,11 @@ def frequency_excitation_grid(
 
     r_pixels = np.sqrt((xs[None, :, :] - x0) ** 2 + (ys[None, :, :] - y0) ** 2)
     r_meters = r_pixels * np.float32(grid_spacing)
-    decay = np.exp(-np.float32(decay_alpha) * r_meters)
+    decay = normalized_radial_decay(
+        r_pixels,
+        resolution=resolution,
+        decay_alpha=decay_alpha,
+    )
 
     clipped = np.clip(values, np.float32(1e-3), np.float32(max_frequency))
     wavelengths = np.float32(speed) / clipped
@@ -47,3 +51,19 @@ def frequency_excitation_grid(
     phases = phases[:, :, None, None]
     ripple = decay * np.sin(phases - np.float32(2.0 * np.pi) * r / wavelengths)
     return np.asarray(ripple.sum(axis=(0, 1)), dtype=np.float32)
+
+
+def normalized_radial_decay(
+    r_pixels: np.ndarray,
+    *,
+    resolution: tuple[int, int],
+    decay_alpha: float,
+) -> np.ndarray:
+    if decay_alpha < 0.0:
+        raise ValueError("decay_alpha must be non-negative")
+    rows, cols = resolution
+    field_diagonal = max(float(np.hypot(rows - 1, cols - 1)), 1.0)
+    normalized_distance = np.asarray(r_pixels, dtype=np.float32) / np.float32(
+        field_diagonal
+    )
+    return np.exp(-np.float32(decay_alpha) * normalized_distance)

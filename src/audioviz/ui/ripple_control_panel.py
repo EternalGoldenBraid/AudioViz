@@ -156,6 +156,9 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_damping_changed: Optional[Callable[[float], None]] = None,
         on_boundary_transmission_changed: Optional[Callable[[float], None]] = None,
         on_boundary_dissipation_changed: Optional[Callable[[float], None]] = None,
+        rgb_canvas_enabled: bool = False,
+        on_rgb_canvas_changed: Optional[Callable[[bool], None]] = None,
+        rgb_canvas_available: bool = True,
         auto_color_levels_enabled: bool = True,
         on_auto_color_levels_changed: Optional[Callable[[bool], None]] = None,
         auto_color_activation_threshold: float = 0.1,
@@ -177,6 +180,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_damping_changed = on_damping_changed
         self.on_boundary_transmission_changed = on_boundary_transmission_changed
         self.on_boundary_dissipation_changed = on_boundary_dissipation_changed
+        self.on_rgb_canvas_changed = on_rgb_canvas_changed
         self.on_auto_color_levels_changed = on_auto_color_levels_changed
         self.on_auto_color_activation_threshold_changed = (
             on_auto_color_activation_threshold_changed
@@ -220,13 +224,14 @@ class RippleControlPanel(QtWidgets.QWidget):
             title="Excitation Falloff (α)",
             tooltip=(
                 "Controls how quickly the excitation decays away from the source point. "
-                "Higher α = more localized excitation; lower α = more spread out excitation."
+                "Distance is normalized by the field diagonal, so α is independent of "
+                "plane size. Higher α = more localized excitation."
             ),
-            value_label=f"Decay α: {self.engine.decay_alpha:.1f}",
+            value_label=f"Decay α: {self.engine.decay_alpha:.2f}",
             minimum=0,
             maximum=1000,
-            value=int(self.engine.decay_alpha * 10),
-            on_change=lambda raw: self.update_decay_alpha(raw / 10.0),
+            value=int(round(self.engine.decay_alpha * 100)),
+            on_change=lambda raw: self.update_decay_alpha(raw / 100.0),
         )
 
         self.damping_label, self.damping_slider = self._add_slider(
@@ -297,6 +302,20 @@ class RippleControlPanel(QtWidgets.QWidget):
             value=int(round(self.engine.body_boundary_dissipation * 100)),
             on_change=lambda raw: self.update_boundary_dissipation(raw / 100.0),
         )
+
+        self.rgb_canvas_checkbox = QCheckBox("RGB Canvas")
+        self.rgb_canvas_checkbox.setToolTip(
+            "Display the three canvas-state channels directly as red, green, and blue. "
+            "Scalar audio drives all channels equally, so audio-only activity is grayscale."
+        )
+        self.rgb_canvas_checkbox.setChecked(bool(rgb_canvas_enabled))
+        self.rgb_canvas_checkbox.setEnabled(bool(rgb_canvas_available))
+        if not rgb_canvas_available:
+            self.rgb_canvas_checkbox.setToolTip(
+                "RGB canvas display is available with the NumPy renderer."
+            )
+        self.rgb_canvas_checkbox.toggled.connect(self.update_rgb_canvas)
+        group_layout.addWidget(self.rgb_canvas_checkbox)
 
         self.auto_color_levels_checkbox = QCheckBox(
             "Auto Color Scaling (98th percentile)"
@@ -430,7 +449,7 @@ class RippleControlPanel(QtWidgets.QWidget):
 
     def update_decay_alpha(self, val: float) -> None:
         self.engine.decay_alpha = val
-        self.decay_label.setText(f"Decay α: {val:.1f}")
+        self.decay_label.setText(f"Decay α: {val:.2f}")
         if self.on_decay_alpha_changed is not None:
             self.on_decay_alpha_changed(val)
 
@@ -443,6 +462,10 @@ class RippleControlPanel(QtWidgets.QWidget):
     def update_auto_color_levels(self, enabled: bool) -> None:
         if self.on_auto_color_levels_changed is not None:
             self.on_auto_color_levels_changed(enabled)
+
+    def update_rgb_canvas(self, enabled: bool) -> None:
+        if self.on_rgb_canvas_changed is not None:
+            self.on_rgb_canvas_changed(enabled)
 
     def update_auto_color_activation_threshold(self, val: float) -> None:
         self.auto_color_threshold_label.setText(f"Auto Scale Threshold: {val:.2f}")
