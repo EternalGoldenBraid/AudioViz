@@ -44,9 +44,10 @@ class RippleSourceOrchestrator:
         self.config = config
         self.engine = engine
         self.resolution = resolution
+        self.canvas_shape = engine.canvas_shape
         self.n_sources = int(n_sources)
         self.base_amplitude = 1.0
-        self._zero_observation = np.zeros(resolution, dtype=np.float32)
+        self._zero_observation = np.zeros(self.canvas_shape, dtype=np.float32)
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
             n_sources=self.n_sources,
@@ -78,7 +79,7 @@ class RippleSourceOrchestrator:
         )
         self.prediction_error_transform = PredictionErrorTransform(
             config=config.prediction_error,
-            resolution=resolution,
+            resolution=self.canvas_shape,
         )
 
     def set_base_amplitude(self, amplitude: float) -> None:
@@ -132,7 +133,8 @@ class RippleSourceOrchestrator:
         active = [grid for grid in grids if grid is not None]
         if not active:
             return None
-        return np.sum(np.stack(active, axis=0), axis=0, dtype=np.float32)
+        canvas_grids = [self._to_canvas_grid(grid) for grid in active]
+        return np.sum(np.stack(canvas_grids, axis=0), axis=0, dtype=np.float32)
 
     def resolve_camera_frame_excitation(self) -> np.ndarray | None:
         excitation = self.camera_source.excitation()
@@ -152,3 +154,14 @@ class RippleSourceOrchestrator:
             observation=excitation,
             transform=self.prediction_error_transform,
         )
+
+    def _to_canvas_grid(self, grid: np.ndarray) -> np.ndarray:
+        values = np.asarray(grid, dtype=np.float32)
+        if values.shape == self.resolution:
+            return np.broadcast_to(
+                values[..., None],
+                self.canvas_shape,
+            ).copy()
+        if values.shape != self.canvas_shape:
+            raise ValueError("source grid must match spatial resolution or canvas shape")
+        return values

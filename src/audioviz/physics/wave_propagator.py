@@ -129,13 +129,14 @@ class WavePropagatorCPU:
         self.Z = np.zeros(shape, dtype=np.float32)
         self.Z_old = np.zeros_like(self.Z)
         self.Z_new = np.zeros_like(self.Z)
-        rows, cols = shape
+        rows, cols = shape[:2]
+        feature_shape = tuple(shape[2:])
         self.horizontal_edge_weights = np.ones(
-            (rows, max(cols - 1, 0)),
+            (rows, max(cols - 1, 0), *feature_shape),
             dtype=np.float32,
         )
         self.vertical_edge_weights = np.ones(
-            (max(rows - 1, 0), cols),
+            (max(rows - 1, 0), cols, *feature_shape),
             dtype=np.float32,
         )
 
@@ -201,13 +202,14 @@ class WavePropagatorGPU:
         self.Z = cp.zeros(shape, dtype=cp.float32)
         self.Z_old = cp.zeros_like(self.Z)
         self.Z_new = cp.zeros_like(self.Z)
-        rows, cols = shape
+        rows, cols = shape[:2]
+        feature_shape = tuple(shape[2:])
         self.horizontal_edge_weights = cp.ones(
-            (rows, max(cols - 1, 0)),
+            (rows, max(cols - 1, 0), *feature_shape),
             dtype=cp.float32,
         )
         self.vertical_edge_weights = cp.ones(
-            (max(rows - 1, 0), cols),
+            (max(rows - 1, 0), cols, *feature_shape),
             dtype=cp.float32,
         )
 

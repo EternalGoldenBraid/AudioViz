@@ -32,8 +32,8 @@ def test_pose_coupled_medium_boundary_transmission_allows_crossing_signal():
     hard_cut_engine.step_without_excitation()
     transmissive_engine.step_without_excitation()
 
-    assert hard_cut_engine.get_field_numpy()[2, 2] == 0.0
-    assert transmissive_engine.get_field_numpy()[2, 2] > 0.0
+    assert np.all(hard_cut_engine.get_field_numpy()[2, 2] == 0.0)
+    assert np.all(transmissive_engine.get_field_numpy()[2, 2] > 0.0)
 
 
 def test_pose_coupled_medium_boundary_dissipation_reduces_same_transmission_energy():

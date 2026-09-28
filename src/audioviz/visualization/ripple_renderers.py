@@ -80,6 +80,7 @@ class NumpyImageRenderer:
         *,
         title: str = "Ripple Simulation",
         colormap_name: str = "inferno",
+        rgb_canvas_enabled: bool = False,
         auto_percentile_levels: bool = True,
         auto_level_percentile: float = 98.0,
         auto_level_floor: float = 0.1,
@@ -96,6 +97,8 @@ class NumpyImageRenderer:
         self._auto_level_percentile = float(auto_level_percentile)
         self._auto_level_floor = float(auto_level_floor)
         self._auto_level_activation_threshold = float(auto_level_activation_threshold)
+        self._display_limit = max(self._auto_level_floor, 1e-9)
+        self._rgb_canvas_enabled = bool(rgb_canvas_enabled)
         self.image_item = pg.ImageItem(axisOrder="row-major")
         colormap = cm.get_cmap(colormap_name)
         lookup_table = (colormap(np.linspace(0, 1, 256))[:, :3] * 255).astype(
@@ -148,15 +151,23 @@ class NumpyImageRenderer:
         if self._auto_percentile_levels:
             self._auto_levels_pending = True
 
+    def set_rgb_canvas_enabled(self, enabled: bool) -> None:
+        self._rgb_canvas_enabled = bool(enabled)
+        self._auto_levels_pending = True
+
     def reset_view(self) -> None:
         self._auto_levels_pending = True
+        self._display_limit = max(self._auto_level_floor, 1e-9)
         self.histogram.setLevels(0.0, 0.0)
 
     def render(self, field_source: RippleFieldSource) -> None:
-        field = field_source.get_field_numpy()
+        canvas = np.asarray(field_source.get_field_numpy(), dtype=np.float32)
+        if canvas.ndim != 3 or canvas.shape[2] != 3:
+            raise ValueError("ripple canvas must have shape (rows, cols, 3)")
+        display_field = canvas if self._rgb_canvas_enabled else np.mean(canvas, axis=2)
         if self._auto_percentile_levels:
             active_limit = _percentile_abs_limit(
-                field,
+                display_field,
                 percentile=self._auto_level_percentile,
             )
             limit = _resolve_auto_level_limit(
@@ -165,14 +176,28 @@ class NumpyImageRenderer:
                 floor=self._auto_level_floor,
             )
             if limit is not None:
+                self._display_limit = limit
                 self.histogram.setLevels(-limit, limit)
             self._auto_levels_pending = False
         elif self._auto_levels_pending:
-            max_abs = np.max(np.abs(field))
+            max_abs = np.max(np.abs(display_field))
             if max_abs > 0:
+                self._display_limit = float(max_abs)
                 self.histogram.setLevels(-max_abs, max_abs)
             self._auto_levels_pending = False
-        self.image_item.setImage(field, autoLevels=False)
+        if self._rgb_canvas_enabled:
+            rgb_frame = _canvas_to_rgb(
+                canvas,
+                limit=self._display_limit,
+            )
+            self.image_item.setImage(
+                rgb_frame,
+                autoLevels=False,
+                levels=(0, 255),
+            )
+            self.histogram.setLevels(0, 255)
+        else:
+            self.image_item.setImage(display_field, autoLevels=False)
 
     def render_rgb_frame(self, rgb_frame: np.ndarray) -> None:
         self.image_item.setImage(
@@ -250,6 +275,21 @@ def _prediction_overlay_rgba(
     alpha = 96.0 + 159.0 * intensity
     rgb = np.rint((1.0 - intensity) * neutral + intensity * accent).astype(np.uint8)
     return np.array([rgb[0], rgb[1], rgb[2], np.uint8(np.rint(alpha))], dtype=np.uint8)
+
+
+def _canvas_to_rgb(canvas: np.ndarray, *, limit: float) -> np.ndarray:
+    if limit <= 0.0:
+        raise ValueError("limit must be positive")
+    values = np.nan_to_num(
+        np.asarray(canvas, dtype=np.float32),
+        nan=0.0,
+        posinf=limit,
+        neginf=0.0,
+    )
+    if values.ndim != 3 or values.shape[2] != 3:
+        raise ValueError("canvas must have shape (rows, cols, 3)")
+    normalized = np.clip(values / limit, 0.0, 1.0)
+    return np.ascontiguousarray(np.rint(normalized * 255.0).astype(np.uint8))
 
 
 def _draw_overlay_segment(

@@ -243,8 +243,8 @@ def test_ripple_engine_steps_grid_excitation():
     engine.step_grid_excitation(excitation)
 
     state = engine.get_field_numpy()
-    assert state[3, 1] > 0.0
-    assert state[3, 3] > 0.0
+    assert np.all(state[3, 1] > 0.0)
+    assert np.all(state[3, 3] > 0.0)
     np.testing.assert_allclose(engine.propagator.Z_old[3, 2], 8.0)
 
 

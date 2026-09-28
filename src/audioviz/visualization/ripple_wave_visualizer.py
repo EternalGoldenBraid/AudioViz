@@ -119,6 +119,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  use_gpu: bool = False,
                  use_shader: bool = False,
                  boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
+                 rgb_canvas_enabled: bool = False,
                  auto_color_activation_threshold: float = 0.1,
                  auto_color_floor: float = 0.1,
                  source_orchestrator_config: RippleSourceOrchestratorConfig | None = None,
@@ -146,6 +147,7 @@ class RippleWaveVisualizer(VisualizerBase):
             capture=pose_capture,
         )
         self.standing_body_renderer = StandingBodyRenderer()
+        self.rgb_canvas_enabled = bool(rgb_canvas_enabled)
         self.auto_color_activation_threshold = float(auto_color_activation_threshold)
         self.auto_color_floor = float(auto_color_floor)
         if self.use_pose_sources and (self.use_gpu or self.use_shader):
@@ -219,6 +221,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
         self.renderer = (
             OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer(
+                rgb_canvas_enabled=self.rgb_canvas_enabled,
                 auto_level_floor=self.auto_color_floor,
                 auto_level_activation_threshold=self.auto_color_activation_threshold,
             )
@@ -271,6 +274,11 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_damping_changed=self._update_damping,
                 on_boundary_transmission_changed=self._update_boundary_transmission,
                 on_boundary_dissipation_changed=self._update_boundary_dissipation,
+                rgb_canvas_enabled=self.rgb_canvas_enabled,
+                on_rgb_canvas_changed=self._update_rgb_canvas,
+                rgb_canvas_available=callable(
+                    getattr(self.renderer, "set_rgb_canvas_enabled", None)
+                ),
                 auto_color_levels_enabled=self.auto_color_levels_enabled,
                 on_auto_color_levels_changed=self._update_auto_color_levels,
                 auto_color_activation_threshold=self.auto_color_activation_threshold,
@@ -310,6 +318,12 @@ class RippleWaveVisualizer(VisualizerBase):
         set_auto_levels = getattr(self.renderer, "set_auto_percentile_levels", None)
         if callable(set_auto_levels):
             set_auto_levels(self.auto_color_levels_enabled)
+
+    def _update_rgb_canvas(self, enabled: bool) -> None:
+        self.rgb_canvas_enabled = bool(enabled)
+        setter = getattr(self.renderer, "set_rgb_canvas_enabled", None)
+        if callable(setter):
+            setter(self.rgb_canvas_enabled)
 
     def _update_auto_color_activation_threshold(self, val: float) -> None:
         self.auto_color_activation_threshold = float(val)
@@ -501,7 +515,10 @@ class RippleWaveVisualizer(VisualizerBase):
                 0,
                 rows - 1,
             )
-            ripple_states[valid_indices] = field[sample_rows, sample_cols].astype(
+            ripple_states[valid_indices] = np.mean(
+                field[sample_rows, sample_cols],
+                axis=1,
+            ).astype(
                 np.float32,
                 copy=False,
             )

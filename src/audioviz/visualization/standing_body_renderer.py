@@ -65,6 +65,11 @@ class StandingBodyRenderer:
         values = np.asarray(field, dtype=np.float32)
         limit = np.max(np.abs(values))
         limit = max(float(limit), 1e-6)
+        if values.ndim == 3:
+            if values.shape[2] != 3:
+                raise ValueError("canvas field must have exactly three channels")
+            normalized = np.clip(values / limit, 0.0, 1.0)
+            return np.ascontiguousarray(np.rint(normalized * 255.0).astype(np.uint8))
         normalized = np.clip((values / limit + 1.0) * 0.5, 0.0, 1.0)
         if lookup_table is None:
             gray = np.rint(normalized * 255.0).astype(np.uint8)

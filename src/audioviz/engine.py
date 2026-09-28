@@ -26,6 +26,7 @@ class RippleEngine:
         damping: float = 0.999,
         amplitude: float = 1.0,
         decay_alpha: float = 0.0,
+        canvas_channels: int = 3,
         use_gpu: bool = False,
         use_shader: bool = False,
         boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
@@ -43,6 +44,10 @@ class RippleEngine:
         self.damping = damping
         self.amplitude = amplitude
         self.decay_alpha = decay_alpha
+        self.canvas_channels = int(canvas_channels)
+        if self.canvas_channels <= 0:
+            raise ValueError("canvas_channels must be positive")
+        self.canvas_shape = (*self.resolution, self.canvas_channels)
         self.use_gpu = use_gpu
         self.use_shader = use_shader
         self.boundary_condition = coerce_boundary_condition(boundary_condition)
@@ -66,7 +71,7 @@ class RippleEngine:
 
         self.source_positions = self._make_source_positions()
         propagator_kwargs = {
-            "shape": self.resolution,
+            "shape": self.canvas_shape,
             "dx": self.grid_spacing,
             "dt": self.dt,
             "speed": self.speed,
@@ -74,6 +79,10 @@ class RippleEngine:
             "boundary_condition": self.boundary_condition,
         }
         if use_shader:
+            if self.canvas_channels != 1:
+                raise NotImplementedError(
+                    "OpenGL propagation does not yet support multi-channel canvas states."
+                )
             self.propagator = WavePropagatorOpenGL(
                 **propagator_kwargs,
                 use_current_context=self.use_external_opengl_context,
@@ -86,8 +95,8 @@ class RippleEngine:
         else:
             self.propagator = WavePropagatorCPU(**propagator_kwargs)
 
-        self.Z = self.backend.zeros(self.resolution, dtype=self.backend.float32)
-        self.Z_old = self.backend.zeros(self.resolution, dtype=self.backend.float32)
+        self.Z = self.backend.zeros(self.canvas_shape, dtype=self.backend.float32)
+        self.Z_old = self.backend.zeros(self.canvas_shape, dtype=self.backend.float32)
         self.body_boundary_mask = None
 
     def _stable_dt(self) -> float:
@@ -229,13 +238,10 @@ class RippleEngine:
         *,
         transform: PredictionErrorTransform,
     ) -> np.ndarray:
-        field = self._coerce_prediction_field(
+        return self._coerce_prediction_field(
             self.get_field_numpy(),
             prediction_clip=transform.config.prediction_clip,
         )
-        prediction = field.astype(np.float64) + self._shared_neighbor_sum(field)
-        clip = np.float32(transform.config.prediction_clip)
-        return np.clip(prediction, -clip, clip).astype(np.float32, copy=False)
 
     def step_without_excitation(self):
         self.time += self.dt
@@ -302,8 +308,15 @@ class RippleEngine:
     def _coerce_grid_excitation(self, excitation_grid: np.ndarray):
         xp = self.backend
         excitation = xp.asarray(excitation_grid, dtype=xp.float32)
-        if excitation.shape != self.resolution:
-            raise ValueError("excitation_grid must match engine resolution")
+        if excitation.shape == self.resolution:
+            excitation = xp.broadcast_to(
+                excitation[..., None],
+                self.canvas_shape,
+            )
+        elif excitation.shape != self.canvas_shape:
+            raise ValueError(
+                "excitation_grid must match engine resolution or canvas shape"
+            )
         return excitation
 
     def _coerce_prediction_field(
@@ -313,30 +326,11 @@ class RippleEngine:
         prediction_clip: float,
     ) -> np.ndarray:
         field = np.asarray(values, dtype=np.float32)
-        if field.shape != self.resolution:
-            raise ValueError("prediction field must match engine resolution")
+        if field.shape != self.canvas_shape:
+            raise ValueError("prediction field must match engine canvas shape")
         clip = np.float32(prediction_clip)
         field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
         return np.clip(field, -clip, clip).astype(np.float32, copy=False)
-
-    def _shared_neighbor_sum(self, field: np.ndarray) -> np.ndarray:
-        field64 = field.astype(np.float64, copy=False)
-        prediction = np.zeros(self.resolution, dtype=np.float64)
-        horizontal = (self.prediction_horizontal_edge_weights - 1.0).astype(
-            np.float64,
-            copy=False,
-        )
-        vertical = (self.prediction_vertical_edge_weights - 1.0).astype(
-            np.float64,
-            copy=False,
-        )
-        if horizontal.size:
-            prediction[:, :-1] += horizontal * field64[:, 1:]
-            prediction[:, 1:] += horizontal * field64[:, :-1]
-        if vertical.size:
-            prediction[:-1, :] += vertical * field64[1:, :]
-            prediction[1:, :] += vertical * field64[:-1, :]
-        return prediction
 
     @staticmethod
     def _shared_edge_gradients(
@@ -436,6 +430,8 @@ class RippleEngine:
         expected_shape: tuple[int, ...],
     ) -> np.ndarray:
         array = np.asarray(weights, dtype=np.float32)
+        if array.shape == expected_shape[:2] and len(expected_shape) == 3:
+            array = np.broadcast_to(array[..., None], expected_shape).copy()
         if array.shape != expected_shape:
             raise ValueError("edge weight array shape must match propagator operator")
         return array
@@ -542,9 +538,10 @@ class RippleEngine:
     ) -> tuple[np.ndarray, np.ndarray]:
         horizontal = np.clip(np.asarray(horizontal, dtype=np.float32), 0.0, None)
         vertical = np.clip(np.asarray(vertical, dtype=np.float32), 0.0, None)
-        rows = horizontal.shape[0] if horizontal.ndim == 2 else vertical.shape[0] + 1
-        cols = vertical.shape[1] if vertical.ndim == 2 else horizontal.shape[1] + 1
-        degree = np.zeros((rows, cols), dtype=np.float32)
+        rows = horizontal.shape[0]
+        cols = vertical.shape[1]
+        feature_shape = horizontal.shape[2:]
+        degree = np.zeros((rows, cols, *feature_shape), dtype=np.float32)
         if horizontal.size:
             degree[:, :-1] += horizontal
             degree[:, 1:] += horizontal
@@ -587,7 +584,7 @@ class RippleEngine:
         horizontal_conductance = self.prediction_horizontal_edge_weights
         vertical_conductance = self.prediction_vertical_edge_weights
 
-        vertical_open = mask[:-1, :] == mask[1:, :]
+        vertical_open = (mask[:-1, :] == mask[1:, :])[..., None]
         vertical_diff = field[1:, :] - field[:-1, :]
         laplacian[:-1, :] += vertical_open * (vertical_conductance * vertical_diff)
         laplacian[1:, :] -= vertical_open * (vertical_conductance * vertical_diff)
@@ -599,7 +596,7 @@ class RippleEngine:
             transmission * vertical_conductance * vertical_diff
         )
 
-        horizontal_open = mask[:, :-1] == mask[:, 1:]
+        horizontal_open = (mask[:, :-1] == mask[:, 1:])[..., None]
         horizontal_diff = field[:, 1:] - field[:, :-1]
         laplacian[:, :-1] += horizontal_open * (
             horizontal_conductance * horizontal_diff
@@ -616,7 +613,7 @@ class RippleEngine:
         )
 
         if self.boundary_condition is BoundaryCondition.CYCLIC:
-            vertical_wrap_open = mask[-1, :] == mask[0, :]
+            vertical_wrap_open = (mask[-1, :] == mask[0, :])[..., None]
             vertical_wrap_diff = field[0, :] - field[-1, :]
             laplacian[-1, :] += vertical_wrap_open * vertical_wrap_diff
             laplacian[0, :] -= vertical_wrap_open * vertical_wrap_diff
@@ -628,7 +625,7 @@ class RippleEngine:
                 transmission * vertical_wrap_diff
             )
 
-            horizontal_wrap_open = mask[:, -1] == mask[:, 0]
+            horizontal_wrap_open = (mask[:, -1] == mask[:, 0])[..., None]
             horizontal_wrap_diff = field[:, 0] - field[:, -1]
             laplacian[:, -1] += horizontal_wrap_open * horizontal_wrap_diff
             laplacian[:, 0] -= horizontal_wrap_open * horizontal_wrap_diff

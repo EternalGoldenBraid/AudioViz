@@ -81,12 +81,13 @@ def test_ripple_engine_steps_full_grid_excitation_once():
     field = engine.step_grid_excitation(excitation)
 
     assert engine.time == pytest.approx(engine.dt)
-    assert np.count_nonzero(field) == 5
-    assert field[0, 2] == pytest.approx(0.5)
-    assert field[1, 1] == pytest.approx(0.5)
-    assert field[1, 3] == pytest.approx(0.5)
-    assert field[2, 2] == pytest.approx(0.5)
-    assert field[1, 2] == pytest.approx(0.0)
+    assert field.shape == (4, 5, 3)
+    assert np.count_nonzero(field) == 15
+    np.testing.assert_allclose(field[0, 2], 0.5)
+    np.testing.assert_allclose(field[1, 1], 0.5)
+    np.testing.assert_allclose(field[1, 3], 0.5)
+    np.testing.assert_allclose(field[2, 2], 0.5)
+    np.testing.assert_allclose(field[1, 2], 0.0, atol=1e-7)
 
 
 def test_ripple_engine_rejects_grid_excitation_shape_mismatch():

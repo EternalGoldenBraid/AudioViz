@@ -288,6 +288,9 @@ def _write_render_artifacts(
 
 
 def _field_to_rgb(field: np.ndarray, *, limit: float) -> np.ndarray:
+    if field.ndim == 3:
+        normalized = np.clip(field / limit, 0.0, 1.0)
+        return np.ascontiguousarray(np.rint(normalized * 255.0).astype(np.uint8))
     normalized = np.clip((field / limit + 1.0) * 0.5, 0.0, 1.0)
     rgba = colormaps["inferno"](normalized, bytes=True)
     return np.ascontiguousarray(rgba[..., :3])

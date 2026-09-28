@@ -18,12 +18,15 @@ def _build_engine() -> RippleEngine:
     )
 
 
+def _rgb_field(values: np.ndarray) -> np.ndarray:
+    return np.repeat(np.asarray(values, dtype=np.float32)[..., None], 3, axis=2)
+
+
 def test_ripple_engine_observe_updates_symmetric_prediction_edges():
     engine = _build_engine()
     transform = PredictionErrorTransform(
         config=PredictionErrorTransformConfig(
             enabled=True,
-            output_mode="squared_error",
             activation_function="linear_clipped",
             sigma=1.0,
             learning_enabled=True,
@@ -32,9 +35,9 @@ def test_ripple_engine_observe_updates_symmetric_prediction_edges():
             learning_weight_clip=100.0,
             learning_gradient_clip=100.0,
         ),
-        resolution=(2, 2),
+        resolution=engine.canvas_shape,
     )
-    engine.Z[:] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    engine.Z[:] = _rgb_field([[1.0, 2.0], [3.0, 4.0]])
     observation = engine.Z + np.ones_like(engine.Z)
 
     engine.observe(
@@ -47,13 +50,17 @@ def test_ripple_engine_observe_updates_symmetric_prediction_edges():
     assert engine.prediction_vertical_edge_weights is not None
     np.testing.assert_allclose(
         engine.prediction_horizontal_edge_weights,
-        1.0 + 0.05 * np.array([[3.0], [7.0]], dtype=np.float32) / np.log(2.0),
+        _rgb_field(
+            1.0 + 0.05 * np.array([[3.0], [7.0]], dtype=np.float32) / np.log(2.0)
+        ),
         rtol=1e-6,
         atol=1e-6,
     )
     np.testing.assert_allclose(
         engine.prediction_vertical_edge_weights,
-        1.0 + 0.05 * np.array([[4.0, 6.0]], dtype=np.float32) / np.log(2.0),
+        _rgb_field(
+            1.0 + 0.05 * np.array([[4.0, 6.0]], dtype=np.float32) / np.log(2.0)
+        ),
         rtol=1e-6,
         atol=1e-6,
     )
@@ -71,9 +78,9 @@ def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation(
             learning_weight_clip=100.0,
             learning_gradient_clip=100.0,
         ),
-        resolution=(2, 2),
+        resolution=engine.canvas_shape,
     )
-    engine.Z[:] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    engine.Z[:] = _rgb_field([[1.0, 2.0], [3.0, 4.0]])
     observation = engine.Z + 1.0
 
     engine.observe(
@@ -83,11 +90,11 @@ def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation(
     )
     np.testing.assert_array_equal(
         engine.prediction_horizontal_edge_weights,
-        np.ones((2, 1), dtype=np.float32),
+        np.ones((2, 1, 3), dtype=np.float32),
     )
     np.testing.assert_array_equal(
         engine.prediction_vertical_edge_weights,
-        np.ones((1, 2), dtype=np.float32),
+        np.ones((1, 2, 3), dtype=np.float32),
     )
 
     transform.update_config(learning_enabled=True)
@@ -103,7 +110,7 @@ def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation(
     assert np.any(engine.prediction_vertical_edge_weights != 1.0)
 
 
-def test_ripple_engine_predict_observation_uses_operator_even_when_learning_disabled():
+def test_ripple_engine_predict_observation_reads_canvas_without_graph_aggregation():
     engine = _build_engine()
     transform = PredictionErrorTransform(
         config=PredictionErrorTransformConfig(
@@ -115,9 +122,9 @@ def test_ripple_engine_predict_observation_uses_operator_even_when_learning_disa
             learning_weight_clip=100.0,
             learning_gradient_clip=100.0,
         ),
-        resolution=(2, 2),
+        resolution=engine.canvas_shape,
     )
-    engine.Z[:] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    engine.Z[:] = _rgb_field([[1.0, 2.0], [3.0, 4.0]])
     engine.prediction_horizontal_edge_weights = np.array(
         [[1.5], [2.0]],
         dtype=np.float32,
@@ -129,14 +136,44 @@ def test_ripple_engine_predict_observation_uses_operator_even_when_learning_disa
 
     prediction = engine.predict_observation(transform=transform)
 
-    expected = np.array(
-        [
-            [1.0 + 0.5 * 2.0 + 0.25 * 3.0, 2.0 + 0.5 * 1.0 + 0.75 * 4.0],
-            [3.0 + 1.0 * 4.0 + 0.25 * 1.0, 4.0 + 1.0 * 3.0 + 0.75 * 2.0],
-        ],
-        dtype=np.float32,
+    np.testing.assert_allclose(prediction, engine.Z, rtol=1e-6, atol=1e-6)
+
+
+def test_ripple_engine_learns_prediction_edges_per_canvas_channel():
+    engine = _build_engine()
+    transform = PredictionErrorTransform(
+        config=PredictionErrorTransformConfig(
+            enabled=True,
+            activation_function="linear_clipped",
+            sigma=1.0,
+            learning_enabled=True,
+            learning_rate=0.05,
+            learning_weight_decay=0.0,
+            learning_weight_clip=100.0,
+            learning_gradient_clip=100.0,
+        ),
+        resolution=engine.canvas_shape,
     )
-    np.testing.assert_allclose(prediction, expected, rtol=1e-6, atol=1e-6)
+    engine.Z[..., 0] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    observation = engine.Z.copy()
+    observation[..., 0] += 1.0
+
+    engine.observe(
+        source_key="camera_frame",
+        observation=observation,
+        transform=transform,
+    )
+
+    assert np.any(engine.prediction_horizontal_edge_weights[..., 0] != 1.0)
+    assert np.any(engine.prediction_vertical_edge_weights[..., 0] != 1.0)
+    np.testing.assert_array_equal(
+        engine.prediction_horizontal_edge_weights[..., 1:],
+        1.0,
+    )
+    np.testing.assert_array_equal(
+        engine.prediction_vertical_edge_weights[..., 1:],
+        1.0,
+    )
 
 
 def test_ripple_engine_normalizes_prediction_conductances_to_stable_degree_budget():
@@ -153,7 +190,7 @@ def test_ripple_engine_normalizes_prediction_conductances_to_stable_degree_budge
 
     horizontal = engine.prediction_horizontal_edge_weights
     vertical = engine.prediction_vertical_edge_weights
-    degree = np.zeros((3, 3), dtype=np.float32)
+    degree = np.zeros((3, 3, 3), dtype=np.float32)
     degree[:, :-1] += horizontal
     degree[:, 1:] += horizontal
     degree[:-1, :] += vertical

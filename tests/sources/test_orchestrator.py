@@ -136,7 +136,7 @@ def test_ripple_source_orchestrator_scales_audio_only_excitation_by_signal_level
 
 def test_ripple_source_orchestrator_uses_zero_observation_when_camera_feed_is_off():
     engine = _build_engine()
-    engine.Z[:] = np.array(
+    scalar_state = np.array(
         [
             [0.5, -0.25] + [0.0] * 30,
             [0.75, -0.5] + [0.0] * 30,
@@ -144,6 +144,7 @@ def test_ripple_source_orchestrator_uses_zero_observation_when_camera_feed_is_of
         + [[0.0] * 32 for _ in range(22)],
         dtype=np.float32,
     )
+    engine.Z[:] = scalar_state[..., None]
     orchestrator = RippleSourceOrchestrator(
         config=RippleSourceOrchestratorConfig(
             synthetic=SyntheticSourceConfig(enabled=False, frequency=440.0),
@@ -152,7 +153,6 @@ def test_ripple_source_orchestrator_uses_zero_observation_when_camera_feed_is_of
             prediction_error=PredictionErrorTransformConfig(
                 enabled=True,
                 inputs=("camera_frame",),
-                output_mode="raw_error",
                 activation_function="linear_clipped",
                 gain=1.0,
                 learning_enabled=False,

@@ -7,12 +7,10 @@ from audioviz.transforms.prediction_error import (
 )
 
 
-def test_prediction_error_transform_outputs_gaussian_bits():
+def test_prediction_error_transform_outputs_signed_raw_error():
     transform = PredictionErrorTransform(
         config=PredictionErrorTransformConfig(
             enabled=True,
-            sigma=0.1,
-            output_mode="bits",
             activation_function="linear_clipped",
         ),
         resolution=(2, 2),
@@ -26,16 +24,18 @@ def test_prediction_error_transform_outputs_gaussian_bits():
         ripple_state=ripple_state,
     )
 
-    expected_error = observation - ripple_state
-    expected = (expected_error * expected_error) / (2.0 * 0.1 * 0.1 * np.log(2.0))
-    np.testing.assert_allclose(transformed, expected, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        transformed,
+        observation - ripple_state,
+        rtol=1e-6,
+        atol=1e-6,
+    )
 
 
 def test_prediction_error_transform_applies_softsign_activation():
     transform = PredictionErrorTransform(
         config=PredictionErrorTransformConfig(
             enabled=True,
-            output_mode="squared_error",
             activation_function="softsign",
             activation_scale=2.0,
             max_output=5.0,
@@ -51,8 +51,7 @@ def test_prediction_error_transform_applies_softsign_activation():
         ripple_state=ripple_state,
     )
 
-    squared_error = observation * observation
-    expected = 5.0 * squared_error / (2.0 + squared_error)
+    expected = 5.0 * observation / (2.0 + np.abs(observation))
     np.testing.assert_allclose(transformed, expected, rtol=1e-6, atol=1e-6)
 
 
@@ -60,8 +59,6 @@ def test_prediction_error_transform_clips_runaway_values():
     transform = PredictionErrorTransform(
         config=PredictionErrorTransformConfig(
             enabled=True,
-            sigma=0.1,
-            output_mode="bits",
             prediction_clip=5.0,
             max_output=3.0,
         ),
@@ -84,8 +81,18 @@ def test_prediction_error_transform_clips_runaway_values():
         )
 
     assert np.all(np.isfinite(transformed))
-    assert np.min(transformed) >= 0.0
+    assert np.min(transformed) >= -3.0
     assert np.max(transformed) <= 3.0
+
+
+def test_prediction_neighbor_fields_preserves_rgb_channel_axis():
+    field = np.arange(18, dtype=np.float32).reshape(2, 3, 3)
+
+    neighbors = PredictionErrorTransform.neighbor_fields(field)
+
+    assert neighbors.shape == (4, 2, 3, 3)
+    np.testing.assert_array_equal(neighbors[0, 1, 2], field[0, 2])
+    np.testing.assert_array_equal(neighbors[1, 0, 0], field[1, 0])
 
 
 def test_prediction_error_transform_rejects_invalid_config():

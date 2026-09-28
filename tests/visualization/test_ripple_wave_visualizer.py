@@ -182,6 +182,54 @@ def test_ripple_visualizer_camera_source_updates_field_and_releases_capture(qapp
     assert capture.released
 
 
+def test_ripple_visualizer_rgb_canvas_preserves_camera_error_channels(qapp):
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    frame = np.array(
+        [
+            [[0, 0, 255], [0, 255, 0]],
+            [[255, 0, 0], [0, 0, 0]],
+        ],
+        dtype=np.uint8,
+    )
+    capture = _FakeCapture(frames=[frame])
+    visualizer = RippleWaveVisualizer(
+        processor=None,
+        resolution=(6, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        amplitude=1.0,
+        source_orchestrator_config=_source_config(
+            use_synthetic=False,
+            use_camera_source=True,
+            prediction_error=PredictionErrorTransformConfig(
+                enabled=True,
+                activation_function="linear_clipped",
+                gain=1.0,
+            ),
+        ),
+        camera_capture=capture,
+    )
+    visualizer.timer.stop()
+    visualizer._update_rgb_canvas(True)
+
+    visualizer.update_visualization()
+
+    canvas = visualizer.engine.get_field_numpy()
+    rendered = visualizer.renderer.image_item.image
+    assert canvas.shape == (6, 8, 3)
+    assert rendered is not None
+    assert rendered.shape == (6, 8, 3)
+    assert np.any(canvas[..., 0] != canvas[..., 1])
+    assert np.any(canvas[..., 1] != canvas[..., 2])
+    assert np.any(rendered[..., 0] != rendered[..., 1])
+    assert np.any(rendered[..., 1] != rendered[..., 2])
+
+    visualizer.close_camera_source()
+    assert capture.released
+
+
 def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut(qapp):
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
@@ -288,7 +336,7 @@ def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render(qapp):
         auto_level_activation_threshold=0.1,
     )
     visualizer.renderer = renderer
-    visualizer.engine.Z[:] = np.full((24, 32), 0.2, dtype=np.float32)
+    visualizer.engine.Z[:] = np.full((24, 32, 3), 0.2, dtype=np.float32)
 
     renderer.render(visualizer.engine)
     first_levels = renderer.histogram.getLevels()

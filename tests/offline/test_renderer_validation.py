@@ -6,9 +6,9 @@ from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
 
 def _seed_field(visualizer: RippleWaveVisualizer) -> None:
-    field = np.zeros(visualizer.resolution, dtype=np.float32)
-    field[6:14, 9:17] = 0.75
-    field[10:18, 15:23] -= 0.35
+    field = np.zeros(visualizer.engine.canvas_shape, dtype=np.float32)
+    field[6:14, 9:17, 0] = 0.75
+    field[10:18, 15:23, 2] = 0.35
     visualizer.engine.propagator.Z[:] = field
     if hasattr(visualizer.engine.propagator, "Z_old"):
         visualizer.engine.propagator.Z_old[:] = 0
@@ -70,6 +70,25 @@ def test_offline_render_validation_keeps_non_pose_view_flat(qapp):
         assert screenshot.ndim == 3
         assert screenshot.shape[2] == 3
         assert np.count_nonzero(screenshot) > 0
+    finally:
+        visualizer.close()
+        qapp.processEvents()
+
+
+def test_offline_render_validation_rgb_canvas_produces_colored_widget_pixels(qapp):
+    visualizer = _build_non_pose_visualizer()
+    visualizer._update_rgb_canvas(True)
+    visualizer.show()
+    qapp.processEvents()
+
+    try:
+        visualizer.renderer.render(visualizer.engine)
+        qapp.processEvents()
+        screenshot = _grab_widget_rgb(visualizer.renderer.widget)
+        channel_spread = np.max(screenshot, axis=2) - np.min(screenshot, axis=2)
+
+        assert visualizer.renderer.image_item.image.shape == (24, 32, 3)
+        assert np.count_nonzero(channel_spread > 20) > 100
     finally:
         visualizer.close()
         qapp.processEvents()

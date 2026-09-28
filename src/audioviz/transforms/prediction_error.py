@@ -11,7 +11,6 @@ class PredictionErrorTransformConfig:
     inputs: tuple[str, ...] = ("camera_frame",)
     predictor_source: str = "ripple_state"
     sigma: float = 0.1
-    output_mode: str = "bits"
     activation_function: str = "softsign"
     activation_scale: float = 1.0
     gain: float = 1.0
@@ -29,7 +28,7 @@ class PredictionErrorTransform:
         self,
         *,
         config: PredictionErrorTransformConfig,
-        resolution: tuple[int, int],
+        resolution: tuple[int, ...],
     ):
         self.config = config
         self.resolution = resolution
@@ -68,7 +67,11 @@ class PredictionErrorTransform:
 
     @staticmethod
     def neighbor_fields(field: np.ndarray) -> np.ndarray:
-        padded = np.pad(np.asarray(field, dtype=np.float64), 1, mode="edge")
+        values = np.asarray(field, dtype=np.float64)
+        if values.ndim < 2:
+            raise ValueError("prediction field must have at least two spatial axes")
+        pad_width = ((1, 1), (1, 1)) + ((0, 0),) * (values.ndim - 2)
+        padded = np.pad(values, pad_width, mode="edge")
         return np.stack(
             (
                 padded[:-2, 1:-1],
@@ -79,22 +82,7 @@ class PredictionErrorTransform:
             axis=0,
         )
 
-    def _error_to_output(self, error: np.ndarray) -> np.ndarray:
-        mode = self.config.output_mode
-        if mode == "raw_error":
-            return error
-        if mode == "abs_error":
-            return np.abs(error)
-        if mode == "squared_error":
-            return error * error
-        if mode == "bits":
-            sigma = np.float64(self.config.sigma)
-            return (error * error) / (
-                np.float64(2.0) * sigma * sigma * np.float64(np.log(2.0))
-            )
-        raise ValueError(f"Unknown prediction error output mode: {mode}")
-
-    def _activate_output(self, values: np.ndarray, *, signed: bool) -> np.ndarray:
+    def _activate_output(self, values: np.ndarray) -> np.ndarray:
         values = np.asarray(values, dtype=np.float64)
         scale = np.float64(self.config.activation_scale)
         max_output = np.float64(self.config.max_output)
@@ -109,16 +97,10 @@ class PredictionErrorTransform:
             activated = scale * np.sign(values) * np.log1p(np.abs(values) / scale)
         else:
             raise ValueError(f"Unknown prediction error activation: {function}")
-        if not signed:
-            activated = np.maximum(activated, 0.0)
         return activated
 
     def shape_error(self, error: np.ndarray) -> np.ndarray:
-        transformed = self._error_to_output(error)
-        transformed = self._activate_output(
-            transformed,
-            signed=self.config.output_mode == "raw_error",
-        )
+        transformed = self._activate_output(error)
         transformed = transformed * np.float64(self.config.gain)
         max_output = np.float64(self.config.max_output)
         transformed = np.nan_to_num(
@@ -127,16 +109,13 @@ class PredictionErrorTransform:
             posinf=max_output,
             neginf=-max_output,
         )
-        if self.config.output_mode == "raw_error":
-            transformed = np.clip(transformed, -max_output, max_output)
-        else:
-            transformed = np.clip(transformed, 0.0, max_output)
+        transformed = np.clip(transformed, -max_output, max_output)
         return transformed.astype(np.float32, copy=False)
 
     def _coerce_field(self, values: np.ndarray) -> np.ndarray:
         field = np.asarray(values, dtype=np.float32)
         if field.shape != self.resolution:
-            raise ValueError("ripple-state prediction must match engine resolution")
+            raise ValueError("ripple-state prediction must match engine canvas shape")
         clip = np.float32(self.config.prediction_clip)
         field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
         return np.clip(field, -clip, clip).astype(np.float32, copy=False)
@@ -165,12 +144,6 @@ class PredictionErrorTransform:
             raise ValueError("prediction_error_learning_gradient_clip must be positive")
         if self.config.predictor_source != "ripple_state":
             raise ValueError("prediction_error_predictor_source must be 'ripple_state'")
-        valid_output_modes = {"raw_error", "abs_error", "squared_error", "bits"}
-        if self.config.output_mode not in valid_output_modes:
-            raise ValueError(
-                "prediction_error_output_mode must be one of "
-                f"{sorted(valid_output_modes)}"
-            )
         valid_activation_functions = {
             "linear_clipped",
             "tanh",

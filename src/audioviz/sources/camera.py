@@ -4,12 +4,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+from loguru import logger
 
 
 @dataclass(frozen=True)
 class CameraFrameSourceConfig:
     enabled: bool = False
-    camera_index: int = 0
+    camera_index: int | str = 0
     gain: float = 1.0
 
 
@@ -24,14 +25,14 @@ class CameraFrameSource:
         self,
         *,
         resolution: tuple[int, int],
-        camera_index: int = 0,
+        camera_index: int | str = 0,
         gain: float = 1.0,
         enabled: bool = False,
         capture=None,
         cv2_loader: Callable = load_cv2,
     ) -> None:
         self.resolution = tuple(int(value) for value in resolution)
-        self.camera_index = int(camera_index)
+        self.camera_index = camera_index
         self.gain = float(gain)
         self.enabled = bool(enabled)
         self.capture = capture
@@ -49,6 +50,7 @@ class CameraFrameSource:
         if self.capture is not None:
             return
         cv2 = self.cv2_loader()
+        logger.info("Opening camera source: {}", self.camera_index)
         capture = cv2.VideoCapture(self.camera_index)
         if not capture.isOpened():
             capture.release()
@@ -85,29 +87,27 @@ class CameraFrameSource:
     ) -> np.ndarray:
         values = np.asarray(frame)
         if values.ndim == 3:
-            channels = values[..., :3].astype(np.float32)
-            gray = (
-                0.114 * channels[..., 0]
-                + 0.587 * channels[..., 1]
-                + 0.299 * channels[..., 2]
-            )
+            if values.shape[2] < 3:
+                raise ValueError("camera frame must provide at least three channels")
+            rgb = values[..., :3][..., ::-1].astype(np.float32)
         elif values.ndim == 2:
             gray = values.astype(np.float32)
+            rgb = np.repeat(gray[..., None], 3, axis=2)
         else:
             raise ValueError(
                 "camera frame must have shape (rows, cols) or (rows, cols, channels)"
             )
-        if gray.size == 0:
+        if rgb.size == 0:
             raise ValueError("camera frame must not be empty")
         if values.dtype.kind in {"u", "i"}:
-            gray = gray / np.float32(255.0)
+            rgb = rgb / np.float32(255.0)
         else:
-            max_value = float(np.nanmax(gray))
+            max_value = float(np.nanmax(rgb))
             if max_value > 1.0:
-                gray = gray / np.float32(255.0)
-        gray = np.nan_to_num(gray, nan=0.0, posinf=1.0, neginf=0.0)
-        gray = np.clip(gray, 0.0, 1.0)
-        mapped = CameraFrameSource.resize_grid(gray, resolution=resolution)
+                rgb = rgb / np.float32(255.0)
+        rgb = np.nan_to_num(rgb, nan=0.0, posinf=1.0, neginf=0.0)
+        rgb = np.clip(rgb, 0.0, 1.0)
+        mapped = CameraFrameSource.resize_grid(rgb, resolution=resolution)
         return (mapped * np.float32(gain)).astype(np.float32, copy=False)
 
     @staticmethod
@@ -117,7 +117,7 @@ class CameraFrameSource:
         resolution: tuple[int, int],
     ) -> np.ndarray:
         rows, cols = resolution
-        src_rows, src_cols = values.shape
+        src_rows, src_cols = values.shape[:2]
         y_index = np.rint(np.linspace(0, src_rows - 1, rows)).astype(np.int32)
         x_index = np.rint(np.linspace(0, src_cols - 1, cols)).astype(np.int32)
         return np.ascontiguousarray(values[y_index][:, x_index], dtype=np.float32)

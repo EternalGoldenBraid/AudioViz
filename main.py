@@ -87,6 +87,7 @@ RIPPLE_CONFIG = {
     },
     "renderer": {
         "backend": "numpy",  # numpy | gpu | opengl
+        "rgb_canvas_enabled": False,
         "auto_color_activation_threshold": 0.1,
         "auto_color_floor": 0.1,
     },
@@ -147,7 +148,6 @@ RIPPLE_CONFIG = {
                 "sigma": 0.1,
             },
             "output": {
-                "mode": "bits",  # raw_error | abs_error | squared_error | bits
                 "activation": {
                     "function": "softsign",
                     "scale": 1.0,
@@ -210,7 +210,6 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
                 inputs=tuple(prediction_error["inputs"]),
                 predictor_source=prediction_error_predictor["source"],
                 sigma=prediction_error_predictor["sigma"],
-                output_mode=prediction_error_output["mode"],
                 activation_function=prediction_error_output["activation"]["function"],
                 activation_scale=prediction_error_output["activation"]["scale"],
                 gain=prediction_error_output["gain"],
@@ -235,6 +234,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
         ),
         "use_gpu": backend == "gpu",
         "use_shader": backend == "opengl",
+        "rgb_canvas_enabled": renderer["rgb_canvas_enabled"],
         "auto_color_activation_threshold": renderer["auto_color_activation_threshold"],
         "auto_color_floor": renderer["auto_color_floor"],
     }
