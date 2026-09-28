@@ -272,7 +272,7 @@ def main():
     if is_streaming:
         data = None
         device_enum = AudioDeviceDesktop
-        config = select_devices(config_file=Path("outputs/audio_devices.json"))
+        config = select_devices(config_file=Path("config/audio_devices.json"))
         sr: Union[int, float] = config["samplerate"]
     else:
         data, sr = lr.load(audio_file, sr=None)

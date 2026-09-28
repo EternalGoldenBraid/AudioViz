@@ -1,6 +1,5 @@
-from pathlib import Path
 from typing import Dict, Union
-from json import dumps, loads
+from json import dumps
 
 import sounddevice as sd
 
@@ -25,15 +24,17 @@ class TestAudioDeviceSetup:
         
         print(sd.query_devices())
 
-    def test_select_devices_prompt(self):
-        config = select_devices(config_file=Path("outputs/audio_devices.json"))
-        print("\n🎧 Selected Configuration:")
-        print(config)
-        
+    def test_select_devices_reads_existing_config(self, tmp_path):
+        config_file = tmp_path / "audio_devices.json"
+        expected = {
+            "input_device_index": -1,
+            "output_device_index": -1,
+            "input_channels": 0,
+            "output_channels": 0,
+            "samplerate": 44100,
+        }
+        config_file.write_text(dumps(expected))
 
-if __name__ == "__main__":
-    test = TestAudioDeviceSetup()
+        config = select_devices(config_file=config_file)
 
-    # test.test_read_live_audio()
-
-    test.test_select_devices_prompt()
+        assert config == expected

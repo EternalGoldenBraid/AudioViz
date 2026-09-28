@@ -43,6 +43,11 @@ python main.py
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
+For live streaming, the first run prompts for audio devices and stores the
+machine-local selection in `config/audio_devices.json`. The file is ignored by
+Git; `config/audio_devices.example.json` documents its structure and safe null
+device values.
+
 ---
 
 ## 🧍 Pose Model
