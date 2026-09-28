@@ -85,7 +85,7 @@ def test_ripple_source_orchestrator_respects_explicit_audio_source_enabled_state
     resolved = orchestrator.resolve()
 
     assert resolved.audio_frequencies is None
-    assert resolved.grid_excitation is None
+    assert resolved.drive_grid is None
     assert resolved.amplitude == 1.0
 
 
@@ -134,7 +134,7 @@ def test_ripple_source_orchestrator_scales_audio_only_excitation_by_signal_level
     assert resolved.amplitude == 0.5
 
 
-def test_ripple_source_orchestrator_uses_zero_observation_when_camera_feed_is_off():
+def test_ripple_source_orchestrator_skips_correction_when_camera_feed_is_off():
     engine = _build_engine()
     scalar_state = np.array(
         [
@@ -144,7 +144,14 @@ def test_ripple_source_orchestrator_uses_zero_observation_when_camera_feed_is_of
         + [[0.0] * 32 for _ in range(22)],
         dtype=np.float32,
     )
-    engine.Z[:] = scalar_state[..., None]
+    field = np.broadcast_to(
+        scalar_state[..., None],
+        engine.canvas_shape,
+    ).copy()
+    engine.Z[:] = field
+    engine.Z_old[:] = field
+    engine.propagator.Z[:] = field
+    engine.propagator.Z_old[:] = field
     orchestrator = RippleSourceOrchestrator(
         config=RippleSourceOrchestratorConfig(
             synthetic=SyntheticSourceConfig(enabled=False, frequency=440.0),
@@ -165,12 +172,11 @@ def test_ripple_source_orchestrator_uses_zero_observation_when_camera_feed_is_of
         n_sources=1,
     )
 
-    excitation = orchestrator.resolve_camera_frame_excitation()
+    source_frame = orchestrator.resolve()
+    engine.propagate(source_frame.drive_grid)
+    prior = engine.get_prior_numpy().copy()
+    correction = orchestrator.resolve_observation_correction()
 
-    assert excitation is not None
-    np.testing.assert_allclose(
-        excitation[:2, :2],
-        -engine.Z[:2, :2],
-        rtol=1e-6,
-        atol=1e-6,
-    )
+    assert source_frame.drive_grid is None
+    assert correction is None
+    np.testing.assert_array_equal(engine.get_field_numpy(), prior)

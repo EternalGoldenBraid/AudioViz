@@ -342,25 +342,14 @@ class RippleWaveVisualizer(VisualizerBase):
         self.engine.amplitude = source_frame.amplitude
 
         if self.use_pose_sources:
-            self._update_pose_visualization(source_frame.grid_excitation)
-            return
-
-        if source_frame.grid_excitation is None:
-            if not self.renderer.prepare_frame():
-                return
-            self.engine.step_without_excitation()
-            self.time = self.engine.time
-            self._render_scene()
-            self.source_control_binding.sync_audio_panel(
-                self.control_panel,
-                source_frame.audio_frequencies,
-            )
+            self._update_pose_visualization(source_frame.drive_grid)
             return
 
         if not self.renderer.prepare_frame():
             return
 
-        self.engine.step_grid_excitation(source_frame.grid_excitation)
+        self.engine.propagate(source_frame.drive_grid)
+        self.source_orchestrator.correct_from_observations()
         self.time = self.engine.time
         self._render_scene()
         self.source_control_binding.sync_audio_panel(
@@ -427,7 +416,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _update_pose_visualization(
         self,
-        source_excitation: np.ndarray | None,
+        drive_grid: np.ndarray | None,
     ) -> None:
         sample = self.pose_source.read()
         if sample is None:
@@ -449,7 +438,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if not pose.coords.size:
             self._latest_pose_render_positions = np.zeros((0, 2), dtype=np.float32)
             self._latest_pose_valid = np.zeros((0,), dtype=bool)
-            self._step_engine_for_pose_mode(source_excitation)
+            self._step_engine_for_pose_mode(drive_grid)
             if self.pose_state is not None:
                 self.pose_state.set_ripple_states(
                     np.zeros(self.pose_state.num_nodes, dtype=np.float32)
@@ -475,21 +464,19 @@ class RippleWaveVisualizer(VisualizerBase):
         mapped_positions = self._map_pose_positions_to_render_positions(positions)
         self._latest_pose_render_positions = mapped_positions.copy()
         self._latest_pose_valid = valid.copy()
-        self._step_engine_for_pose_mode(source_excitation)
+        self._step_engine_for_pose_mode(drive_grid)
         self._update_pose_ripple_states(mapped_positions, valid)
         self.time = self.engine.time
         self._render_scene()
 
     def _step_engine_for_pose_mode(
         self,
-        source_excitation: np.ndarray | None,
+        drive_grid: np.ndarray | None,
     ) -> None:
         if not self.renderer.prepare_frame():
             return
-        if source_excitation is None:
-            self.engine.step_without_excitation()
-            return
-        self.engine.step_grid_excitation(source_excitation)
+        self.engine.propagate(drive_grid)
+        self.source_orchestrator.correct_from_observations()
 
     def _update_pose_ripple_states(
         self,

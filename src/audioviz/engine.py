@@ -97,6 +97,11 @@ class RippleEngine:
 
         self.Z = self.backend.zeros(self.canvas_shape, dtype=self.backend.float32)
         self.Z_old = self.backend.zeros(self.canvas_shape, dtype=self.backend.float32)
+        self.prior_Z = self.backend.zeros(
+            self.canvas_shape,
+            dtype=self.backend.float32,
+        )
+        self._has_prior = False
         self.body_boundary_mask = None
 
     def _stable_dt(self) -> float:
@@ -180,6 +185,8 @@ class RippleEngine:
         self.propagator.reset()
         self.Z[:] = 0
         self.Z_old[:] = 0
+        self.prior_Z[:] = 0
+        self._has_prior = False
         self.time = 0.0
 
     def set_body_boundary_mask(self, body_boundary_mask: np.ndarray | None) -> None:
@@ -191,46 +198,63 @@ class RippleEngine:
             raise ValueError("body_boundary_mask must match engine resolution")
         self.body_boundary_mask = mask.copy()
 
+    def propagate(
+        self,
+        excitation_grid: np.ndarray | None = None,
+    ):
+        self.time += self.dt
+        excitation = (
+            None
+            if excitation_grid is None
+            else self._coerce_grid_excitation(excitation_grid)
+            * np.float32(self.amplitude)
+        )
+        if self._uses_custom_grid_step():
+            self._step_cpu_grid(excitation=excitation)
+            return self._capture_prior()
+        if excitation is not None:
+            self.propagator.add_excitation(excitation)
+        self.propagator.step()
+        if self.use_shader:
+            return self._capture_prior()
+        if hasattr(self.propagator, "Z_old"):
+            self.Z_old = self.propagator.Z_old.copy()
+        self.Z[:] = self.propagator.get_state()
+        return self._capture_prior()
+
     def step_grid_excitation(
         self,
         excitation_grid: np.ndarray,
     ):
-        self.time += self.dt
-        excitation = self._coerce_grid_excitation(excitation_grid) * np.float32(
-            self.amplitude
-        )
-        if self._uses_custom_grid_step():
-            self._step_cpu_grid(excitation=excitation)
-            return self.Z
-        self.propagator.add_excitation(excitation)
-        self.propagator.step()
-        if self.use_shader:
-            return self.Z
-        if hasattr(self.propagator, "Z_old"):
-            self.Z_old = np.array(self.propagator.Z_old, copy=True)
-        self.Z[:] = self.propagator.get_state()
-        return self.Z
+        return self.propagate(excitation_grid)
 
-    def observe(
+    def step_without_excitation(self):
+        return self.propagate()
+
+    def compute_observation_correction(
         self,
         *,
         source_key: str,
         observation: np.ndarray,
         transform: PredictionErrorTransform,
-    ) -> np.ndarray:
+    ) -> np.ndarray | None:
+        if not transform.applies_to(source_key):
+            return None
         observed = self._coerce_prediction_field(
             observation,
             prediction_clip=transform.config.prediction_clip,
         )
-        if not transform.applies_to(source_key):
-            return observed
 
         prediction = self.predict_observation(transform=transform)
         error = observed.astype(np.float64, copy=False) - prediction.astype(
             np.float64,
             copy=False,
         )
-        self._update_prediction_edge_weights(error=error, transform=transform)
+        self._update_conductances_from_legacy_rule(
+            error=error,
+            field=prediction,
+            transform=transform,
+        )
         return transform.shape_error(error)
 
     def predict_observation(
@@ -238,22 +262,27 @@ class RippleEngine:
         *,
         transform: PredictionErrorTransform,
     ) -> np.ndarray:
+        if not self._has_prior:
+            raise RuntimeError("propagate must be called before predicting observations")
         return self._coerce_prediction_field(
-            self.get_field_numpy(),
+            self.get_prior_numpy(),
             prediction_clip=transform.config.prediction_clip,
         )
 
-    def step_without_excitation(self):
-        self.time += self.dt
-        if self._uses_custom_grid_step():
-            self._step_cpu_grid(excitation=None)
-            return self.Z
-        self.propagator.step()
+    def apply_observation_correction(self, correction_grid: np.ndarray) -> np.ndarray:
         if self.use_shader:
-            return self.Z
+            raise NotImplementedError(
+                "Observation correction does not yet support OpenGL propagation."
+            )
+        if not self._has_prior:
+            raise RuntimeError("propagate must be called before correcting observations")
+
+        correction = self._coerce_grid_excitation(correction_grid)
+        self.Z += correction
+        self.Z_old += correction
+        self.propagator.Z[...] = self.Z
         if hasattr(self.propagator, "Z_old"):
-            self.Z_old = np.array(self.propagator.Z_old, copy=True)
-        self.Z[:] = self.propagator.get_state()
+            self.propagator.Z_old[...] = self.Z_old
         return self.Z
 
     def get_field_numpy(self) -> np.ndarray:
@@ -262,6 +291,13 @@ class RippleEngine:
         if self.use_gpu:
             return self.backend.asnumpy(self.Z)
         return self.Z
+
+    def get_prior_numpy(self) -> np.ndarray:
+        if not self._has_prior:
+            raise RuntimeError("propagate must be called before reading the prior")
+        if self.use_gpu:
+            return self.backend.asnumpy(self.prior_Z)
+        return self.prior_Z
 
     def get_opengl_field_texture_id(self) -> int:
         if not self.use_shader:
@@ -348,19 +384,25 @@ class RippleEngine:
         )
         return horizontal_gradient, vertical_gradient
 
-    def _update_prediction_edge_weights(
+    def _capture_prior(self):
+        if self.use_shader:
+            prior = self.propagator.get_state()
+            self.prior_Z[:] = prior
+        else:
+            self.prior_Z[...] = self.Z
+        self._has_prior = True
+        return self.prior_Z
+
+    def _update_conductances_from_legacy_rule(
         self,
         *,
         error: np.ndarray,
+        field: np.ndarray,
         transform: PredictionErrorTransform,
     ) -> None:
         config = transform.config
         if not config.learning_enabled or config.learning_rate == 0.0:
             return
-        field = self._coerce_prediction_field(
-            self.get_field_numpy(),
-            prediction_clip=config.prediction_clip,
-        )
         denom = (
             np.float64(config.sigma)
             * np.float64(config.sigma)

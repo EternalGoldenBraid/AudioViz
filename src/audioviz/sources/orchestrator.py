@@ -26,7 +26,7 @@ class RippleSourceOrchestratorConfig:
 @dataclass(frozen=True)
 class ResolvedSourceFrame:
     audio_frequencies: np.ndarray | None
-    grid_excitation: np.ndarray | None
+    drive_grid: np.ndarray | None
     amplitude: float
 
 
@@ -47,7 +47,6 @@ class RippleSourceOrchestrator:
         self.canvas_shape = engine.canvas_shape
         self.n_sources = int(n_sources)
         self.base_amplitude = 1.0
-        self._zero_observation = np.zeros(self.canvas_shape, dtype=np.float32)
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
             n_sources=self.n_sources,
@@ -87,7 +86,7 @@ class RippleSourceOrchestrator:
 
     def resolve(self) -> ResolvedSourceFrame:
         audio_frequencies = self.audio_source.frequencies(n_sources=self.n_sources)
-        grid_excitation = self.resolve_excitation_grid(
+        drive_grid = self.resolve_drive_grid(
             audio_frequencies=audio_frequencies,
         )
         amplitude = self.audio_source.excitation_amplitude(
@@ -97,11 +96,11 @@ class RippleSourceOrchestrator:
         )
         return ResolvedSourceFrame(
             audio_frequencies=audio_frequencies,
-            grid_excitation=grid_excitation,
+            drive_grid=drive_grid,
             amplitude=amplitude,
         )
 
-    def resolve_excitation_grid(
+    def resolve_drive_grid(
         self,
         *,
         audio_frequencies: np.ndarray | None,
@@ -128,7 +127,6 @@ class RippleSourceOrchestrator:
                 max_frequency=self.engine.max_frequency,
                 decay_alpha=self.engine.decay_alpha,
             ),
-            self.resolve_camera_frame_excitation(),
         ]
         active = [grid for grid in grids if grid is not None]
         if not active:
@@ -136,24 +134,23 @@ class RippleSourceOrchestrator:
         canvas_grids = [self._to_canvas_grid(grid) for grid in active]
         return np.sum(np.stack(canvas_grids, axis=0), axis=0, dtype=np.float32)
 
-    def resolve_camera_frame_excitation(self) -> np.ndarray | None:
-        excitation = self.camera_source.excitation()
-        if excitation is None:
-            if not self.prediction_error_transform.applies_to("camera_frame"):
-                return None
-            return self.apply_source_transforms("camera_frame", self._zero_observation)
-        return self.apply_source_transforms("camera_frame", excitation)
-
-    def apply_source_transforms(
-        self,
-        source_key: str,
-        excitation: np.ndarray,
-    ) -> np.ndarray:
-        return self.engine.observe(
-            source_key=source_key,
-            observation=excitation,
+    def resolve_observation_correction(self) -> np.ndarray | None:
+        if not self.prediction_error_transform.applies_to("camera_frame"):
+            return None
+        observation = self.camera_source.excitation()
+        if observation is None:
+            return None
+        return self.engine.compute_observation_correction(
+            source_key="camera_frame",
+            observation=observation,
             transform=self.prediction_error_transform,
         )
+
+    def correct_from_observations(self) -> np.ndarray | None:
+        correction = self.resolve_observation_correction()
+        if correction is not None:
+            self.engine.apply_observation_correction(correction)
+        return correction
 
     def _to_canvas_grid(self, grid: np.ndarray) -> np.ndarray:
         values = np.asarray(grid, dtype=np.float32)

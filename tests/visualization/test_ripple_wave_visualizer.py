@@ -167,6 +167,7 @@ def test_ripple_visualizer_camera_source_updates_field_and_releases_capture(qapp
         source_orchestrator_config=_source_config(
             use_synthetic=False,
             use_camera_source=True,
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
         ),
         camera_capture=capture,
     )

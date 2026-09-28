@@ -23,6 +23,7 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 - Optional GPU acceleration (via CuPy); CPU wave propagation is the default
 - Adjustable wave physics: damping, decay, speed, amplitude
 - Three-channel canvas state with channel-wise RGB camera prediction errors
+- Explicit prediction cycle: known drives propagate a prior, then camera error corrects the posterior
 - Modular audio processor and visualizer structure
 
 ---

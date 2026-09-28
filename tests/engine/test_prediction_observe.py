@@ -22,7 +22,24 @@ def _rgb_field(values: np.ndarray) -> np.ndarray:
     return np.repeat(np.asarray(values, dtype=np.float32)[..., None], 3, axis=2)
 
 
-def test_ripple_engine_observe_updates_symmetric_prediction_edges():
+def _prepare_stationary_prior(
+    engine: RippleEngine,
+    field: np.ndarray,
+) -> np.ndarray:
+    engine.Z[:] = field
+    engine.Z_old[:] = field
+    engine.propagator.Z[:] = field
+    engine.propagator.Z_old[:] = field
+    wave_scale = engine.propagator.c2_dt2
+    engine.propagator.c2_dt2 = 0.0
+    try:
+        engine.propagate()
+    finally:
+        engine.propagator.c2_dt2 = wave_scale
+    return engine.get_prior_numpy().copy()
+
+
+def test_ripple_engine_observation_updates_symmetric_prediction_edges():
     engine = _build_engine()
     transform = PredictionErrorTransform(
         config=PredictionErrorTransformConfig(
@@ -37,10 +54,13 @@ def test_ripple_engine_observe_updates_symmetric_prediction_edges():
         ),
         resolution=engine.canvas_shape,
     )
-    engine.Z[:] = _rgb_field([[1.0, 2.0], [3.0, 4.0]])
-    observation = engine.Z + np.ones_like(engine.Z)
+    prior = _prepare_stationary_prior(
+        engine,
+        _rgb_field([[1.0, 2.0], [3.0, 4.0]]),
+    )
+    observation = prior + np.ones_like(prior)
 
-    engine.observe(
+    engine.compute_observation_correction(
         source_key="camera_frame",
         observation=observation,
         transform=transform,
@@ -66,7 +86,7 @@ def test_ripple_engine_observe_updates_symmetric_prediction_edges():
     )
 
 
-def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation():
+def test_ripple_engine_observation_learning_toggle_takes_effect_on_next_observation():
     engine = _build_engine()
     transform = PredictionErrorTransform(
         config=PredictionErrorTransformConfig(
@@ -80,10 +100,13 @@ def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation(
         ),
         resolution=engine.canvas_shape,
     )
-    engine.Z[:] = _rgb_field([[1.0, 2.0], [3.0, 4.0]])
-    observation = engine.Z + 1.0
+    prior = _prepare_stationary_prior(
+        engine,
+        _rgb_field([[1.0, 2.0], [3.0, 4.0]]),
+    )
+    observation = prior + 1.0
 
-    engine.observe(
+    engine.compute_observation_correction(
         source_key="camera_frame",
         observation=observation,
         transform=transform,
@@ -98,7 +121,7 @@ def test_ripple_engine_observe_learning_toggle_takes_effect_on_next_observation(
     )
 
     transform.update_config(learning_enabled=True)
-    engine.observe(
+    engine.compute_observation_correction(
         source_key="camera_frame",
         observation=observation,
         transform=transform,
@@ -124,7 +147,10 @@ def test_ripple_engine_predict_observation_reads_canvas_without_graph_aggregatio
         ),
         resolution=engine.canvas_shape,
     )
-    engine.Z[:] = _rgb_field([[1.0, 2.0], [3.0, 4.0]])
+    prior = _prepare_stationary_prior(
+        engine,
+        _rgb_field([[1.0, 2.0], [3.0, 4.0]]),
+    )
     engine.prediction_horizontal_edge_weights = np.array(
         [[1.5], [2.0]],
         dtype=np.float32,
@@ -136,7 +162,7 @@ def test_ripple_engine_predict_observation_reads_canvas_without_graph_aggregatio
 
     prediction = engine.predict_observation(transform=transform)
 
-    np.testing.assert_allclose(prediction, engine.Z, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(prediction, prior, rtol=1e-6, atol=1e-6)
 
 
 def test_ripple_engine_learns_prediction_edges_per_canvas_channel():
@@ -154,11 +180,13 @@ def test_ripple_engine_learns_prediction_edges_per_canvas_channel():
         ),
         resolution=engine.canvas_shape,
     )
-    engine.Z[..., 0] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
-    observation = engine.Z.copy()
+    field = np.zeros(engine.canvas_shape, dtype=np.float32)
+    field[..., 0] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    prior = _prepare_stationary_prior(engine, field)
+    observation = prior.copy()
     observation[..., 0] += 1.0
 
-    engine.observe(
+    engine.compute_observation_correction(
         source_key="camera_frame",
         observation=observation,
         transform=transform,
@@ -174,6 +202,37 @@ def test_ripple_engine_learns_prediction_edges_per_canvas_channel():
         engine.prediction_vertical_edge_weights[..., 1:],
         1.0,
     )
+
+
+def test_ripple_engine_requires_propagation_before_observation_prediction():
+    engine = _build_engine()
+    transform = PredictionErrorTransform(
+        config=PredictionErrorTransformConfig(enabled=True),
+        resolution=engine.canvas_shape,
+    )
+
+    with np.testing.assert_raises_regex(
+        RuntimeError,
+        "propagate must be called",
+    ):
+        engine.predict_observation(transform=transform)
+
+
+def test_ripple_engine_correction_preserves_prior_and_wave_velocity():
+    engine = _build_engine()
+    engine.propagate()
+    prior = engine.get_prior_numpy().copy()
+    velocity_before = engine.Z - engine.Z_old
+    correction = np.full(engine.canvas_shape, 0.25, dtype=np.float32)
+    engine.amplitude = 100.0
+
+    posterior = engine.apply_observation_correction(correction)
+
+    np.testing.assert_allclose(posterior, prior + correction)
+    np.testing.assert_allclose(engine.Z - engine.Z_old, velocity_before)
+    np.testing.assert_array_equal(engine.get_prior_numpy(), prior)
+    np.testing.assert_array_equal(engine.propagator.Z, engine.Z)
+    np.testing.assert_array_equal(engine.propagator.Z_old, engine.Z_old)
 
 
 def test_ripple_engine_normalizes_prediction_conductances_to_stable_degree_budget():
