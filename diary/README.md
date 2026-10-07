@@ -7,3 +7,4 @@ Entries are dated so later decisions can refine earlier ones without erasing
 the path that led to them.
 
 - [2026-09-29: Canvas, prediction, and sensory readouts](2026-09-29-canvas-prediction-model.md)
+- [2026-10-07: Depth beneath the canvas](2026-10-07-depth-beneath-the-canvas.md)
