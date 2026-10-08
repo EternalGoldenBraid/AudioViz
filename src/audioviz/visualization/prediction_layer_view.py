@@ -118,6 +118,25 @@ class PredictionLayerView(gl.GLViewWidget):
         for index, source in enumerate(branches):
             center = (index - (len(branches) - 1) / 2) * 4.8
             self._set_hidden(source, center, aspect)
+            if source.stream_state is not None:
+                if source.stream_state_prediction is None:
+                    raise ValueError("A stream-state scene node requires its prediction.")
+                name = f"{source.mapping.key}/stream-state"
+                position = (center - 2.6, 2 * aspect + 1.0, -0.8)
+                if name not in self.nodes:
+                    self.nodes[name] = gl.GLScatterPlotItem(size=12)
+                    self.addItem(self.nodes[name])
+                self.nodes[name].setData(
+                    pos=np.array([position]),
+                    color=(.5, .85, .6, 1) if source.stream_state else (.9, .65, .35, 1),
+                )
+                self.nodes[name].setVisible(True)
+                self._set_label(
+                    name, (position[0], position[1] + .3, position[2]),
+                    f"{source.mapping.label} state: {'ON' if source.stream_state else 'OFF'}"
+                    f"; p(on)={source.stream_state_prediction:.2f}",
+                )
+                self._set_lines(name, np.array([position, (center, 0, 1.2)]), mode="lines")
             for stage, values, depth in (
                 ("prediction", source.prediction, -0.8),
                 ("observation", source.observation, -3.0),

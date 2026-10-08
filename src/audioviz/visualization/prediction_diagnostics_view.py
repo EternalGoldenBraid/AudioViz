@@ -34,6 +34,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self._graph_channels = 0
         self._observation_channels = 3
         self._cross_channels = 0
+        self._context_graph = False
         self._graph_edges: list[tuple[pg.PlotDataItem, int, int, int]] = []
         self._graph_labels: list[pg.TextItem] = []
 
@@ -81,6 +82,12 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         )
         self.mean_curves = self._layer_curves(mean_plot)
         self.variance_curves = self._layer_curves(variance_plot)
+        self.stream_mean_curve = mean_plot.plot(
+            name="Stream state", pen=pg.mkPen((140, 220, 155), width=2), connect="finite",
+        )
+        self.stream_variance_curve = variance_plot.plot(
+            name="Stream state", pen=pg.mkPen((140, 220, 155), width=2), connect="finite",
+        )
         mean_plot.setLabel("left", "Energy")
         variance_plot.setLabel("left", "Variance")
         variance_plot.setLabel("bottom", "Simulation time", units="s")
@@ -111,6 +118,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self.graph_legend.setText(
             self.graph_legend.text()
             + "\nLoop on: P = peer hidden. Incoming loop weights shown; reciprocal weights in the other tab."
+            + "\nContext on: S = clamped stream state; pooled hidden -> sigmoid."
         )
         policy = self.graph_legend.sizePolicy()
         policy.setVerticalPolicy(QtWidgets.QSizePolicy.Preferred)
@@ -166,7 +174,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
     ) -> None:
         if snapshot is None:
             if self.latest is not None:
-                self.history.append((simulation_time, np.nan, np.nan, np.nan, np.nan))
+                self.history.append((simulation_time, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan))
         else:
             self.history.append(
                 (
@@ -175,6 +183,8 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
                     snapshot.visual.mean,
                     snapshot.hidden.variance,
                     snapshot.visual.variance,
+                    snapshot.stream_state.energy if snapshot.stream_state is not None else np.nan,
+                    0.0 if snapshot.stream_state is not None else np.nan,
                 )
             )
         self.latest = (
@@ -199,8 +209,10 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
                 (*self.mean_curves, *self.variance_curves), range(1, 5)
             ):
                 curve.setData(values[:, 0], values[:, column])
+            self.stream_mean_curve.setData(values[:, 0], values[:, 5])
+            self.stream_variance_curve.setData(values[:, 0], values[:, 6])
         else:
-            for curve in (*self.mean_curves, *self.variance_curves):
+            for curve in (*self.mean_curves, *self.variance_curves, self.stream_mean_curve, self.stream_variance_curve):
                 curve.clear()
         if self.latest is None:
             self.status.setText(
@@ -216,6 +228,12 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             f"{self.modality} mean {snapshot.visual.mean:.4g}, variance {snapshot.visual.variance:.4g}"
             if snapshot.observation_present else f"{self.modality}: missing evidence (unclamped)"
         )
+        context = snapshot.stream_state
+        context_status = (
+            f"\nStream state {'ON' if context.observed else 'OFF'} (clamped)"
+            f" | p(on)={context.prediction:.3g} | E={context.energy:.3g}"
+            if context is not None else ""
+        )
         self.status.setText(
             f"Hidden mean {snapshot.hidden.mean:.4g}, variance {snapshot.hidden.variance:.4g}"
             f" | {sensory_status}"
@@ -223,6 +241,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             f" | actual ||delta W|| = {snapshot.weight_update_norm:.4g}"
             + (" | missing evidence: sensory nodes show predictions, sensory energy is unavailable"
                if not snapshot.observation_present else "")
+            + context_status
         )
         self.inference_curve.setData(
             np.arange(len(snapshot.inference_energy)), snapshot.inference_energy
@@ -243,12 +262,13 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self._dirty = True
         self.refresh()
 
-    def _build_graph(self, hidden_channels: int, cross_channels: int = 0) -> None:
+    def _build_graph(self, hidden_channels: int, cross_channels: int = 0, context: bool = False) -> None:
         self.graph_plot.clear()
         self._graph_edges.clear()
         self._graph_labels.clear()
         self._graph_channels = hidden_channels
         self._cross_channels = cross_channels
+        self._context_graph = context
         height = max(hidden_channels - 1, self._observation_channels - 1, 2)
         positions = [
             np.column_stack(
@@ -284,6 +304,15 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             recurrent = pg.TextItem("recurrent predictions", color=(225, 230, 235), anchor=(0.5, 0.5))
             recurrent.setPos(0.2, -2.05)
             self.graph_plot.addItem(recurrent)
+        if context:
+            state_position = np.array([2.8, -2.2])
+            self._node_positions = np.concatenate((self._node_positions, state_position[None, :]))
+            for source, start in enumerate(positions[1]):
+                edge = pg.PlotDataItem(
+                    [start[0], 2.0, state_position[0]], [start[1], -1.3, state_position[1]]
+                )
+                self.graph_plot.addItem(edge)
+                self._graph_edges.append((edge, 3, 0, source))
         self._graph_nodes = pg.ScatterPlotItem(size=16, pen=pg.mkPen("w", width=1))
         self.graph_plot.addItem(self._graph_nodes)
         for x, y in self._node_positions:
@@ -319,19 +348,23 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             label.setPos(left + 0.7, -1.05)
             self.graph_plot.addItem(label)
         self.graph_plot.setRange(
-            xRange=(-1.8 if cross_channels else -0.3, 4.3 if cross_channels else 3.9),
-            yRange=(-2.5 if cross_channels else -1.4, height + 1.2), padding=0
+            xRange=(-1.8 if cross_channels else -0.3, 5.0 if context else 4.3 if cross_channels else 3.9),
+            yRange=(-4.2 if context else -2.5 if cross_channels else -1.4, height + 1.2), padding=0
         )
 
     def _update_graph(self, snapshot: PredictiveCodingDiagnostics) -> None:
         count = len(snapshot.hidden_means)
         observation_channels = len(snapshot.observation_means)
         cross_channels = len(snapshot.cross_parent_means)
+        context = snapshot.stream_state
         if (self._graph_channels != count or self._observation_channels != observation_channels
-                or self._cross_channels != cross_channels):
+                or self._cross_channels != cross_channels or self._context_graph != (context is not None)):
             self._observation_channels = observation_channels
-            self._build_graph(count, cross_channels)
-        weights = snapshot.canvas_weights, snapshot.visual_weights, snapshot.cross_modal_weights
+            self._build_graph(count, cross_channels, context is not None)
+        weights = (
+            snapshot.canvas_weights, snapshot.visual_weights, snapshot.cross_modal_weights,
+            context.weights if context is not None else None,
+        )
         self._sensory_title.setText(
             f"{self.modality} ({'observed' if snapshot.observation_present else 'predicted'})"
         )
@@ -353,6 +386,10 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             + tuple(f"Y{index}" for index in range(self._observation_channels))
             + tuple(f"P{index}" for index in range(cross_channels))
         )
+        if context is not None:
+            energies += (context.energy,)
+            means += (float(context.observed),)
+            names += ("S",)
         maximum = max((value for value in energies if value is not None), default=1e-12)
         maximum = max(maximum, 1e-12)
         brushes = []
@@ -360,7 +397,12 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             level = 0.0 if energy is None else energy / maximum
             brushes.append(pg.mkBrush(40 + int(210 * level), 100 + int(60 * level), 155 - int(90 * level)))
             text = f"{name}: {value:+.3g}"
-            if energy is not None:
+            if name == "S" and context is not None:
+                text = (
+                    f"S: {'ON' if context.observed else 'OFF'} (clamped)\np(on)={context.prediction:.3g}"
+                    f"\nE={context.energy:.2g}; b={context.bias:.2g}"
+                )
+            elif energy is not None:
                 separator = " " if name.startswith("Y") and self._observation_channels > 8 else "\n"
                 text += f"{separator}E={energy:.2g}"
             label.setText(text)

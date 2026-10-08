@@ -18,8 +18,9 @@ collect_ignore = [
 ]
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def qapp():
+    # Offline renders also need the application retained before creating any Qt scene.
     qt_widgets = pytest.importorskip("PyQt5.QtWidgets")
     return qt_widgets.QApplication.instance() or qt_widgets.QApplication([])
 

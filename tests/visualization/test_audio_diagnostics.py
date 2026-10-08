@@ -108,9 +108,11 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
     assert not scene.isVisible()
 
 
-@pytest.mark.parametrize("cross_modal_enabled", (False, True))
+@pytest.mark.parametrize(
+    "cross_modal_enabled,stream_state_enabled", ((False, False), (True, False), (False, True), (True, True))
+)
 def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
-    qapp, monkeypatch, layer_view_stub, cross_modal_enabled
+    qapp, monkeypatch, layer_view_stub, cross_modal_enabled, stream_state_enabled
 ):
     import audioviz.sources.audio as source_module
     import audioviz.visualization.prediction_scene_window as scene_module
@@ -125,7 +127,9 @@ def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
     config = RippleSourceOrchestratorConfig(
         synthetic=SyntheticSourceConfig(enabled=False), audio=AudioSourceConfig(enabled=True),
         prediction_error=PredictionErrorTransformConfig(enabled=True),
-        visual_pathway=PredictiveCodingConfig(learning_enabled=True, cross_modal_enabled=cross_modal_enabled),
+        visual_pathway=PredictiveCodingConfig(
+            learning_enabled=True, cross_modal_enabled=cross_modal_enabled, stream_state_enabled=stream_state_enabled,
+        ),
     )
     baseline, visible = (
         RippleWaveVisualizer(
@@ -153,6 +157,8 @@ def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
             np.testing.assert_array_equal(actual.hidden, expected.hidden)
             np.testing.assert_array_equal(actual.canvas_weights, expected.canvas_weights)
             np.testing.assert_array_equal(actual.visual_weights, expected.visual_weights)
+            np.testing.assert_array_equal(actual.stream_state_weights, expected.stream_state_weights)
+            np.testing.assert_array_equal(actual.stream_state_bias, expected.stream_state_bias)
             np.testing.assert_array_equal(
                 visible.source_orchestrator.hidden_coupling.weights[actual],
                 baseline.source_orchestrator.hidden_coupling.weights[expected],
@@ -198,5 +204,76 @@ def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
     assert sources["camera"].prediction is not None
     checkbox.click()
     assert not visualizer.source_orchestrator.visual_readout.config.cross_modal_enabled
+    visualizer.control_panel.close()
+    visualizer.close()
+
+
+@pytest.mark.parametrize("audio_available", (False, True))
+def test_stream_context_control_plots_real_off_evidence_without_inventing_sensory_samples(
+    qapp, monkeypatch, layer_view_stub, audio_available
+):
+    import audioviz.visualization.prediction_scene_window as scene_module
+
+    clock = [0.0]
+    monkeypatch.setattr(scene_module, "monotonic", lambda: clock[0])
+    processor = (
+        SimpleNamespace(frame_counter=0, current_top_k_frequencies=[], current_signal_level=0)
+        if audio_available else None
+    )
+    visualizer = RippleWaveVisualizer(
+        processor=processor, resolution=(6, 8), plane_size_m=(1, 1), speed=1,
+        source_orchestrator_config=RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(enabled=False), audio=AudioSourceConfig(enabled=False),
+        ),
+    )
+    visualizer.timer.stop()
+    visualizer.set_prediction_diagnostics_visible(True)
+    visualizer.set_prediction_scene_visible(True)
+    visualizer.toggle_controls()
+    context_toggle = visualizer.control_panel.source_control_widgets[("learning-dynamics", "stream_state_enabled")]
+    assert not context_toggle.isChecked()
+    context_toggle.click()
+    visualizer.source_control_binding.update_control("learning-dynamics", "learning_enabled", True)
+    visualizer.update_visualization()
+    root = visualizer.prediction_diagnostics
+    root.graph_toggle.setChecked(True)
+    root.refresh()
+    assert len(root._graph_nodes.data) == 13
+    assert len(root._graph_edges) == 36 + 6
+    context = root.latest.stream_state
+    assert context.observed is False
+    assert root.latest.weight_update_norm > 0
+    assert not root.latest.observation_present
+    assert np.isnan(root.latest.visual.mean)
+    np.testing.assert_allclose(root.stream_mean_curve.getData()[1][-1], context.energy)
+    np.testing.assert_array_equal(root.stream_variance_curve.getData()[1], 0)
+    assert "Stream state OFF (clamped)" in root.status.text()
+    sources = {source.mapping.key: source for source in visualizer.prediction_scene.sources}
+    for key in (("camera", "audio") if audio_available else ("camera",)):
+        assert sources[key].stream_state is False
+        assert sources[key].observation is None
+        assert 0 <= sources[key].stream_state_prediction <= 1
+    if not audio_available:
+        assert sources["audio"].stream_state is None
+        assert sources["audio"].hidden is None
+    visualizer.source_control_binding.update_control("learning-dynamics", "learning_enabled", False)
+    visualizer.camera_source.enabled = True
+    visualizer.camera_source.excitation = lambda: None
+    visualizer.audio_source.enabled = audio_available
+    clock[0] = .2
+    visualizer.update_visualization()
+    root.refresh()
+    assert root.latest.stream_state.observed is True
+    assert not root.latest.observation_present
+    assert root.latest.weight_update_norm == 0
+    assert "Stream state ON (clamped)" in root.status.text()
+    sources = {source.mapping.key: source for source in visualizer.prediction_scene.sources}
+    assert sources["camera"].stream_state is True
+    assert sources["audio"].stream_state is (True if audio_available else None)
+    context_toggle.click()
+    visualizer.update_visualization()
+    assert root.latest is None
+    root.refresh()
+    assert np.isnan(root.stream_mean_curve.getData()[1][-1])
     visualizer.control_panel.close()
     visualizer.close()

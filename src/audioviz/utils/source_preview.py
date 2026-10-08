@@ -42,3 +42,5 @@ class SourceScenePreview:
     hidden_energies: tuple[float, ...] = ()
     edges: np.ndarray | None = None
     recurrent_parent: str | None = None
+    stream_state: bool | None = None
+    stream_state_prediction: float | None = None

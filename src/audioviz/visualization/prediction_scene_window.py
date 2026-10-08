@@ -40,6 +40,7 @@ class PredictionSceneWindow(QtWidgets.QWidget):
             "Audio bars: signed band magnitude, fixed [-1,1] display range.\n"
             "Hidden labels include mean error energy where available. Links show pathways, not individual weights. "
             "Labeled hidden-to-hidden links show the optional camera/audio loop. "
+            "Stream-state nodes: clamped ON/OFF and predicted p(on). "
             "Previews: max 64 per side / pose nodes, 10 Hz."
         )
         legend.setWordWrap(True)
