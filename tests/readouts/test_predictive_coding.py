@@ -154,6 +154,26 @@ def test_shared_weight_update_is_independent_of_image_size():
     np.testing.assert_allclose(small.visual_weights, large.visual_weights)
 
 
+def test_local_learning_improves_pre_observation_prediction_over_frozen_weights():
+    errors = []
+    for learning_enabled in (False, True):
+        readout = PredictiveCodingRGBReadout(
+            canvas_shape=(2, 2, 3),
+            config=PredictiveCodingConfig(
+                learning_enabled=learning_enabled, learning_rate=0.05
+            ),
+        )
+        canvas = np.zeros((2, 2, 3), dtype=np.float32)
+        observation = np.broadcast_to([0.8, 0.3, 0.5], canvas.shape)
+        for _ in range(80):
+            prediction = readout.predict(canvas)
+            canvas += readout.infer(canvas, observation)
+        errors.append(np.mean((observation - prediction) ** 2))
+
+    assert errors[1] < 1e-4
+    assert errors[1] < 0.1 * errors[0]
+
+
 @pytest.mark.parametrize(
     "changes",
     [

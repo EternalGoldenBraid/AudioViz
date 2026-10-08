@@ -22,9 +22,9 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 - Optional synthetic tone generator for testing
 - Optional GPU acceleration (via CuPy); CPU wave propagation is the default
 - Adjustable wave physics: damping, decay, speed, amplitude
-- Three-channel canvas state with channel-wise RGB camera prediction errors
-- Explicit prediction cycle: known drives propagate a prior, then camera error corrects the posterior
-- Identity RGB readout separates the visual prediction from the underlying canvas state
+- Three-channel wave surface with persistent hidden visual belief states
+- Local nonlinear predictive coding: sensory surprise revises hidden states and the canvas
+- Learned visual pathway with fixed substrate conductances; the rendered image is the canvas surface
 - Modular audio processor and visualizer structure
 
 ---
@@ -92,6 +92,86 @@ Accessible from GUI sliders:
 * **Amplitude**: Controls excitation strength
 * **Speed**: Wave propagation speed in meters per second
 * **RGB Canvas**: Displays the three simulated canvas channels directly as red, green, and blue
+* **Visual Inference and Learning**: Separate hidden-state inference, canvas correction, and weight-learning rates
+* **Substrate Conductances (Fixed)**: Diagnostic overlay of the wave operator, not the learned visual weights
+
+## Predictive canvas
+
+The wave surface predicts a hidden visual layer, which predicts RGB camera
+evidence. Camera evidence is clamped during inference; it is not directly added
+as a drive. Audio and synthetic sources still drive the wave equation.
+
+Each physical frame:
+
+1. Propagate the wave surface using its existing, fixed-conductance dynamics.
+2. Advance persistent hidden belief toward the propagated surface's prediction,
+   and save the expected camera image **before** reading the new camera evidence.
+3. Acquire one camera observation and run a bounded number of local inference
+   steps with weights fixed.
+4. Optionally learn the visual weights once from the final local errors.
+5. Apply the net surface correction to both wave-state buffers, preserving wave
+   velocity, and render the corrected **surface**, not the camera expectation.
+
+Missing camera evidence skips sensory inference and weight learning. Hidden
+belief still advances from the wave prior. Reset clears the surface, hidden
+states, and errors, but retains learned visual weights. Weights are currently
+session-local and are not saved to disk.
+
+### Local nonlinear updates
+
+Following [Salvatori et al., *Learning on Arbitrary Graph Topologies via
+Predictive Coding*, section 2, equations 1-4](https://arxiv.org/html/2201.13180),
+with destination-by-source weight matrices:
+
+```text
+c = surface; h = hidden state; y = camera evidence
+f(x) = tanh(x); f'(x) = 1 - tanh(x)^2
+
+predicted_h = W_hc f(c)
+predicted_y = W_yh f(h)
+e_h = h - predicted_h
+e_y = y - predicted_y
+E = 1/2 sum(e_h^2 + e_y^2)
+
+delta_h = hidden_rate [-e_h + f'(h) * (W_yh.T e_y)]
+delta_c = canvas_rate [f'(c) * (W_hc.T e_h)]
+
+delta_W_hc = learning_rate e_h f(c).T
+delta_W_yh = learning_rate e_y f(h).T
+```
+
+The `*` in state updates is elementwise multiplication; weight updates are outer
+products. Both state directions are computed before either state is changed.
+The surface is the unpredicted top layer: there is **no additional
+surface-minus-wave-prior restoring term**. The wave prior supplies its initial
+state for each frame.
+
+There are six hidden channels per pixel by default. The two weight matrices are
+shared across pixels, so weight updates average their local contributions over
+the image. There is no dense all-pixel connection matrix. Spatial propagation
+remains the wave solver's responsibility.
+
+Optional L2 weight decay and symmetric gradient/weight clipping are explicit
+learning safeguards, not part of the unregularized equations above. Predictive
+weights may be signed and have no conductance degree budget or Gaussian-bits
+scaling. Hidden-state persistence and alternating wave/inference steps are this
+project's online extension, not a guarantee of learned temporal forecasting.
+
+Configure the pathway under `RIPPLE_CONFIG["transforms"]["prediction_error"]`
+in `main.py`: `enabled` and `inputs` select sensory correction; `inference`
+sets hidden channels, step count, hidden rate, and canvas rate; `learning`
+controls only visual weights. The former Gaussian `predictor` and shaped-error
+`output` settings no longer drive camera correction. Nonlinearity belongs in
+the prediction and local inference equations, rather than an arbitrary shaping
+of the camera residual.
+
+Disabling **Pathway Learning** freezes weights, not state inference. Start with
+hidden rate `0.1`, canvas rate `0.01`, eight inference steps, and weight-learning
+rate `0.01`; a weight rate near `1` is an experiment, not a stability guarantee.
+The pathway runs in NumPy for CPU/GPU wave backends; OpenGL camera correction
+remains unsupported and is explicitly rejected. Inference cost scales with
+image size and step count; reduce inference steps or resolution when exploring
+the live loop at high resolutions.
 
 ---
 
