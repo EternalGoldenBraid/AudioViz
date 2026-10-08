@@ -220,6 +220,8 @@ class PredictionLearningControls(SourceControlProvider):
     weight_decay: float = 0.0
     weight_clip: float = 10.0
     gradient_clip: float = 1.0
+    cross_modal_enabled: bool = False
+    cross_modal_available: bool = True
 
     def get_controls(self) -> Sequence[SourceControl]:
         return (
@@ -231,7 +233,7 @@ class PredictionLearningControls(SourceControlProvider):
                 maximum=64,
                 step=1,
                 tooltip=(
-                    "Number of fixed-weight settling steps when fresh sensory evidence is available. "
+                    "Number of fixed-weight settling steps on sensory evidence, or every frame with the cross-modal loop on. "
                     "More steps increase computation and total state correction. Weights learn once after settling."
                 ),
             ),
@@ -256,7 +258,8 @@ class PredictionLearningControls(SourceControlProvider):
                 step=0.001,
                 tooltip=(
                     "Per-inference-step gradient rate for correcting the shared canvas from camera/audio hidden errors, "
-                    "not a blend percentage. Zero disables sensory canvas correction; waves and hidden inference continue. "
+                    "not a blend percentage. Zero disables sensory canvas correction, including loop-only correction; "
+                    "waves and hidden inference continue. "
                     "Larger rates or more steps can destabilize the surface."
                 ),
             ),
@@ -315,6 +318,19 @@ class PredictionLearningControls(SourceControlProvider):
                     "Weight Learning Rate. This limits weight steps, not sensory errors or state inference."
                 ),
             ),
+        ) + (
+            (SourceControl(
+                key="cross_modal_enabled",
+                label="Camera / Audio Hidden Loop",
+                default=self.cross_modal_enabled,
+                kind="toggle",
+                tooltip=(
+                    "Enable reciprocal learned predictions between camera and audio hidden states. "
+                    "Connections start at zero; enable Pathway Learning with paired evidence to learn them. "
+                    "Missing sensors remain unclamped and hidden/canvas inference continues; no evidence means no weight learning. "
+                    "Off retains the loop weights and restores independent pathways. Recurrence can destabilize large state rates."
+                ),
+            ),) if self.cross_modal_available else ()
         )
 
 

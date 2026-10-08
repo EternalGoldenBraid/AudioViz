@@ -43,6 +43,7 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     assert orchestrator_config.visual_pathway.inference_steps == 12
     assert orchestrator_config.visual_pathway.inference_rate == 0.2
     assert orchestrator_config.visual_pathway.canvas_rate == 0.03
+    assert orchestrator_config.visual_pathway.cross_modal_enabled is False
     assert orchestrator_config.visual_pathway.learning_enabled is True
     assert orchestrator_config.visual_pathway.learning_rate == 0.01
     assert pose_config.camera_index == config["sources"]["pose"]["camera_index"]
@@ -50,3 +51,5 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
         pose_config.body_boundary_transmission
         == config["sources"]["pose"]["boundary"]["transmission"]
     )
+    config["transforms"]["prediction_error"]["inference"]["cross_modal_enabled"] = True
+    assert main.build_ripple_visualizer_config(config)["source_orchestrator_config"].visual_pathway.cross_modal_enabled

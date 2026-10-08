@@ -82,6 +82,10 @@ class RippleSourceControlBinding:
                         weight_decay=pathway_config.weight_decay,
                         weight_clip=pathway_config.weight_clip,
                         gradient_clip=pathway_config.gradient_clip,
+                        cross_modal_enabled=pathway_config.cross_modal_enabled,
+                        cross_modal_available=(
+                            visualizer.source_orchestrator.hidden_coupling is not None and not visualizer.use_shader
+                        ),
                     ).get_controls(),
                     expanded=True,
                 )
@@ -259,8 +263,8 @@ class RippleSourceControlBinding:
         if control_key in ("inference_rate", "canvas_rate"):
             readout.update_pathway_config(**{control_key: float(value)})
             return
-        if control_key == "learning_enabled":
-            readout.update_pathway_config(learning_enabled=bool(value))
+        if control_key in ("learning_enabled", "cross_modal_enabled"):
+            readout.update_pathway_config(**{control_key: bool(value)})
             return
         if control_key == "learning_rate":
             readout.update_pathway_config(learning_rate=float(value))

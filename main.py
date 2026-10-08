@@ -216,6 +216,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
                 inference_steps=prediction_error_inference["steps"],
                 inference_rate=prediction_error_inference["hidden_rate"],
                 canvas_rate=prediction_error_inference["canvas_rate"],
+                cross_modal_enabled=prediction_error_inference.get("cross_modal_enabled", False),
                 learning_enabled=prediction_error_learning["enabled"],
                 learning_rate=prediction_error_learning["learning_rate"],
                 weight_decay=prediction_error_learning["weight_decay"],
