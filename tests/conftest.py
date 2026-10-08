@@ -27,6 +27,7 @@ def qapp():
 @pytest.fixture
 def layer_view_stub(qapp, monkeypatch):
     from PyQt5 import QtCore, QtWidgets
+    from audioviz.visualization.prediction_scene_window import PredictionSceneWindow
     from audioviz.visualization.prediction_diagnostics_view import PredictionDiagnosticsView
 
     class LayerViewStub(QtWidgets.QWidget):
@@ -39,9 +40,22 @@ def layer_view_stub(qapp, monkeypatch):
             self.clears = 0
             self.resets = 0
 
+        def set_scene(self, canvas, sources):
+            self.preview = canvas, sources
+            self.updates += 1
+
         def set_preview(self, canvas, snapshot):
             self.preview = canvas, snapshot
             self.updates += 1
+
+        def clear_evidence(self, key):
+            from dataclasses import replace
+
+            canvas, sources = self.preview
+            self.preview = canvas, tuple(
+                replace(source, observation=None) if source.mapping.key == key else source
+                for source in sources
+            )
 
         def clear_preview(self):
             self.preview = None
@@ -51,7 +65,11 @@ def layer_view_stub(qapp, monkeypatch):
             self.resets += 1
 
     monkeypatch.setattr(
-        PredictionDiagnosticsView, "_create_layer_view",
+        PredictionSceneWindow, "_create_layer_view",
         lambda self: LayerViewStub(self),
+    )
+    monkeypatch.setattr(
+        PredictionDiagnosticsView, "_create_layer_view",
+        lambda self: LayerViewStub(self), raising=False,
     )
     return LayerViewStub

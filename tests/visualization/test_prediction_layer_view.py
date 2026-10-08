@@ -2,10 +2,14 @@ import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from audioviz.readouts import PredictiveCodingRGBReadout
+from audioviz.sources.camera import CameraFrameSource
+from audioviz.sources.audio import AudioRippleSource
+from audioviz.utils.source_preview import SourceScenePreview
 from audioviz.visualization.prediction_layer_view import (
     PredictionLayerView,
     hidden_texture,
     rgb_texture,
+    spectrum_mesh,
 )
 
 
@@ -30,24 +34,53 @@ def test_layer_planes_reuse_items_preserve_camera_and_clear_pixels(qapp):
     readout.predict(field)
     readout.infer(field, np.ones_like(field))
     view = PredictionLayerView()
-    view.set_preview(field, readout.diagnostics)
+    snapshot = readout.diagnostics
+    camera_source = SourceScenePreview(
+        CameraFrameSource.scene_mapping, True,
+        observation=snapshot.spatial.observation, prediction=snapshot.spatial.prediction,
+        hidden=snapshot.spatial.hidden, hidden_energies=snapshot.hidden.channel_means,
+    )
+    audio_source = SourceScenePreview(
+        AudioRippleSource.scene_mapping, True, observation=np.linspace(0, 1, 16),
+        prediction=np.linspace(-0.1, 0.1, 16), hidden=snapshot.spatial.hidden,
+    )
+    view.set_scene(field, (camera_source, audio_source))
     planes = dict(view.planes)
 
-    assert len(planes) == 3 + readout.config.hidden_channels
-    np.testing.assert_array_equal(planes["Canvas (corrected)"].data, rgb_texture(field))
-    assert "before evidence" in view.labels["Prediction (before evidence)"].text
-    assert view.labels["H0"].text.startswith("H0:")
+    assert len(planes) == 3 + 2 * readout.config.hidden_channels
+    assert set(view.histograms) == {"audio/prediction", "audio/observation"}
+    np.testing.assert_array_equal(planes["canvas"].data, rgb_texture(field))
+    assert "pre-evidence" in view.labels["camera/prediction"].text
+    assert view.labels["camera/hidden/0"].text.startswith("C H0:")
     view.orbit(15, 10)
     camera = view.cameraParams()
-    view.set_preview(field, readout.diagnostics)
+    histograms = dict(view.histograms)
+    view.set_scene(field, (camera_source, audio_source))
     assert view.planes == planes
+    assert view.histograms == histograms
     assert view.cameraParams() == camera
+    view.clear_evidence("audio")
+    assert not view.histograms["audio/observation"].visible()
+    assert view.histograms["audio/prediction"].visible()
     view.clear_preview()
     assert all(not plane.visible() for plane in planes.values())
     assert all(plane.data.shape == (1, 1, 4) for plane in planes.values())
     view.reset_view()
     assert view.cameraParams()["azimuth"] == -90
     view.close()
+
+
+def test_spectral_histograms_preserve_signed_level_and_use_a_fixed_display_scale():
+    vertices, faces, colors = spectrum_mesh(np.array([-0.5, 0, 0.25, 2]), (0, 0, 0), 4)
+    bars = vertices.reshape(4, 8, 3)
+    np.testing.assert_allclose(bars[0, :, 1].min(), -0.8)
+    np.testing.assert_allclose(bars[2, :, 1].max(), 0.4)
+    np.testing.assert_allclose(bars[3, :, 1].max(), 1.6)
+    np.testing.assert_array_equal(bars[1, :, 1:], 0)
+    assert faces.shape == (48, 3)
+    assert faces.max() == 31
+    assert colors[0, 0] > colors[0, 2]
+    assert colors[-1, 2] > colors[-1, 0]
 
 
 def test_layer_view_drag_orbits_and_wheel_zooms(qapp):
