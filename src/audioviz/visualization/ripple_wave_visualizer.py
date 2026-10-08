@@ -309,7 +309,7 @@ class RippleWaveVisualizer(VisualizerBase):
             self.engine.get_field_numpy()
         )
         if self.renderer.prepare_frame():
-            self._render_visual_prediction()
+            self._render_canvas()
 
     def _update_boundary_transmission(self, val: float) -> None:
         self.body_boundary_transmission = float(val)
@@ -524,7 +524,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.pose_state.set_ripple_states(ripple_states)
 
     def _render_scene(self) -> None:
-        self._render_visual_prediction()
+        self._render_canvas()
         render_learning_overlay = getattr(
             self.renderer,
             "render_prediction_coupling_overlay",
@@ -548,18 +548,18 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _render_standing_body_rgb_frame(self) -> np.ndarray:
         return self.standing_body_renderer.render(
-            field=self.visual_prediction,
+            field=self.engine.get_field_numpy(),
             lookup_table=lookup_table_from_renderer(self.renderer),
             pose_coords=self._latest_pose_coords,
             pose_adjacency=self._latest_pose_adjacency,
             segmentation_mask=self._latest_pose_segmentation_mask,
         )
 
-    def _render_visual_prediction(self) -> None:
+    def _render_canvas(self) -> None:
         if self.use_shader:
             self.renderer.render(self.engine)
             return
-        self.renderer.render(self.visual_prediction)
+        self.renderer.render(self.engine.get_field_numpy())
 
     def closeEvent(self, event):
         self.close_pose_sources()

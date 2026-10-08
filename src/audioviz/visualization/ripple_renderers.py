@@ -155,14 +155,14 @@ class NumpyImageRenderer:
         self._display_limit = max(self._auto_level_floor, 1e-9)
         self.histogram.setLevels(0.0, 0.0)
 
-    def render(self, visual_prediction: np.ndarray) -> None:
-        prediction = np.asarray(visual_prediction, dtype=np.float32)
-        if prediction.ndim != 3 or prediction.shape[2] != 3:
-            raise ValueError("visual prediction must have shape (rows, cols, 3)")
+    def render(self, canvas: np.ndarray) -> None:
+        field = np.asarray(canvas, dtype=np.float32)
+        if field.ndim != 3 or field.shape[2] != 3:
+            raise ValueError("canvas state must have shape (rows, cols, 3)")
         display_field = (
-            prediction
+            field
             if self._rgb_canvas_enabled
-            else np.mean(prediction, axis=2)
+            else np.mean(field, axis=2)
         )
         if self._auto_percentile_levels:
             active_limit = _percentile_abs_limit(
@@ -186,7 +186,7 @@ class NumpyImageRenderer:
             self._auto_levels_pending = False
         if self._rgb_canvas_enabled:
             rgb_frame = _canvas_to_rgb(
-                prediction,
+                field,
                 limit=self._display_limit,
             )
             self.image_item.setImage(

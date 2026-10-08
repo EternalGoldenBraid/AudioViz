@@ -82,7 +82,7 @@ def test_offline_render_validation_rgb_canvas_produces_colored_widget_pixels(qap
     qapp.processEvents()
 
     try:
-        visualizer.renderer.render(visualizer.visual_prediction)
+        visualizer._render_scene()
         qapp.processEvents()
         screenshot = _grab_widget_rgb(visualizer.renderer.widget)
         channel_spread = np.max(screenshot, axis=2) - np.min(screenshot, axis=2)

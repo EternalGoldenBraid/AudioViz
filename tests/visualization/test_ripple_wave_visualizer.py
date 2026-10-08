@@ -59,6 +59,7 @@ class _FakeRenderer:
 
     def render(self, _engine):
         self.render_count += 1
+        self.field = np.asarray(_engine).copy()
 
 
 class _StandingRenderer(_FakeRenderer):
@@ -183,7 +184,7 @@ def test_ripple_visualizer_camera_source_updates_field_and_releases_capture(qapp
     assert capture.released
 
 
-def test_ripple_visualizer_renders_prior_before_camera_correction(qapp):
+def test_ripple_visualizer_renders_canvas_after_camera_correction(qapp):
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
     frame = np.array(
@@ -221,7 +222,7 @@ def test_ripple_visualizer_renders_prior_before_camera_correction(qapp):
     posterior = visualizer.engine.get_field_numpy().copy()
 
     assert np.count_nonzero(first_prediction) == 0
-    assert np.count_nonzero(first_rendered) == 0
+    assert np.count_nonzero(first_rendered) > 0
     assert np.any(posterior[..., 0] != posterior[..., 1])
     assert np.any(posterior[..., 1] != posterior[..., 2])
 
@@ -236,9 +237,33 @@ def test_ripple_visualizer_renders_prior_before_camera_correction(qapp):
     assert np.any(prediction[..., 1] != prediction[..., 2])
     assert np.any(rendered[..., 0] != rendered[..., 1])
     assert np.any(rendered[..., 1] != rendered[..., 2])
+    visualizer.renderer.render(visualizer.engine.get_field_numpy())
+    np.testing.assert_array_equal(rendered, visualizer.renderer.image_item.image)
 
     visualizer.close_camera_source()
     assert capture.released
+
+
+def test_ripple_visualizer_render_uses_surface_not_camera_prediction(qapp):
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        resolution=(6, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        source_orchestrator_config=_source_config(),
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+    visualizer.visual_prediction.fill(0.9)
+    visualizer.engine.Z.fill(0.2)
+
+    visualizer._render_scene()
+
+    np.testing.assert_array_equal(
+        visualizer.renderer.field, visualizer.engine.get_field_numpy()
+    )
+    assert not np.array_equal(visualizer.renderer.field, visualizer.visual_prediction)
 
 
 def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut(qapp):
