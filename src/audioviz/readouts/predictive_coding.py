@@ -4,6 +4,12 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
+from audioviz.readouts.diagnostics import (
+    EnergyStatistics,
+    PredictiveCodingDiagnostics,
+    copy_weights,
+    mean_energy,
+)
 
 @dataclass(frozen=True)
 class PredictiveCodingConfig:
@@ -65,6 +71,12 @@ class PredictiveCodingRGBReadout:
             self.visual_weights[channel, channel] = 1.0
         self.hidden_error = np.zeros_like(self.hidden)
         self.visual_error = np.zeros(self.canvas_shape, dtype=np.float64)
+        self.diagnostics_enabled = False
+        self.diagnostics: PredictiveCodingDiagnostics | None = None
+
+    def set_diagnostics_enabled(self, enabled: bool) -> None:
+        self.diagnostics_enabled = bool(enabled)
+        self.diagnostics = None
 
     def update_config(self, **changes) -> None:
         next_config = replace(self.config, **changes)
@@ -77,8 +89,10 @@ class PredictiveCodingRGBReadout:
         self.hidden.fill(0.0)
         self.hidden_error.fill(0.0)
         self.visual_error.fill(0.0)
+        self.diagnostics = None
 
     def predict(self, prior: np.ndarray) -> np.ndarray:
+        self.diagnostics = None
         canvas = self._coerce(prior, name="canvas prior")
         predicted_hidden = np.tanh(canvas) @ self.canvas_weights.T
         # Advance memory from the wave prior before any new camera evidence.
@@ -90,11 +104,14 @@ class PredictiveCodingRGBReadout:
     def infer(self, prior: np.ndarray, observation: np.ndarray) -> np.ndarray:
         canvas = self._coerce(prior, name="canvas prior").copy()
         observed = self._coerce(observation, name="camera observation")
+        inference_energy: list[float] = []
         for _ in range(self.config.inference_steps):
             canvas_activity = np.tanh(canvas)
             hidden_activity = np.tanh(self.hidden)
             hidden_error = self.hidden - canvas_activity @ self.canvas_weights.T
             visual_error = observed - hidden_activity @ self.visual_weights.T
+            if self.diagnostics_enabled:
+                inference_energy.append(mean_energy(hidden_error, visual_error))
             canvas_direction = (1.0 - canvas_activity**2) * (
                 hidden_error @ self.canvas_weights
             )
@@ -107,8 +124,31 @@ class PredictiveCodingRGBReadout:
             self._require_finite(canvas, self.hidden)
 
         self.hidden_error, self.visual_error = self._errors(canvas, observed)
+        weights_before = None
+        if self.diagnostics_enabled:
+            inference_energy.append(mean_energy(self.hidden_error, self.visual_error))
+            weights_before = self.canvas_weights.copy(), self.visual_weights.copy()
         if self.config.learning_enabled and self.config.learning_rate:
             self._learn(canvas)
+        if weights_before is not None:
+            self.diagnostics = PredictiveCodingDiagnostics(
+                hidden=EnergyStatistics.from_error(self.hidden_error),
+                visual=EnergyStatistics.from_error(self.visual_error),
+                inference_energy=tuple(inference_energy),
+                canvas_means=tuple(float(value) for value in canvas.mean(axis=(0, 1))),
+                hidden_means=tuple(float(value) for value in self.hidden.mean(axis=(0, 1))),
+                observation_means=tuple(float(value) for value in observed.mean(axis=(0, 1))),
+                canvas_weights=copy_weights(self.canvas_weights),
+                visual_weights=copy_weights(self.visual_weights),
+                learning_enabled=self.config.learning_enabled,
+                learning_rate=self.config.learning_rate,
+                weight_update_norm=float(
+                    np.sqrt(
+                        np.sum((self.canvas_weights - weights_before[0]) ** 2)
+                        + np.sum((self.visual_weights - weights_before[1]) ** 2)
+                    )
+                ),
+            )
         correction = canvas - self._coerce(prior, name="canvas prior")
         self._require_finite(correction)
         return correction.astype(np.float32)
@@ -118,13 +158,7 @@ class PredictiveCodingRGBReadout:
             self._coerce(canvas, name="canvas state"),
             self._coerce(observation, name="camera observation"),
         )
-        return float(
-            0.5
-            * (
-                np.sum(hidden_error**2, axis=-1)
-                + np.sum(visual_error**2, axis=-1)
-            ).mean()
-        )
+        return mean_energy(hidden_error, visual_error)
 
     def _errors(
         self, canvas: np.ndarray, observation: np.ndarray

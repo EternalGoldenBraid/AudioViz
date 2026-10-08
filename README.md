@@ -173,6 +173,13 @@ remains unsupported and is explicitly rejected. Inference cost scales with
 image size and step count; reduce inference steps or resolution when exploring
 the live loop at high resolutions.
 
+The visual readout also supports opt-in energy diagnostics. A node's energy is
+`0.5 * prediction_error**2`; layer statistics report its mean and population
+variance over pixels and channels. Diagnostics capture the fixed-weight
+inference trajectory and final local errors before learning, plus the actual
+weight-change norm and weights after learning. Collection is disabled by
+default and does not change inference or learning.
+
 ---
 
 ## 🖼️ Gallery (placeholder)
