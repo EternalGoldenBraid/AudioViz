@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import numpy as np
 from loguru import logger
 
+from audioviz.utils.source_preview import SourceSceneMapping
+
 
 @dataclass(frozen=True)
 class CameraFrameSourceConfig:
@@ -21,6 +23,8 @@ def load_cv2():
 
 
 class CameraFrameSource:
+    scene_mapping = SourceSceneMapping("camera", "Camera", "rgb", "sensory")
+
     def __init__(
         self,
         *,

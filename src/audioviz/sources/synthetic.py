@@ -6,6 +6,7 @@ import numpy as np
 
 from audioviz.source_controls import SourceControl
 from audioviz.sources.ripple_grid import frequency_excitation_grid
+from audioviz.utils.source_preview import SourceSceneMapping
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,8 @@ class SyntheticSourceConfig:
 
 
 class SyntheticRippleSource:
+    scene_mapping = SourceSceneMapping("synthetic", "Synthetic", "signed", "drive")
+
     def __init__(
         self,
         *,

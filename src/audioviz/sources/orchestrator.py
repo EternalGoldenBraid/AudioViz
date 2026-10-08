@@ -73,6 +73,7 @@ class RippleSourceOrchestrator:
             if processor is not None else None
         )
         self.audio_prediction: np.ndarray | None = None
+        self.visual_observation: np.ndarray | None = None
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
             n_sources=self.n_sources,
@@ -151,9 +152,11 @@ class RippleSourceOrchestrator:
         return self.visual_readout.predict(prior)
 
     def resolve_visual_observation_correction(self) -> np.ndarray | None:
+        self.visual_observation = None
         if not self.prediction_error_transform.applies_to("camera_frame"):
             return None
         observation = self.camera_source.excitation()
+        self.visual_observation = observation
         if observation is None:
             return None
         return self.visual_readout.infer(
@@ -162,6 +165,7 @@ class RippleSourceOrchestrator:
         )
 
     def correct_from_observations(self) -> np.ndarray | None:
+        self.visual_observation = None
         audio = self.audio_source.observation()
         if audio is None:
             correction = self.resolve_visual_observation_correction()
@@ -173,6 +177,7 @@ class RippleSourceOrchestrator:
                 self.camera_source.excitation()
                 if self.prediction_error_transform.applies_to("camera_frame") else None
             )
+            self.visual_observation = image
             if self.audio_readout is None:
                 raise RuntimeError("Audio evidence requires an audio predictive readout.")
             if image is None:
@@ -202,6 +207,7 @@ class RippleSourceOrchestrator:
             self.audio_readout.set_spatial_preview_enabled(False)
             self.audio_readout.reset()
         self.audio_prediction = None
+        self.visual_observation = None
 
     def _to_canvas_grid(self, grid: np.ndarray) -> np.ndarray:
         values = np.asarray(grid, dtype=np.float32)

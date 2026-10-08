@@ -26,7 +26,7 @@ def test_camera_frame_source_controls_expose_gain_control():
     controls = CameraFrameSourceControls(gain=2.0).get_controls()
 
     assert controls[0].key == "gain"
-    assert controls[0].label == "Camera Excitation Gain"
+    assert controls[0].label == "Camera Evidence Gain"
     assert controls[0].default == 2.0
     assert controls[0].minimum == 0.0
 

@@ -7,9 +7,12 @@ import numpy as np
 from audioviz.sources.camera import load_cv2
 from audioviz.sources.pose.base import PoseGraphExtractor, PoseGraphFrame
 from audioviz.sources.pose.mediapipe_pose_source import MediaPipePoseExtractor
+from audioviz.utils.source_preview import SourceSceneMapping
 
 
 class PoseFrameSource:
+    scene_mapping = SourceSceneMapping("pose", "Pose", "graph", "medium")
+
     def __init__(
         self,
         *,

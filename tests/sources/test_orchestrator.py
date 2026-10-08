@@ -320,6 +320,9 @@ def test_audio_and_camera_joint_inference_use_one_observation_and_preserve_wave_
     velocity = engine.Z - engine.Z_old
     orchestrator.correct_from_observations()
     assert reads == [True]
+    np.testing.assert_array_equal(orchestrator.visual_observation, 0.6)
+    np.testing.assert_allclose(orchestrator.audio_source.recent_observation(), 0.1)
+    assert not orchestrator.audio_source.has_new_observation()
     assert orchestrator.audio_readout.diagnostics is not None
     assert orchestrator.visual_readout.diagnostics is not None
     assert orchestrator.audio_readout.diagnostics.inference_energy == orchestrator.visual_readout.diagnostics.inference_energy
@@ -330,6 +333,7 @@ def test_audio_and_camera_joint_inference_use_one_observation_and_preserve_wave_
     engine.propagate()
     orchestrator.predict_visual()
     assert orchestrator.correct_from_observations() is None
+    assert orchestrator.visual_observation is None
     np.testing.assert_array_equal(orchestrator.audio_readout.visual_weights, audio_weights)
 
     # A new silent audio block is evidence; an unchanged generation is not.
@@ -341,6 +345,7 @@ def test_audio_and_camera_joint_inference_use_one_observation_and_preserve_wave_
     assert orchestrator.audio_source.has_recent_observation()
     clock[0] = 0.6
     assert not orchestrator.audio_source.has_recent_observation()
+    assert orchestrator.audio_source.recent_observation() is None
     orchestrator.audio_source.set_enabled(False)
     processor.frame_counter += 1
     assert orchestrator.audio_source.observation() is None

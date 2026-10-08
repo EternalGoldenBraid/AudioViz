@@ -9,6 +9,7 @@ from audioviz.source_controls import AudioSourceControls, ControlValue
 from audioviz.source_controls import SourceControl
 from audioviz.sources.ripple_grid import frequency_excitation_grid
 from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS, spectral_observation
+from audioviz.utils.source_preview import SourceSceneMapping
 from audioviz.utils.signal_processing import (
     map_audio_freq_to_visual_freq,
     normalize_audio_visual_mapping_mode,
@@ -30,6 +31,8 @@ class AudioSourceConfig:
 
 
 class AudioRippleSource:
+    scene_mapping = SourceSceneMapping("audio", "Audio", "spectrum", "sensory")
+
     def __init__(
         self,
         *,
@@ -62,6 +65,7 @@ class AudioRippleSource:
         self.predictive = predictive
         self._last_observation_frame = 0
         self._last_observation_time: float | None = None
+        self._latest_observation: np.ndarray | None = None
         if self.processor is not None:
             self.processor.minimum_signal_level = self.signal_gate_threshold
 
@@ -71,6 +75,7 @@ class AudioRippleSource:
         self.enabled = bool(enabled)
         if not enabled:
             self._last_observation_time = None
+            self._latest_observation = None
 
     def observation(self) -> np.ndarray | None:
         if not self.has_new_observation():
@@ -84,7 +89,11 @@ class AudioRippleSource:
         )
         self._last_observation_frame = frame
         self._last_observation_time = monotonic()
+        self._latest_observation = evidence
         return evidence
+
+    def recent_observation(self) -> np.ndarray | None:
+        return self._latest_observation if self.has_recent_observation() else None
 
     def has_new_observation(self) -> bool:
         return self.enabled and self.processor.frame_counter > self._last_observation_frame
@@ -167,11 +176,23 @@ class AudioRippleSource:
             return ()
         if self.predictive:
             return (
-                SourceControl("signal_level", "Signal Level", "0.00", kind="text"),
-                SourceControl("observation_status", "Spectral Evidence", "waiting", kind="text"),
-                SourceControl("spectral_bands", "Spectral Bands (mono magnitude)", AUDIO_SPECTRAL_BANDS, kind="text"),
+                SourceControl("signal_level", "Signal Level", "0.00", kind="text", tooltip=(
+                    "Level of the latest input block. Predictive evidence is not suppressed by the signal or peak gates."
+                )),
+                SourceControl("observation_status", "Spectral Evidence", "waiting", kind="text", tooltip=(
+                    "Receiving means a genuine observation arrived within half a second. "
+                    "Silent blocks are valid observations; unchanged analysis generations are not inferred again."
+                )),
+                SourceControl("spectral_bands", "Spectral Bands (mono magnitude)", AUDIO_SPECTRAL_BANDS, kind="text", tooltip=(
+                    "Native STFT/mel magnitude bands averaged across input channels. "
+                    "The readout pools hidden activity over space, so audio has no assigned canvas position."
+                )),
                 SourceControl("observation_gain", "Audio Evidence Gain", self.observation_gain,
-                              minimum=0.0, maximum=100.0, step=0.1),
+                              minimum=0.0, maximum=100.0, step=0.1, tooltip=(
+                                  "Multiply fixed-scale spectral magnitudes before inference. Increase to expose weak audio "
+                                  "evidence; large values can destabilize inference/learning. Zero means silent evidence, not "
+                                  "disabled audio. Global pooling can produce a uniform canvas shift rather than local ripples."
+                              )),
             )
         return AudioSourceControls(
             signal_gate_threshold=self.signal_gate_threshold,

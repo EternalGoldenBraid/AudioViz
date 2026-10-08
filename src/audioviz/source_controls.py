@@ -21,6 +21,7 @@ class SourceControl:
     step: float | None = None
     unit: str | None = None
     choices: tuple[ControlValue, ...] = ()
+    tooltip: str = ""
 
 
 class SourceControls(Protocol):
@@ -196,11 +197,15 @@ class CameraFrameSourceControls(SourceControlProvider):
         return (
             SourceControl(
                 key="gain",
-                label="Camera Excitation Gain",
+                label="Camera Evidence Gain",
                 default=self.gain,
                 minimum=0.0,
                 maximum=10.0,
                 step=0.05,
+                tooltip=(
+                    "Multiply observed camera RGB values before inference. This changes evidence, not wave forcing. "
+                    "Zero supplies black evidence; use the Camera toggle to disable observation."
+                ),
             ),
         )
 
@@ -225,6 +230,10 @@ class PredictionLearningControls(SourceControlProvider):
                 minimum=1,
                 maximum=64,
                 step=1,
+                tooltip=(
+                    "Number of fixed-weight settling steps when fresh sensory evidence is available. "
+                    "More steps increase computation and total state correction. Weights learn once after settling."
+                ),
             ),
             SourceControl(
                 key="inference_rate",
@@ -233,6 +242,10 @@ class PredictionLearningControls(SourceControlProvider):
                 minimum=0.0,
                 maximum=1.0,
                 step=0.001,
+                tooltip=(
+                    "Hidden-state step size, also used to relax persistent hidden states toward the wave prior "
+                    "before observing evidence. Zero freezes hidden states; large values can cause oscillation."
+                ),
             ),
             SourceControl(
                 key="canvas_rate",
@@ -241,12 +254,21 @@ class PredictionLearningControls(SourceControlProvider):
                 minimum=0.0,
                 maximum=1.0,
                 step=0.001,
+                tooltip=(
+                    "Per-inference-step gradient rate for correcting the shared canvas from camera/audio hidden errors, "
+                    "not a blend percentage. Zero disables sensory canvas correction; waves and hidden inference continue. "
+                    "Larger rates or more steps can destabilize the surface."
+                ),
             ),
             SourceControl(
                 key="learning_enabled",
                 label="Pathway Learning",
                 default=self.enabled,
                 kind="toggle",
+                tooltip=(
+                    "Learn both sensory pathways' predictive weights from final local errors. "
+                    "Off freezes weights, not hidden inference or canvas correction. Wave conductances remain fixed."
+                ),
             ),
             SourceControl(
                 key="learning_rate",
@@ -255,6 +277,10 @@ class PredictionLearningControls(SourceControlProvider):
                 minimum=0.0,
                 maximum=1.0,
                 step=1e-4,
+                tooltip=(
+                    "Step size for one local weight update after inference on new evidence. "
+                    "This changes sensory predictions, not wave physics. Large values can destabilize learning."
+                ),
             ),
             SourceControl(
                 key="learning_weight_decay",
@@ -263,6 +289,10 @@ class PredictionLearningControls(SourceControlProvider):
                 minimum=0.0,
                 maximum=1.0,
                 step=1e-4,
+                tooltip=(
+                    "L2 coefficient that subtracts weight_decay * weight from each learning gradient before clipping. "
+                    "Encourages smaller weights and acts only while pathway learning is enabled."
+                ),
             ),
             SourceControl(
                 key="learning_weight_clip",
@@ -271,6 +301,7 @@ class PredictionLearningControls(SourceControlProvider):
                 minimum=1e-4,
                 maximum=1000.0,
                 step=0.01,
+                tooltip="Maximum absolute predictive weight after learning. This bounds weights, not hidden states or wave conductances.",
             ),
             SourceControl(
                 key="learning_gradient_clip",
@@ -279,6 +310,10 @@ class PredictionLearningControls(SourceControlProvider):
                 minimum=1e-4,
                 maximum=1000.0,
                 step=0.01,
+                tooltip=(
+                    "Maximum absolute entry of the learning gradient, including decay, before multiplication by "
+                    "Weight Learning Rate. This limits weight steps, not sensory errors or state inference."
+                ),
             ),
         )
 
@@ -297,6 +332,7 @@ class PredictionOverlayControls(SourceControlProvider):
                 label="Show Fixed Conductances",
                 default=self.enabled,
                 kind="toggle",
+                tooltip="Show fixed wave-neighbor conductances on the canvas. These are not the learned sensory-pathway weights.",
             ),
             SourceControl(
                 key="overlay_stride",
@@ -305,6 +341,7 @@ class PredictionOverlayControls(SourceControlProvider):
                 minimum=1,
                 maximum=64,
                 step=1,
+                tooltip="Sample one wave-grid connection group every this many pixels. Larger strides reduce overlay clutter and work.",
             ),
             SourceControl(
                 key="overlay_threshold",
@@ -313,6 +350,7 @@ class PredictionOverlayControls(SourceControlProvider):
                 minimum=0.0,
                 maximum=10.0,
                 step=0.01,
+                tooltip="Hide displayed conductance edges weaker than this absolute threshold. No weights or graph connections are pruned.",
             ),
             SourceControl(
                 key="overlay_scale",
@@ -321,5 +359,6 @@ class PredictionOverlayControls(SourceControlProvider):
                 minimum=0.1,
                 maximum=50.0,
                 step=0.1,
+                tooltip="Visual gain for overlay edge strength and opacity. Does not change physical conductances or learned weights.",
             ),
         )
