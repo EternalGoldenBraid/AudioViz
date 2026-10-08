@@ -1,4 +1,5 @@
 import numpy as np
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 from audioviz.readouts import PredictiveCodingRGBReadout
 from audioviz.visualization.prediction_layer_view import (
@@ -35,7 +36,7 @@ def test_layer_planes_reuse_items_preserve_camera_and_clear_pixels(qapp):
     assert len(planes) == 3 + readout.config.hidden_channels
     np.testing.assert_array_equal(planes["Canvas (corrected)"].data, rgb_texture(field))
     assert "before evidence" in view.labels["Prediction (before evidence)"].text
-    assert "E=" in view.labels["H0"].text
+    assert view.labels["H0"].text.startswith("H0:")
     view.orbit(15, 10)
     camera = view.cameraParams()
     view.set_preview(field, readout.diagnostics)
@@ -46,4 +47,54 @@ def test_layer_planes_reuse_items_preserve_camera_and_clear_pixels(qapp):
     assert all(plane.data.shape == (1, 1, 4) for plane in planes.values())
     view.reset_view()
     assert view.cameraParams()["azimuth"] == -90
+    view.close()
+
+
+def test_layer_view_drag_orbits_and_wheel_zooms(qapp):
+    view = PredictionLayerView()
+    camera = view.cameraParams()
+    QtWidgets.QApplication.sendEvent(
+        view,
+        QtGui.QMouseEvent(
+            QtCore.QEvent.MouseButtonPress, QtCore.QPointF(40, 40),
+            QtCore.Qt.LeftButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier,
+        ),
+    )
+    QtWidgets.QApplication.sendEvent(
+        view,
+        QtGui.QMouseEvent(
+            QtCore.QEvent.MouseMove, QtCore.QPointF(60, 55),
+            QtCore.Qt.NoButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier,
+        ),
+    )
+    assert view.cameraParams()["azimuth"] == camera["azimuth"] - 20
+    assert view.cameraParams()["elevation"] == camera["elevation"] + 15
+    QtWidgets.QApplication.sendEvent(
+        view,
+        QtGui.QWheelEvent(
+            QtCore.QPointF(60, 55), QtCore.QPointF(60, 55),
+            QtCore.QPoint(), QtCore.QPoint(0, 120), QtCore.Qt.NoButton,
+            QtCore.Qt.NoModifier, QtCore.Qt.NoScrollPhase, False,
+        ),
+    )
+    assert view.cameraParams()["distance"] < camera["distance"]
+    view.close()
+
+
+def test_native_context_mismatch_never_paints_a_success_shaped_blank_view(qapp, monkeypatch):
+    import audioviz.visualization.prediction_layer_view as layer_view
+
+    view = PredictionLayerView()
+    failures = []
+    view.rendering_failed.connect(failures.append)
+    monkeypatch.setattr(layer_view.platform, "GetCurrentContext", lambda: None)
+    monkeypatch.setattr(view, "isVisible", lambda: True)
+    monkeypatch.setattr(view, "isValid", lambda: True)
+    view.initializeGL()
+    view.paintGL()
+    view._check_context()
+    assert len(failures) == 1
+    assert "incompatible contexts" in failures[0]
+    view._check_context()
+    assert len(failures) == 2
     view.close()

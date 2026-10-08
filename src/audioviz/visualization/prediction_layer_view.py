@@ -15,8 +15,11 @@ def _configure_opengl_platform() -> None:
         and app.platformName() == "xcb"
         and "OpenGL.platform" not in sys.modules
     ):
-        # Qt's X11 context uses GLX even inside a Wayland desktop session.
-        os.environ.setdefault("PYOPENGL_PLATFORM", "glx")
+        # Match Qt's X11 integration, including inside a Wayland desktop session.
+        integration = os.environ.get("QT_XCB_GL_INTEGRATION")
+        os.environ.setdefault(
+            "PYOPENGL_PLATFORM", "egl" if integration == "xcb_egl" else "glx"
+        )
 
 
 _configure_opengl_platform()
@@ -53,6 +56,7 @@ class PredictionLayerView(gl.GLViewWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setMinimumSize(360, 360)
         self.setBackgroundColor((20, 25, 30))
         self.planes: dict[str, gl.GLImageItem] = {}
         self.labels: dict[str, gl.GLTextItem] = {}
@@ -97,7 +101,7 @@ class PredictionLayerView(gl.GLViewWidget):
                 hidden_texture(preview.hidden[:, :, channel]),
                 (x, y, 1.2),
                 width,
-                text=f"H{channel}  E={energy:.2g}",
+                text=f"H{channel}:{energy:.1g}",
             )
         for name, plane in self.planes.items():
             active = not name.startswith("H") or int(name[1:]) < count
@@ -155,13 +159,6 @@ class PredictionLayerView(gl.GLViewWidget):
     def initializeGL(self) -> None:
         self._context_ready = bool(platform.GetCurrentContext())
         if not self._context_ready:
-            QtCore.QTimer.singleShot(
-                0,
-                lambda: self.rendering_failed.emit(
-                    "Qt and PyOpenGL use incompatible contexts. On X11, restart "
-                    "with PYOPENGL_PLATFORM=glx. The 2D graph remains available."
-                ),
-            )
             return
         super().initializeGL()
 
@@ -170,7 +167,17 @@ class PredictionLayerView(gl.GLViewWidget):
             super().paintGL()
 
     def _check_context(self) -> None:
-        if self.isVisible() and not self.isValid():
+        if not self.isVisible():
+            return
+        if not self.isValid():
             self.rendering_failed.emit(
                 "OpenGL context creation failed. The 2D graph remains available."
+            )
+        elif not self._context_ready:
+            expected = (
+                "egl" if os.environ.get("QT_XCB_GL_INTEGRATION") == "xcb_egl" else "glx"
+            )
+            self.rendering_failed.emit(
+                "Qt and PyOpenGL use incompatible contexts. On X11, restart "
+                f"with PYOPENGL_PLATFORM={expected}. The 2D graph remains available."
             )
