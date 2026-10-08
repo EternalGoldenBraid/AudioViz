@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -8,6 +9,7 @@ from audioviz.readouts.diagnostics import (
     EnergyStatistics,
     PredictiveCodingDiagnostics,
     SensoryPreview,
+    StreamStateDiagnostics,
     copy_weights,
     mean_energy,
 )
@@ -25,10 +27,12 @@ class PredictiveCodingConfig:
     weight_clip: float = 10.0
     gradient_clip: float = 1.0
     cross_modal_enabled: bool = False
+    stream_state_enabled: bool = False
 
     def __post_init__(self) -> None:
-        if not isinstance(self.cross_modal_enabled, bool):
-            raise ValueError("cross_modal_enabled must be a boolean")
+        for name in ("cross_modal_enabled", "stream_state_enabled"):
+            if not isinstance(getattr(self, name), bool):
+                raise ValueError(f"{name} must be a boolean")
         for name in ("hidden_channels", "inference_steps"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -74,6 +78,9 @@ class PredictiveCodingRGBReadout:
         for channel in range(min(3, self.config.hidden_channels)):
             self.canvas_weights[channel, channel] = 1.0
             self.visual_weights[channel, channel] = 1.0
+        self.stream_state_weights = rng.normal(scale=.1, size=(1, self.config.hidden_channels))
+        self.stream_state_bias = np.zeros(1)
+        self.stream_state_prediction: float | None = None
         self.hidden_error = np.zeros_like(self.hidden)
         self.visual_error = np.zeros(self.canvas_shape, dtype=np.float64)
         self.diagnostics_enabled = False
@@ -107,6 +114,7 @@ class PredictiveCodingRGBReadout:
         self.visual_error.fill(0.0)
         self.diagnostics = None
         self._preview_prediction = None
+        self.stream_state_prediction = None
 
     def predict(self, prior: np.ndarray) -> np.ndarray:
         canvas = self._coerce(prior, name="canvas prior")
@@ -119,13 +127,35 @@ class PredictiveCodingRGBReadout:
         self.diagnostics = None
         self._preview_prediction = None
         prediction = self._predict_observation(np.tanh(self.hidden))
+        self.stream_state_prediction = (
+            self.predict_stream_state() if self.config.stream_state_enabled else None
+        )
         self._require_finite(self.hidden, prediction)
         if self.spatial_preview_enabled:
             self._preview_prediction = self._preview_observation(prediction)
         return prediction.astype(np.float32)
 
-    def infer(self, prior: np.ndarray, observation: np.ndarray) -> np.ndarray:
-        return infer_joint(prior, ((self, observation),))
+    def infer(
+        self, prior: np.ndarray, observation: np.ndarray | None,
+        *, stream_state: bool | None = None,
+    ) -> np.ndarray:
+        return infer_joint(
+            prior, ((self, observation),),
+            stream_states={self: stream_state} if stream_state is not None else None,
+        )
+
+    def predict_stream_state(self, hidden_activity: np.ndarray | None = None) -> float:
+        activity = np.tanh(self.hidden) if hidden_activity is None else hidden_activity
+        logit = float((activity.mean(axis=(0, 1)) @ self.stream_state_weights.T + self.stream_state_bias)[0])
+        self._require_finite(logit)
+        return float(.5 * (1 + np.tanh(.5 * logit)))
+
+    def _stream_state_terms(
+        self, observed: bool, hidden_activity: np.ndarray | None = None,
+    ) -> tuple[float, float, float]:
+        prediction = self.predict_stream_state(hidden_activity)
+        error = float(observed) - prediction
+        return prediction, error, error * prediction * (1 - prediction)
 
     def _finish_inference(
         self, canvas: np.ndarray, observed: np.ndarray | None, inference_energy: list[float],
@@ -133,6 +163,7 @@ class PredictiveCodingRGBReadout:
         cross_weights: np.ndarray | None = None,
         cross_parent_means: tuple[float, ...] = (),
         cross_update_norm: float = 0.0,
+        stream_state: bool | None = None,
     ) -> None:
         self.hidden_error = (
             self.hidden - np.tanh(canvas) @ self.canvas_weights.T
@@ -143,10 +174,22 @@ class PredictiveCodingRGBReadout:
             else observed - self._predict_observation(np.tanh(self.hidden))
         )
         weights_before = None
+        parameters = (
+            self.canvas_weights, self.visual_weights,
+            self.stream_state_weights, self.stream_state_bias,
+        )
         if self.diagnostics_enabled:
-            weights_before = self.canvas_weights.copy(), self.visual_weights.copy()
+            weights_before = tuple(weights.copy() for weights in parameters)
+        stream_terms = self._stream_state_terms(stream_state) if stream_state is not None else None
         if learn and self.config.learning_enabled and self.config.learning_rate:
             self._learn(canvas, learn_sensory=observed is not None)
+            if stream_terms is not None:
+                direction = stream_terms[2]
+                self._update_weights(
+                    self.stream_state_weights,
+                    direction * np.tanh(self.hidden).mean(axis=(0, 1))[None, :],
+                )
+                self._update_weights(self.stream_state_bias, np.array([direction]))
         if weights_before is not None:
             self.diagnostics = PredictiveCodingDiagnostics(
                 hidden=EnergyStatistics.from_error(self.hidden_error),
@@ -172,8 +215,7 @@ class PredictiveCodingRGBReadout:
                 learning_rate=self.config.learning_rate,
                 weight_update_norm=float(
                     np.sqrt(
-                        np.sum((self.canvas_weights - weights_before[0]) ** 2)
-                        + np.sum((self.visual_weights - weights_before[1]) ** 2)
+                        sum(np.sum((weights - before)**2) for weights, before in zip(parameters, weights_before))
                         + cross_update_norm**2
                     )
                 ),
@@ -189,6 +231,14 @@ class PredictiveCodingRGBReadout:
                 observation_present=observed is not None,
                 cross_modal_weights=copy_weights(cross_weights) if cross_weights is not None else None,
                 cross_parent_means=cross_parent_means,
+                stream_state=(
+                    StreamStateDiagnostics(
+                        observed=stream_state, prediction=stream_terms[0], energy=.5 * stream_terms[1]**2,
+                        weights=copy_weights(self.stream_state_weights),
+                        bias=float(self.stream_state_bias[0]),
+                    )
+                    if stream_state is not None and stream_terms is not None else None
+                ),
             )
         self._preview_prediction = None
 
@@ -250,7 +300,7 @@ class PredictiveCodingRGBReadout:
         return array
 
     @staticmethod
-    def _require_finite(*values: np.ndarray) -> None:
+    def _require_finite(*values: np.ndarray | float) -> None:
         if any(not np.all(np.isfinite(value)) for value in values):
             raise FloatingPointError(
                 "Predictive coding diverged; reduce inference or learning rates."
@@ -313,6 +363,7 @@ def infer_joint(
     branches: tuple[tuple[PredictiveCodingRGBReadout, np.ndarray | None], ...],
     *,
     coupling: PredictiveCodingHiddenCoupling | None = None,
+    stream_states: Mapping[PredictiveCodingRGBReadout, bool] | None = None,
 ) -> np.ndarray:
     """Infer active sensory branches synchronously, with weights fixed until settling."""
     if not branches:
@@ -322,14 +373,20 @@ def infer_joint(
     ):
         raise ValueError("Coupled inference requires both hidden branches.")
     first = branches[0][0]
+    states = {} if stream_states is None else dict(stream_states)
+    if not set(states).issubset({branch for branch, _ in branches}):
+        raise ValueError("Stream-state context must belong to an inferred branch.")
+    for branch, state in states.items():
+        if not isinstance(state, bool) or not branch.config.stream_state_enabled:
+            raise ValueError("Stream-state context requires a boolean observation and an enabled context node.")
     canvas = first._coerce(prior, name="canvas prior").copy()
     steps = first.config.inference_steps
     observations = []
     for branch, observed in branches:
         if branch.canvas_shape != first.canvas_shape or branch.config.inference_steps != steps:
             raise ValueError("Joint branches must share canvas shape and inference step count.")
-        if observed is None and coupling is None:
-            raise ValueError("Uncoupled inference requires sensory evidence.")
+        if observed is None and coupling is None and branch not in states:
+            raise ValueError("Uncoupled inference requires sensory or stream-state evidence.")
         observations.append((branch, branch._coerce_observation(observed) if observed is not None else None))
     collect = any(branch.diagnostics_enabled for branch, _ in observations)
     trajectory: list[float] = []
@@ -353,6 +410,11 @@ def infer_joint(
                 (1.0 - canvas_activity**2) * (hidden_error @ branch.canvas_weights)
             )
             feedback = sensory_error @ branch.visual_weights
+            if branch in states:
+                _, state_error, state_direction = branch._stream_state_terms(states[branch], hidden_activity)
+                feedback = feedback + state_direction * branch.stream_state_weights[0]
+                if collect:
+                    energy += .5 * state_error**2
             if coupling is not None:
                 feedback = feedback + coupling.feedback(branch, errors)
             hidden_updates.append(
@@ -377,8 +439,8 @@ def infer_joint(
             mean_energy(final_errors[branch], np.zeros_like(branch.visual_error) if observed is None
                         else observed - branch._predict_observation(np.tanh(branch.hidden)))
             for branch, observed in observations
-        ))
-    learn = any(observed is not None for _, observed in observations)
+        ) + sum(.5 * branch._stream_state_terms(state)[1]**2 for branch, state in states.items()))
+    learn = bool(states) or any(observed is not None for _, observed in observations)
     cross_updates = {}
     if coupling is not None and learn:
         for branch in coupling.branches:
@@ -401,6 +463,7 @@ def infer_joint(
                 if coupling is not None else ()
             ),
             cross_update_norm=cross_updates.get(branch, 0.0),
+            stream_state=states.get(branch),
         )
     correction = canvas - first._coerce(prior, name="canvas prior")
     first._require_finite(correction)

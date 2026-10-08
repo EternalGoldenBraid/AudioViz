@@ -20,6 +20,7 @@ class PredictiveCodingAudioReadout(PredictiveCodingRGBReadout):
             scale=0.1, size=(AUDIO_SPECTRAL_BANDS, self.config.hidden_channels)
         )
         self.visual_error = np.zeros(AUDIO_SPECTRAL_BANDS, dtype=np.float64)
+        self.stream_state_weights = rng.normal(scale=.1, size=self.stream_state_weights.shape)
 
     def _predict_observation(self, hidden_activity: np.ndarray) -> np.ndarray:
         return hidden_activity.mean(axis=(0, 1)) @ self.visual_weights.T

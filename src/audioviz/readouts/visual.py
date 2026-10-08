@@ -11,12 +11,17 @@ from audioviz.readouts.diagnostics import PredictiveCodingDiagnostics
 class VisualReadout(Protocol):
     config: PredictiveCodingConfig
     diagnostics: PredictiveCodingDiagnostics | None
+    hidden: np.ndarray
+    stream_state_prediction: float | None
 
     def predict(self, prior: np.ndarray) -> np.ndarray:
         """Advance hidden belief from a canvas prior and predict RGB evidence."""
 
-    def infer(self, prior: np.ndarray, observation: np.ndarray) -> np.ndarray:
-        """Infer hidden and canvas states; return the net canvas correction."""
+    def infer(
+        self, prior: np.ndarray, observation: np.ndarray | None,
+        *, stream_state: bool | None = None,
+    ) -> np.ndarray:
+        """Infer from available sensory/context evidence; return the canvas correction."""
 
     def update_config(self, **changes) -> None:
         """Update inference and learning controls."""

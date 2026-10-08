@@ -31,6 +31,15 @@ class SensoryPreview:
 
 
 @dataclass(frozen=True)
+class StreamStateDiagnostics:
+    observed: bool
+    prediction: float
+    energy: float
+    weights: np.ndarray
+    bias: float
+
+
+@dataclass(frozen=True)
 class PredictiveCodingDiagnostics:
     hidden: EnergyStatistics
     visual: EnergyStatistics
@@ -47,6 +56,7 @@ class PredictiveCodingDiagnostics:
     observation_present: bool = True
     cross_modal_weights: np.ndarray | None = None
     cross_parent_means: tuple[float, ...] = ()
+    stream_state: StreamStateDiagnostics | None = None
 
 
 def mean_energy(hidden_error: np.ndarray, visual_error: np.ndarray) -> float:
