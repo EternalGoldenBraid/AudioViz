@@ -1,7 +1,7 @@
 import pytest
 
 from audioviz.engine import RippleEngine
-from audioviz.source_controls import SourceControl
+from audioviz.source_controls import PredictionLearningControls, SourceControl
 from audioviz.ui.ripple_control_panel import ControlPanelSection, SourceToggle
 
 
@@ -43,6 +43,44 @@ def test_ripple_control_panel_updates_wave_physics(ripple_panel_deps):
     assert engine.body_boundary_transmission == 0.25
     assert engine.body_boundary_dissipation == 0.6
     assert panel.section_widgets["wave-physics"].is_expanded()
+
+
+def test_inference_settings_explain_behavior_on_both_labels_and_editors(qapp):
+    from types import SimpleNamespace
+    from PyQt5 import QtWidgets
+    from audioviz.sources.audio import AudioRippleSource
+    from audioviz.ui.ripple_control_panel import RippleControlPanel
+
+    inference = PredictionLearningControls().get_controls()
+    audio = AudioRippleSource(processor=SimpleNamespace(), predictive=True).controls()
+    panel = RippleControlPanel(
+        RippleEngine(resolution=(8, 8), plane_size_m=(1, 1), speed=1),
+        source_sections=(
+            ControlPanelSection("inference", "Sensory Inference", inference),
+            ControlPanelSection("audio", "Audio Evidence", audio),
+        ),
+    )
+    for section, controls in (("inference", inference), ("audio", audio)):
+        form = panel.section_widgets[section].content_layout.itemAt(0).layout()
+        for control in controls:
+            widget = panel.source_control_widgets[(section, control.key)]
+            assert control.tooltip
+            expected = panel._tooltip_text(control.tooltip)
+            assert widget.toolTip() == expected
+            assert form.labelForField(widget).toolTip() == expected
+            for child in widget.findChildren(QtWidgets.QWidget):
+                assert child.toolTip() == expected
+    canvas = panel.source_control_widgets[("inference", "canvas_rate")]
+    assert "not a blend percentage" in canvas.toolTip()
+    assert "Zero disables sensory canvas correction" in canvas.toolTip()
+    assert "Off freezes weights, not hidden inference" in (
+        panel.source_control_widgets[("inference", "learning_enabled")].toolTip()
+    )
+    assert "uniform canvas shift" in panel.source_control_widgets[("audio", "observation_gain")].toolTip()
+    assert panel.amplitude_slider.toolTip() == panel.amplitude_label.toolTip()
+    assert "not audio evidence" in panel.amplitude_slider.toolTip()
+    assert "negative values clip to black" in panel.rgb_canvas_checkbox.toolTip()
+    panel.close()
 
 
 def test_ripple_control_panel_supports_choice_text_and_auto_floor(ripple_panel_deps):

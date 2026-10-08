@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import escape
 from typing import Callable, Optional, Sequence
 
 from loguru import logger
@@ -216,6 +217,9 @@ class RippleControlPanel(QtWidgets.QWidget):
         group_layout = wave_section.content_layout
 
         reset_button = QtWidgets.QPushButton("Reset Field")
+        reset_button.setToolTip(self._tooltip_text(
+            "Clear the field and belief states, retaining learned sensory-pathway weights."
+        ))
         reset_button.clicked.connect(self.reset_field)
         group_layout.addWidget(reset_button)
 
@@ -223,7 +227,7 @@ class RippleControlPanel(QtWidgets.QWidget):
             group_layout,
             title="Excitation Falloff (α)",
             tooltip=(
-                "Controls how quickly the excitation decays away from the source point. "
+                "Controls how quickly synthetic excitation decays away from the source point. "
                 "Distance is normalized by the field diagonal, so α is independent of "
                 "plane size. Higher α = more localized excitation."
             ),
@@ -261,7 +265,8 @@ class RippleControlPanel(QtWidgets.QWidget):
             title="Excitation Amplitude",
             tooltip=(
                 "Controls the strength of excitation added to the wave field. "
-                "Set to 0 to mute audio-driven ripples."
+                "Scales explicit synthetic drives, not audio evidence or sensory canvas correction. "
+                "Set to 0 to mute synthetic stimulation."
             ),
             value_label=f"Amplitude: {self.engine.amplitude:.2f}",
             minimum=0,
@@ -304,10 +309,11 @@ class RippleControlPanel(QtWidgets.QWidget):
         )
 
         self.rgb_canvas_checkbox = QCheckBox("RGB Canvas")
-        self.rgb_canvas_checkbox.setToolTip(
+        self.rgb_canvas_checkbox.setToolTip(self._tooltip_text(
             "Display the three canvas-state channels directly as red, green, and blue. "
-            "Scalar audio drives all channels equally, so audio-only activity is grayscale."
-        )
+            "Positive values scale with the display limit; negative values clip to black. "
+            "Audio's learned pathway can change all three channels and may produce subtle global shifts."
+        ))
         self.rgb_canvas_checkbox.setChecked(bool(rgb_canvas_enabled))
         self.rgb_canvas_checkbox.setEnabled(bool(rgb_canvas_available))
         if not rgb_canvas_available:
@@ -320,10 +326,10 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.auto_color_levels_checkbox = QCheckBox(
             "Auto Color Scaling (98th percentile)"
         )
-        self.auto_color_levels_checkbox.setToolTip(
+        self.auto_color_levels_checkbox.setToolTip(self._tooltip_text(
             "Continuously remap the ripple colormap to the current 98th percentile "
             "of active field magnitudes. Disable it to keep manual or fixed levels."
-        )
+        ))
         self.auto_color_levels_checkbox.setChecked(bool(auto_color_levels_enabled))
         self.auto_color_levels_checkbox.toggled.connect(self.update_auto_color_levels)
         group_layout.addWidget(self.auto_color_levels_checkbox)
@@ -335,7 +341,7 @@ class RippleControlPanel(QtWidgets.QWidget):
             group_layout,
             title="Auto Scale Activation Threshold",
             tooltip=(
-                "Adaptive color scaling only activates once the current field energy "
+                "Adaptive color scaling only activates once the 98th percentile of absolute field amplitude "
                 "exceeds this threshold. Below it, the display stays on the fixed "
                 "low-level reference scale."
             ),
@@ -381,7 +387,14 @@ class RippleControlPanel(QtWidgets.QWidget):
                 if section.controls:
                     for control in section.controls:
                         widget = self._create_source_control_widget(section.key, control)
-                        source_group_layout.addRow(control.label, widget)
+                        label = QLabel(control.label)
+                        label.setBuddy(widget)
+                        tooltip = self._tooltip_text(control.tooltip)
+                        label.setToolTip(tooltip)
+                        widget.setToolTip(tooltip)
+                        for child in widget.findChildren(QtWidgets.QWidget):
+                            child.setToolTip(tooltip)
+                        source_group_layout.addRow(label, widget)
                         self.source_control_widgets[(section.key, control.key)] = widget
                 else:
                     empty_label = QLabel(
@@ -402,6 +415,11 @@ class RippleControlPanel(QtWidgets.QWidget):
 
         content_layout.addStretch(1)
 
+    @staticmethod
+    def _tooltip_text(text: str) -> str:
+        """Qt rich text enables word wrapping for long control explanations."""
+        return f"<qt>{escape(text)}</qt>" if text else ""
+
     def _add_slider(
         self,
         layout: QtWidgets.QVBoxLayout,
@@ -414,10 +432,13 @@ class RippleControlPanel(QtWidgets.QWidget):
         value: int,
         on_change: Callable[[int], None],
     ) -> tuple[QLabel, QSlider]:
+        tooltip = self._tooltip_text(tooltip)
         title_label = QLabel(title)
         title_label.setToolTip(tooltip)
         label = QLabel(value_label)
+        label.setToolTip(tooltip)
         slider = QSlider(Qt.Horizontal)
+        slider.setToolTip(tooltip)
         slider.setMinimum(minimum)
         slider.setMaximum(maximum)
         slider.setValue(value)

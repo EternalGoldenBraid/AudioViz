@@ -94,7 +94,8 @@ Accessible from GUI sliders:
 * **RGB Canvas**: Displays the three simulated canvas channels directly as red, green, and blue
 * **Sensory Inference and Learning**: Shared controls for camera/audio hidden-state inference, canvas correction, and weight learning
 * **Substrate Conductances (Fixed)**: Diagnostic overlay of the wave operator, not the learned visual weights
-* **Show Inference Diagnostics**: Opens a toggleable live energy and learning window
+* **Show Inference / Learning Plots**: Opens the energy / 2D weight plot catalogue
+* **Show Multimodal 3D Scene**: Opens an independent, rotatable view of the shared canvas and every source
 
 ## Predictive canvas
 
@@ -190,6 +191,13 @@ remains unsupported and is explicitly rejected. Inference cost scales with
 image size and step count; reduce inference steps or resolution when exploring
 the live loop at high resolutions.
 
+Hover a source/inference control or its label for its update semantics,
+zero-value behavior, and stability caveats. **Canvas Correction Rate** is the
+per-inference-step gradient rate applied to the propagated wave prior, not a
+percentage blend with sensor data. At zero, sensory correction of the canvas
+stops while wave propagation and hidden-state inference continue. **Hidden
+State Rate** also controls the pre-evidence relaxation toward that wave prior.
+
 ### Audio observations and pooled readout
 
 Audio uses the newest frame of the existing STFT magnitude or square-root mel
@@ -241,6 +249,18 @@ the latest audio sample for at most half a second, then mark missing evidence
 and clear its planes. The offline audio renderer exercises this same pathway;
 its legacy frequency-mapping arguments now affect reported peak metadata only.
 
+Audio can be much less visible than camera feedback initially: camera weights
+start near identity, while both audio projections start small, and band means
+dilute narrow spectral peaks. From a uniform canvas, pooled audio error can
+produce a spatially uniform shift, not a localized wave pattern. **Audio
+Evidence Gain** scales the actual spectral target; **Excitation Amplitude**
+only scales synthetic drives. Gain zero is silent evidence, not missing input.
+RGB rendering clips negative values to black and quantizes positive values to
+8-bit intensity at the current display scale, so weak corrections can be
+invisible. Lowering **Low-Level Reference Scale** changes visibility without
+changing inference; increasing evidence/canvas rates changes the model and
+can destabilize it. No automatic gain or physics changes are made to compensate.
+
 The visual readout also supports opt-in energy diagnostics. A node's energy is
 `0.5 * prediction_error**2`; layer statistics report its mean and population
 variance over pixels and channels. Diagnostics capture the fixed-weight
@@ -248,23 +268,23 @@ inference trajectory and final local errors before learning, plus the actual
 weight-change norm and weights after learning. Collection is disabled by
 default and does not change inference or learning.
 
-Click **Show Inference Diagnostics** below the canvas to see hidden-layer and
+Click **Show Inference / Learning Plots** below the canvas to see hidden-layer and
 camera-level energy means and variances over simulation time, and the latest
 frame's energy trajectory across fixed-weight inference steps. The status line
 shows whether weight learning is enabled, its rate, and the actual combined
 weight-update norm. Missing camera evidence inserts a gap, not a fabricated
 zero-energy sample. Reset clears the diagnostic history.
 
-With an audio processor present, the window has **Camera** and **Audio** tabs,
-each showing its own hidden/sensory means, variances, weights, and optional
-2D/3D graph. Both branches collect bounded scalar history while the window is
-open; spatial previews are captured only for the visible tab's enabled 3D
-view. An inference trajectory includes all branches active in that inference
-frame. Audio sensory statistics are over bands, not over repeated spatial
-copies. Audio 3D observation/prediction planes show grayscale band columns;
-rows repeat purely for display.
+With an audio processor present, the catalogue has **Camera** and **Audio**
+tabs. Select **Energy and inference plots**, **2D weights and hidden states**,
+or both; the divider resizes the plots when both are selected. Each modality
+has its own hidden/sensory means, variances, and weights. Both collect bounded
+scalar history while the catalogue is open, irrespective of the selected tab.
+An inference trajectory includes all branches active in that inference frame.
+Audio sensory statistics are over native bands, not repeated spatial copies.
+The catalogue does not retain spatial images.
 
-Enable **Show shared-channel computational graph** in that window to inspect
+Select **2D weights and hidden states** in the catalogue to inspect
 all connections in the selected `canvas -> hidden -> sensory` pathway. Nodes show
 spatial mean states and local mean energies; signed edge colors and widths show
 the shared weights. Dashed arrows indicate local error feedback. This is the
@@ -278,30 +298,58 @@ the graph is separately optional. This visualization does not change topology
 or prune weights. Arbitrary predictive graph topologies remain a separate
 extension.
 
-Within the graph panel, enable **3D layer view (drag to rotate)** to orbit a
-stack of the corrected canvas, individual hidden-channel maps at one hidden
-depth, the camera prediction made **before new evidence**, and the observed
-camera image clamped during that frame's inference. Drag to rotate, use the
-wheel to zoom, or Ctrl-drag to pan; **Reset 3D camera** restores the initial
-view. The energy plots remain alongside it, and the divider resizes the panels.
-Hidden labels include their channel's mean local energy. RGB planes use a fixed
-`[0,1]` display range with clipping; hidden maps display `tanh(state)`, blue for
-negative and orange for positive. The main canvas and its color controls are
-unchanged. The initial 3D view omits connection lines.
+### Independent multimodal 3D scene
 
-Spatial previews use aspect-preserving nearest-neighbor sampling, capped at
-64 pixels per side, and only the latest sampled frame is retained; images are
-not stored in the 300-entry energy history. Preview requests and texture updates
-are limited to 10 Hz, including requests when camera evidence is missing.
-Collection occurs only while the diagnostics window, graph panel, and 3D mode
-are visible. The camera is not read again for visualization. GPU canvas values
-are sampled before their host transfer. Hiding, reset, and missing evidence
-clear stale planes. Preview preparation and OpenGL stay on the GUI thread;
-there is no worker or extra render timer, and interaction redraws cached small
-planes. OpenGL is initialized lazily. Context failures are reported in the
-panel and restore the 2D graph; on X11, an explicitly incompatible PyOpenGL
-platform can be corrected by restarting with `PYOPENGL_PLATFORM=glx` (or `egl`
-when Qt explicitly uses `QT_XCB_GL_INTEGRATION=xcb_egl`).
+Click **Show Multimodal 3D Scene** below the canvas, or **Open multimodal 3D
+scene** in the catalogue. This is a separate window: either window can remain
+open after the other closes. Both sensory branches share one corrected canvas;
+each shows its own hidden maps and prediction made **before new evidence**.
+Camera evidence is an RGB plane. Audio prediction and evidence are signed
+spectral bar histograms, with one bar per native band and a fixed `[-1,1]`
+display range; values outside that range are clipped for display only. Positive
+bars are blue, negative predictions orange; silence has zero-height bars.
+There is no per-frame normalization or duplication into audio image pixels.
+
+Each source declares a `scene_mapping` (`SourceSceneMapping`) defining its
+identity, role, representation, and bounded sampling:
+
+| Source | Role | 3D representation |
+| --- | --- | --- |
+| Camera | Learned sensory branch | RGB prediction/evidence planes and hidden-channel maps |
+| Audio | Learned sensory branch | Spectral prediction/evidence bars and hidden-channel maps |
+| Synthetic | Direct wave drive | Signed drive-grid plane, before the engine's amplitude scaling |
+| Pose | Coupled medium | Valid mapped pose nodes and adjacency edges |
+
+Synthetic/pose attachments do not acquire invented predictive hidden layers.
+Layout links distinguish the sensory pathways from direct drive/medium
+attachments; individual learned connections remain in the 2D weight plots.
+Disabled sources are identified in the status line. Missing evidence removes
+that source's observed geometry; the canvas, hidden states, and predictions
+continue to show the belief. Audio holds its latest genuine observation for
+at most half a second between blocks, including real silent observations.
+
+Drag to orbit, wheel to zoom, or Ctrl-drag to pan; **Reset 3D camera** restores
+the initial overview. Hidden labels include mean local error energy when it
+was measured. RGB planes clip to `[0,1]`; hidden and drive maps display `tanh`,
+blue for negative and orange for positive. Main-canvas rendering is unchanged.
+
+The scene samples at most ten times per second, even with missing camera
+evidence. Image/hidden previews preserve aspect ratio and are capped at 64
+pixels per side; pose previews show at most 64 valid nodes and their induced
+edges; spectral previews accept at most 64 bands (audio currently uses 16).
+Only the latest scene is retained, independently of the 300-entry scalar
+histories. Hiding or minimizing the scene stops preview preparation and clears
+its cached data; reset clears both windows. Scalar telemetry stays enabled
+while either the catalogue or a working, non-minimized scene needs it.
+
+Preview preparation and OpenGL stay on the GUI thread, driven by the existing
+physical-frame loop; no worker or extra render timer is introduced. Sensors
+are not reread for the scene, and GPU canvas values are sampled before host
+transfer. OpenGL initializes lazily. Context/import failures are reported
+explicitly in the scene and leave the plot catalogue usable. On X11, an
+incompatible PyOpenGL platform can be corrected by restarting with
+`PYOPENGL_PLATFORM=glx` (or `egl` when Qt explicitly uses
+`QT_XCB_GL_INTEGRATION=xcb_egl`).
 
 ---
 
