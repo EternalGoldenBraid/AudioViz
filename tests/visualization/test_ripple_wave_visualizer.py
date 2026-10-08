@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from audioviz.sources import (
     AudioSourceConfig,
@@ -10,6 +11,7 @@ from audioviz.sources import (
 from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 from audioviz.readouts import PredictiveCodingConfig
+from audioviz.utils.spatial_preview import spatial_preview
 
 
 class _FakeCapture:
@@ -389,6 +391,94 @@ def test_ripple_visualizer_diagnostics_toggle_missing_frame_reset_and_close(qapp
     assert not view.isVisible()
     assert not view.refresh_timer.isActive()
     assert not readout.diagnostics_enabled
+
+
+@pytest.mark.parametrize("pose_enabled", [False, True])
+def test_3d_preview_uses_corrected_canvas_one_observation_and_bounded_sampling(
+    qapp, monkeypatch, layer_view_stub, pose_enabled
+):
+    import audioviz.visualization.prediction_diagnostics_view as diagnostics_view
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    clock = [0.0]
+    monkeypatch.setattr(diagnostics_view, "monotonic", lambda: clock[0])
+    visualizer = RippleWaveVisualizer(
+        resolution=(100, 200),
+        plane_size_m=(1, 1),
+        speed=1,
+        source_orchestrator_config=_source_config(
+            use_camera_source=True,
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
+        ),
+        camera_capture=_FakeCapture(),
+        pose_config=_pose_config(enabled=pose_enabled),
+        pose_capture=_FakeCapture() if pose_enabled else None,
+        pose_extractor=_FakeExtractor() if pose_enabled else None,
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+    readout = visualizer.source_orchestrator.visual_readout
+    readout.update_config(inference_steps=2)
+    observation = np.broadcast_to([0.2, 0.7, 0.5], visualizer.engine.canvas_shape).astype(
+        np.float32
+    )
+    captures = []
+
+    def capture():
+        captures.append(True)
+        return observation
+
+    visualizer.camera_source.excitation = capture
+    preview_calls = []
+    get_preview = visualizer.engine.get_field_preview
+
+    def sample_canvas():
+        preview_calls.append(True)
+        return get_preview()
+
+    monkeypatch.setattr(visualizer.engine, "get_field_preview", sample_canvas)
+    visualizer.diagnostics_button.click()
+    view = visualizer.prediction_diagnostics
+    view.graph_toggle.setChecked(True)
+    view.layer_toggle.setChecked(True)
+    assert readout.spatial_preview_enabled
+    visualizer.update_visualization()
+    view.refresh()
+    canvas, snapshot = view.layer_view.preview
+
+    assert captures == [True]
+    assert preview_calls == [True]
+    assert canvas.shape == (32, 64, 3)
+    np.testing.assert_array_equal(canvas, spatial_preview(visualizer.renderer.field))
+    np.testing.assert_array_equal(snapshot.spatial.observation, spatial_preview(observation))
+    np.testing.assert_array_equal(snapshot.spatial.prediction, spatial_preview(visualizer.visual_prediction))
+    np.testing.assert_array_equal(snapshot.spatial.hidden, spatial_preview(readout.hidden))
+    assert np.any(canvas != 0)
+    assert np.all(snapshot.spatial.prediction == 0)
+
+    clock[0] = 0.05
+    visualizer.update_visualization()
+    view.refresh()
+    assert captures == [True, True]
+    assert preview_calls == [True]
+    assert readout.diagnostics.spatial is None
+    assert len(view.history) == 2
+    assert view.layer_view.updates == 1
+    assert view.layer_view.preview[1] is snapshot
+
+    readout.set_spatial_preview_enabled(True)
+    visualizer.engine.reset()
+    visualizer._sync_after_reset()
+    assert view.layer_view.preview is None
+    assert readout.diagnostics is None
+    assert readout._preview_prediction is None
+    assert not readout.spatial_preview_enabled
+    view.graph_toggle.setChecked(False)
+    assert not readout.spatial_preview_enabled
+    view.close()
+    assert not readout.diagnostics_enabled
+    assert not readout.spatial_preview_enabled
+    visualizer.close()
 
 
 def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut(qapp):

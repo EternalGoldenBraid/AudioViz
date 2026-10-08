@@ -199,8 +199,33 @@ this learned-pathway graph.
 History is limited to 300 entries and plots refresh at most ten times per
 second. Closing or hiding the window stops its timer and telemetry collection;
 the graph is separately optional. This visualization does not change topology
-or prune weights. Arbitrary predictive graph topologies and a rotatable 3D
-layer stack remain separate extensions.
+or prune weights. Arbitrary predictive graph topologies remain a separate
+extension.
+
+Within the graph panel, enable **3D layer view (drag to rotate)** to orbit a
+stack of the corrected canvas, individual hidden-channel maps at one hidden
+depth, the camera prediction made **before new evidence**, and the observed
+camera image clamped during that frame's inference. Drag to rotate, use the
+wheel to zoom, or Ctrl-drag to pan; **Reset 3D camera** restores the initial
+view. The energy plots remain alongside it, and the divider resizes the panels.
+Hidden labels include their channel's mean local energy. RGB planes use a fixed
+`[0,1]` display range with clipping; hidden maps display `tanh(state)`, blue for
+negative and orange for positive. The main canvas and its color controls are
+unchanged. The initial 3D view omits connection lines.
+
+Spatial previews use aspect-preserving nearest-neighbor sampling, capped at
+64 pixels per side, and only the latest sampled frame is retained; images are
+not stored in the 300-entry energy history. Preview requests and texture updates
+are limited to 10 Hz, including requests when camera evidence is missing.
+Collection occurs only while the diagnostics window, graph panel, and 3D mode
+are visible. The camera is not read again for visualization. GPU canvas values
+are sampled before their host transfer. Hiding, reset, and missing evidence
+clear stale planes. Preview preparation and OpenGL stay on the GUI thread;
+there is no worker or extra render timer, and interaction redraws cached small
+planes. OpenGL is initialized lazily. Context failures are reported in the
+panel and restore the 2D graph; on X11, an explicitly incompatible PyOpenGL
+platform can be corrected by restarting with `PYOPENGL_PLATFORM=glx` (or `egl`
+when Qt explicitly uses `QT_XCB_GL_INTEGRATION=xcb_egl`).
 
 ---
 

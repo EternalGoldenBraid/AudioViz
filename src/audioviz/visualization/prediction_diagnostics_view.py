@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
+from time import monotonic
 
 import numpy as np
 import pyqtgraph as pg
+from loguru import logger
 from PyQt5 import QtCore, QtWidgets
 
 from audioviz.readouts.diagnostics import PredictiveCodingDiagnostics
@@ -17,7 +20,9 @@ NEGATIVE_WEIGHT_COLOR = (255, 155, 85)
 
 class PredictionDiagnosticsView(QtWidgets.QWidget):
     visibility_changed = QtCore.pyqtSignal(bool)
+    spatial_preview_changed = QtCore.pyqtSignal(bool)
     HISTORY_LIMIT = 300
+    PREVIEW_INTERVAL = 0.1
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent, QtCore.Qt.Window)
@@ -29,6 +34,10 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self._graph_channels = 0
         self._graph_edges: list[tuple[pg.PlotDataItem, int, int, int]] = []
         self._graph_labels: list[pg.TextItem] = []
+        self.layer_view = None
+        self._spatial_sample: tuple[np.ndarray, PredictiveCodingDiagnostics] | None = None
+        self._spatial_dirty = False
+        self._last_preview_at: float | None = None
 
         layout = QtWidgets.QVBoxLayout(self)
         definition = self._compact_label(
@@ -43,6 +52,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         layout.addWidget(self.graph_toggle)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.splitter = splitter
         layout.addWidget(splitter, stretch=1)
         charts = pg.GraphicsLayoutWidget()
         splitter.addWidget(charts)
@@ -67,26 +77,43 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
 
         self.graph_container = QtWidgets.QWidget()
         graph_layout = QtWidgets.QVBoxLayout(self.graph_container)
-        legend = self._compact_label(
+        self.layer_toggle = QtWidgets.QCheckBox("3D layer view (drag to rotate)")
+        self.layer_toggle.toggled.connect(self._toggle_layer_mode)
+        graph_layout.addWidget(self.layer_toggle)
+        self.reset_camera = QtWidgets.QPushButton("Reset 3D camera")
+        self.reset_camera.clicked.connect(lambda: self.layer_view.reset_view())
+        graph_layout.addWidget(self.reset_camera)
+        self.reset_camera.hide()
+        self.graph_legend = self._compact_label(
             "Shared channel graph, repeated at each pixel.\n"
             "Predictions -> (tanh); local errors <- (dashed).\n"
             "Edges: blue + / orange -; width = |weight|.\n"
             "Nodes: state mean; fill = local mean energy.\n"
             "Canvas has no own error. Weights: after learning."
         )
-        graph_layout.addWidget(legend)
+        self._graph_legend_text = self.graph_legend.text()
+        policy = self.graph_legend.sizePolicy()
+        policy.setVerticalPolicy(QtWidgets.QSizePolicy.Preferred)
+        self.graph_legend.setSizePolicy(policy)
+        graph_layout.addWidget(self.graph_legend)
+        self.layer_error = self._compact_label("")
+        self.layer_error.hide()
+        graph_layout.addWidget(self.layer_error)
+        self.graph_stack = QtWidgets.QStackedWidget()
+        graph_layout.addWidget(self.graph_stack, stretch=1)
         self.graph_plot = pg.PlotWidget()
         self.graph_plot.hideAxis("left")
         self.graph_plot.hideAxis("bottom")
         self.graph_plot.setMouseEnabled(x=False, y=False)
-        graph_layout.addWidget(self.graph_plot, stretch=1)
+        self.graph_stack.addWidget(self.graph_plot)
         splitter.addWidget(self.graph_container)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         self.graph_container.hide()
 
         self.refresh_timer = QtCore.QTimer(self)
-        self.refresh_timer.setInterval(100)
+        self.refresh_timer.setTimerType(QtCore.Qt.PreciseTimer)
+        self.refresh_timer.setInterval(round(self.PREVIEW_INTERVAL * 1000))
         self.refresh_timer.timeout.connect(self.refresh)
 
     @staticmethod
@@ -107,7 +134,11 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         )
 
     def record(
-        self, simulation_time: float, snapshot: PredictiveCodingDiagnostics | None
+        self,
+        simulation_time: float,
+        snapshot: PredictiveCodingDiagnostics | None,
+        *,
+        canvas_preview: np.ndarray | None = None,
     ) -> None:
         if snapshot is None:
             if self.latest is not None:
@@ -123,11 +154,21 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
                 )
             )
         self.latest = snapshot
+        if snapshot is None:
+            self._clear_spatial_preview(reset_schedule=False)
+        elif (
+            self.spatial_preview_active()
+            and snapshot.spatial is not None
+            and canvas_preview is not None
+        ):
+            self._spatial_sample = canvas_preview, snapshot
+            self._spatial_dirty = True
         self._dirty = True
 
     def clear(self) -> None:
         self.history.clear()
         self.latest = None
+        self._clear_spatial_preview()
         self._dirty = True
         self.refresh()
 
@@ -164,10 +205,88 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             np.arange(len(snapshot.inference_energy)), snapshot.inference_energy
         )
         if self.graph_toggle.isChecked():
-            self._update_graph(snapshot)
+            if self.layer_toggle.isChecked():
+                if self._spatial_dirty and self._spatial_sample is not None:
+                    self.layer_view.set_preview(*self._spatial_sample)
+                    self._spatial_dirty = False
+            else:
+                self._update_graph(snapshot)
+
+    def spatial_preview_active(self) -> bool:
+        return (
+            self.isVisible()
+            and not self.isMinimized()
+            and self.graph_toggle.isChecked()
+            and self.layer_toggle.isChecked()
+        )
+
+    def wants_spatial_preview(self) -> bool:
+        return self.spatial_preview_active() and (
+            self._last_preview_at is None
+            or monotonic() - self._last_preview_at >= self.PREVIEW_INTERVAL
+        )
+
+    def take_spatial_preview_request(self) -> bool:
+        if not self.wants_spatial_preview():
+            return False
+        self._last_preview_at = monotonic()
+        return True
+
+    def _clear_spatial_preview(self, *, reset_schedule: bool = True) -> None:
+        had_preview = self._spatial_sample is not None
+        self._spatial_sample = None
+        self._spatial_dirty = False
+        if reset_schedule:
+            self._last_preview_at = None
+        if self.latest is not None and self.latest.spatial is not None:
+            self.latest = replace(self.latest, spatial=None)
+        if self.layer_view is not None and had_preview:
+            self.layer_view.clear_preview()
+
+    def _create_layer_view(self):
+        from audioviz.visualization.prediction_layer_view import PredictionLayerView
+
+        return PredictionLayerView(self)
+
+    def _toggle_layer_mode(self, enabled: bool) -> None:
+        if enabled and self.layer_view is None:
+            try:
+                self.layer_view = self._create_layer_view()
+            except ImportError as error:
+                self._show_layer_error(str(error))
+                return
+            self.layer_view.rendering_failed.connect(self._show_layer_error)
+            self.graph_stack.addWidget(self.layer_view)
+            width = self.splitter.width() // 2
+            self.splitter.setSizes([width, width])
+        self._clear_spatial_preview()
+        self.graph_stack.setCurrentWidget(self.layer_view if enabled else self.graph_plot)
+        self.reset_camera.setVisible(enabled)
+        if enabled:
+            self.layer_error.hide()
+            self.graph_legend.setText(
+                "Drag: orbit; wheel: zoom; Ctrl-drag: pan.\n"
+                "Canvas / hidden channels / pre-evidence prediction / camera.\n"
+                "RGB clipped [0,1]. Hidden: tanh, blue - / orange +; labels = channel:energy.\n"
+                "Max 64x64, 10 Hz. Connections omitted."
+            )
+        else:
+            self.graph_legend.setText(self._graph_legend_text)
+        self.spatial_preview_changed.emit(self.spatial_preview_active())
+        self._dirty = True
+        self.refresh()
+
+    def _show_layer_error(self, message: str) -> None:
+        logger.error("3D diagnostics unavailable: {}", message)
+        self.layer_error.setText(f"3D unavailable: {message}")
+        self.layer_error.show()
+        self.layer_toggle.setChecked(False)
 
     def _toggle_graph(self, enabled: bool) -> None:
         self.graph_container.setVisible(enabled)
+        if not enabled:
+            self._clear_spatial_preview()
+        self.spatial_preview_changed.emit(self.spatial_preview_active())
         self._dirty = True
         self.refresh()
 
@@ -262,8 +381,11 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         super().showEvent(event)
         self.refresh_timer.start()
         self.visibility_changed.emit(True)
+        self.spatial_preview_changed.emit(self.spatial_preview_active())
 
     def hideEvent(self, event) -> None:
         self.refresh_timer.stop()
+        self._clear_spatial_preview()
+        self.spatial_preview_changed.emit(False)
         self.visibility_changed.emit(False)
         super().hideEvent(event)
