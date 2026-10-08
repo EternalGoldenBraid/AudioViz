@@ -125,7 +125,7 @@ def test_ripple_source_orchestrator_uses_configured_audio_frequency_mapping():
     np.testing.assert_allclose(resolved.audio_frequencies, expected.reshape(1, -1))
 
 
-def test_ripple_source_orchestrator_scales_audio_only_excitation_by_signal_level():
+def test_captured_audio_does_not_drive_waves_or_scale_external_stimulation():
     engine = _build_engine(amplitude=2.0)
     processor = _FakeProcessor([440.0], current_signal_level=0.25)
     orchestrator = RippleSourceOrchestrator(
@@ -139,7 +139,8 @@ def test_ripple_source_orchestrator_scales_audio_only_excitation_by_signal_level
 
     resolved = orchestrator.resolve()
 
-    assert resolved.amplitude == 0.5
+    assert resolved.amplitude == 2.0
+    assert resolved.drive_grid is None
 
 
 def test_ripple_source_orchestrator_skips_correction_when_camera_feed_is_off():
@@ -285,3 +286,64 @@ def test_missing_camera_frame_does_not_infer_or_learn_from_black():
     np.testing.assert_array_equal(orchestrator.visual_readout.hidden, hidden_before)
     np.testing.assert_array_equal(orchestrator.visual_readout.visual_weights, weights_before)
     np.testing.assert_array_equal(engine.get_field_numpy(), engine.get_prior_numpy())
+
+
+def test_audio_and_camera_joint_inference_use_one_observation_and_preserve_wave_velocity(monkeypatch):
+    import audioviz.sources.audio as audio_module
+
+    processor = _FakeProcessor([440], current_signal_level=0)
+    processor.frame_counter = 1
+    processor.spectrogram_buffers = [np.full((32, 2), 0.8)]
+    processor.stft_window = np.ones(16)
+    processor.n_mels = None
+    engine = _build_engine()
+    orchestrator = RippleSourceOrchestrator(
+        config=RippleSourceOrchestratorConfig(
+            audio=AudioSourceConfig(enabled=True),
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
+            visual_pathway=PredictiveCodingConfig(learning_enabled=True),
+        ),
+        processor=processor, engine=engine, resolution=engine.resolution, n_sources=1,
+    )
+    clock = [0.0]
+    monkeypatch.setattr(audio_module, "monotonic", lambda: clock[0])
+    reads = []
+
+    def camera():
+        reads.append(True)
+        return np.full(engine.canvas_shape, 0.6)
+
+    orchestrator.camera_source.excitation = camera
+    orchestrator.set_diagnostics_enabled(True)
+    engine.propagate()
+    orchestrator.predict_visual()
+    velocity = engine.Z - engine.Z_old
+    orchestrator.correct_from_observations()
+    assert reads == [True]
+    assert orchestrator.audio_readout.diagnostics is not None
+    assert orchestrator.visual_readout.diagnostics is not None
+    assert orchestrator.audio_readout.diagnostics.inference_energy == orchestrator.visual_readout.diagnostics.inference_energy
+    np.testing.assert_allclose(engine.Z - engine.Z_old, velocity, atol=1e-6)
+    np.testing.assert_array_equal(engine.prediction_horizontal_edge_weights, 1)
+    audio_weights = orchestrator.audio_readout.visual_weights.copy()
+    orchestrator.camera_source.excitation = lambda: None
+    engine.propagate()
+    orchestrator.predict_visual()
+    assert orchestrator.correct_from_observations() is None
+    np.testing.assert_array_equal(orchestrator.audio_readout.visual_weights, audio_weights)
+
+    # A new silent audio block is evidence; an unchanged generation is not.
+    processor.frame_counter += 1
+    processor.spectrogram_buffers[0].fill(0)
+    orchestrator.predict_visual()
+    assert orchestrator.correct_from_observations() is not None
+    np.testing.assert_array_equal(orchestrator.audio_readout.diagnostics.observation_means, 0)
+    assert orchestrator.audio_source.has_recent_observation()
+    clock[0] = 0.6
+    assert not orchestrator.audio_source.has_recent_observation()
+    orchestrator.audio_source.set_enabled(False)
+    processor.frame_counter += 1
+    assert orchestrator.audio_source.observation() is None
+    orchestrator.reset_readouts()
+    assert np.all(orchestrator.audio_readout.hidden == 0)
+    assert orchestrator.audio_readout.diagnostics is None

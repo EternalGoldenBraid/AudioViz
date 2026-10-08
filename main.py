@@ -192,6 +192,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             ),
             audio=AudioSourceConfig(
                 enabled=audio["enabled"],
+                observation_gain=float(audio.get("observation_gain", 1.0)),
                 signal_gate_threshold=audio["signal_gate_threshold"],
                 drive_amplitude=audio["drive_amplitude"],
                 mapping_mode=audio_mapping["mode"],

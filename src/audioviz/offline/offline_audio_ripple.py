@@ -56,6 +56,7 @@ def run_offline_audio_ripple(
     audio_visual_linear_scale: float = 0.05,
     audio_visual_linear_offset: float = 0.0,
 ) -> OfflineAudioRippleResult:
+    """Render predictive audio feedback; frequency-mapping options affect peak metadata only."""
     if sr <= 0:
         raise ValueError("sr must be positive")
     if io_blocksize <= 0:

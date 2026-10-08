@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import monotonic
 
 import numpy as np
 
 from audioviz.source_controls import AudioSourceControls, ControlValue
+from audioviz.source_controls import SourceControl
 from audioviz.sources.ripple_grid import frequency_excitation_grid
+from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS, spectral_observation
 from audioviz.utils.signal_processing import (
     map_audio_freq_to_visual_freq,
     normalize_audio_visual_mapping_mode,
@@ -23,6 +26,7 @@ class AudioSourceConfig:
     mapping_fc: float = 2000.0
     linear_scale: float = 0.05
     linear_offset: float = 0.0
+    observation_gain: float = 1.0
 
 
 class AudioRippleSource:
@@ -39,6 +43,8 @@ class AudioRippleSource:
         mapping_fc: float = 2000.0,
         linear_scale: float = 0.05,
         linear_offset: float = 0.0,
+        observation_gain: float = 1.0,
+        predictive: bool = False,
     ) -> None:
         self.processor = processor
         self.enabled = processor is not None and bool(enabled)
@@ -50,6 +56,12 @@ class AudioRippleSource:
         self.mapping_fc = float(mapping_fc)
         self.linear_scale = float(linear_scale)
         self.linear_offset = float(linear_offset)
+        self.observation_gain = float(observation_gain)
+        if not np.isfinite(self.observation_gain) or self.observation_gain < 0:
+            raise ValueError("Audio evidence gain must be finite and non-negative.")
+        self.predictive = predictive
+        self._last_observation_frame = 0
+        self._last_observation_time: float | None = None
         if self.processor is not None:
             self.processor.minimum_signal_level = self.signal_gate_threshold
 
@@ -57,6 +69,32 @@ class AudioRippleSource:
         if enabled and self.processor is None:
             raise RuntimeError("Audio source toggles require an audio processor.")
         self.enabled = bool(enabled)
+        if not enabled:
+            self._last_observation_time = None
+
+    def observation(self) -> np.ndarray | None:
+        if not self.has_new_observation():
+            return None
+        frame = self.processor.frame_counter
+        evidence = spectral_observation(
+            self.processor.spectrogram_buffers,
+            window_sum=float(np.sum(self.processor.stft_window)),
+            mel_power=self.processor.n_mels is not None,
+            gain=self.observation_gain,
+        )
+        self._last_observation_frame = frame
+        self._last_observation_time = monotonic()
+        return evidence
+
+    def has_new_observation(self) -> bool:
+        return self.enabled and self.processor.frame_counter > self._last_observation_frame
+
+    def has_recent_observation(self) -> bool:
+        return (
+            self.enabled
+            and self._last_observation_time is not None
+            and monotonic() - self._last_observation_time < 0.5
+        )
 
     def frequencies(self, *, n_sources: int) -> np.ndarray | None:
         if not self.enabled or self.processor is None:
@@ -127,6 +165,14 @@ class AudioRippleSource:
     def controls(self):
         if self.processor is None:
             return ()
+        if self.predictive:
+            return (
+                SourceControl("signal_level", "Signal Level", "0.00", kind="text"),
+                SourceControl("observation_status", "Spectral Evidence", "waiting", kind="text"),
+                SourceControl("spectral_bands", "Spectral Bands (mono magnitude)", AUDIO_SPECTRAL_BANDS, kind="text"),
+                SourceControl("observation_gain", "Audio Evidence Gain", self.observation_gain,
+                              minimum=0.0, maximum=100.0, step=0.1),
+            )
         return AudioSourceControls(
             signal_gate_threshold=self.signal_gate_threshold,
             drive_amplitude=self.drive_amplitude,
@@ -156,6 +202,12 @@ class AudioRippleSource:
     def update_control(self, control_key: str, value: ControlValue) -> None:
         if self.processor is None:
             raise RuntimeError("Audio source controls require an audio processor.")
+        if control_key == "observation_gain":
+            gain = float(value)
+            if not np.isfinite(gain) or gain < 0:
+                raise ValueError("Audio evidence gain must be finite and non-negative.")
+            self.observation_gain = gain
+            return
         if control_key == "signal_gate_threshold":
             self.signal_gate_threshold = float(value)
             self.processor.minimum_signal_level = float(value)
