@@ -7,9 +7,11 @@ import numpy as np
 from audioviz.readouts.diagnostics import (
     EnergyStatistics,
     PredictiveCodingDiagnostics,
+    SensoryPreview,
     copy_weights,
     mean_energy,
 )
+from audioviz.utils.spatial_preview import spatial_preview
 
 @dataclass(frozen=True)
 class PredictiveCodingConfig:
@@ -73,10 +75,21 @@ class PredictiveCodingRGBReadout:
         self.visual_error = np.zeros(self.canvas_shape, dtype=np.float64)
         self.diagnostics_enabled = False
         self.diagnostics: PredictiveCodingDiagnostics | None = None
+        self.spatial_preview_enabled = False
+        self._preview_prediction: np.ndarray | None = None
 
     def set_diagnostics_enabled(self, enabled: bool) -> None:
         self.diagnostics_enabled = bool(enabled)
         self.diagnostics = None
+        if not enabled:
+            self.set_spatial_preview_enabled(False)
+
+    def set_spatial_preview_enabled(self, enabled: bool) -> None:
+        self.spatial_preview_enabled = bool(enabled) and self.diagnostics_enabled
+        if not self.spatial_preview_enabled:
+            self._preview_prediction = None
+            if self.diagnostics is not None and self.diagnostics.spatial is not None:
+                self.diagnostics = replace(self.diagnostics, spatial=None)
 
     def update_config(self, **changes) -> None:
         next_config = replace(self.config, **changes)
@@ -90,15 +103,19 @@ class PredictiveCodingRGBReadout:
         self.hidden_error.fill(0.0)
         self.visual_error.fill(0.0)
         self.diagnostics = None
+        self._preview_prediction = None
 
     def predict(self, prior: np.ndarray) -> np.ndarray:
         self.diagnostics = None
+        self._preview_prediction = None
         canvas = self._coerce(prior, name="canvas prior")
         predicted_hidden = np.tanh(canvas) @ self.canvas_weights.T
         # Advance memory from the wave prior before any new camera evidence.
         self.hidden += self.config.inference_rate * (predicted_hidden - self.hidden)
         prediction = np.tanh(self.hidden) @ self.visual_weights.T
         self._require_finite(self.hidden, prediction)
+        if self.spatial_preview_enabled:
+            self._preview_prediction = spatial_preview(prediction)
         return prediction.astype(np.float32)
 
     def infer(self, prior: np.ndarray, observation: np.ndarray) -> np.ndarray:
@@ -148,7 +165,17 @@ class PredictiveCodingRGBReadout:
                         + np.sum((self.visual_weights - weights_before[1]) ** 2)
                     )
                 ),
+                spatial=(
+                    SensoryPreview(
+                        hidden=spatial_preview(self.hidden),
+                        prediction=self._preview_prediction,
+                        observation=spatial_preview(observed),
+                    )
+                    if self.spatial_preview_enabled and self._preview_prediction is not None
+                    else None
+                ),
             )
+        self._preview_prediction = None
         correction = canvas - self._coerce(prior, name="canvas prior")
         self._require_finite(correction)
         return correction.astype(np.float32)

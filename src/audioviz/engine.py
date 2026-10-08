@@ -12,6 +12,7 @@ from audioviz.physics.wave_propagator import (
     load_cupy,
 )
 from audioviz.physics.opengl_wave_propagator import WavePropagatorOpenGL
+from audioviz.utils.spatial_preview import preview_indices
 
 
 class RippleEngine:
@@ -252,6 +253,18 @@ class RippleEngine:
         if self.use_gpu:
             return self.backend.asnumpy(self.Z)
         return self.Z
+
+    def get_field_preview(self) -> np.ndarray:
+        """Sample the corrected field before transferring GPU data to the host."""
+        if self.use_shader:
+            raise RuntimeError("Spatial previews require an array-backed field.")
+        rows, columns = preview_indices(self.Z.shape)
+        sampled = self.Z[rows[:, None], columns[None, :]]
+        if self.use_gpu:
+            sampled = self.backend.asnumpy(sampled)
+        snapshot = np.asarray(sampled, dtype=np.float32)
+        snapshot.setflags(write=False)
+        return snapshot
 
     def get_prior_numpy(self) -> np.ndarray:
         if not self._has_prior:

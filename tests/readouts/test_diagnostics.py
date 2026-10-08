@@ -2,6 +2,7 @@ import numpy as np
 
 from audioviz.readouts import PredictiveCodingConfig, PredictiveCodingRGBReadout
 from audioviz.readouts.diagnostics import EnergyStatistics
+from audioviz.utils.spatial_preview import spatial_preview
 
 
 def test_energy_statistics_measure_squared_error_population_not_signed_error():
@@ -74,3 +75,75 @@ def test_inference_without_learning_reports_zero_weight_update():
     assert not readout.diagnostics.learning_enabled
     assert readout.diagnostics.weight_update_norm == 0.0
     assert readout.diagnostics.inference_energy[-1] < readout.diagnostics.inference_energy[0]
+
+
+def test_spatial_preview_preserves_frame_alignment_and_numerical_updates():
+    shape = (100, 200, 3)
+    config = PredictiveCodingConfig(inference_steps=2, learning_enabled=True)
+    quiet = PredictiveCodingRGBReadout(canvas_shape=shape, config=config)
+    visible = PredictiveCodingRGBReadout(canvas_shape=shape, config=config)
+    visible.set_diagnostics_enabled(True)
+    visible.set_spatial_preview_enabled(True)
+    canvas = np.random.default_rng(4).normal(scale=0.2, size=shape).astype(np.float32)
+    observation = np.random.default_rng(5).random(shape).astype(np.float32)
+
+    quiet_prediction = quiet.predict(canvas)
+    visible_prediction = visible.predict(canvas)
+    quiet_correction = quiet.infer(canvas, observation)
+    visible_correction = visible.infer(canvas, observation)
+    preview = visible.diagnostics.spatial
+
+    np.testing.assert_array_equal(quiet_prediction, visible_prediction)
+    np.testing.assert_array_equal(quiet_correction, visible_correction)
+    np.testing.assert_array_equal(quiet.hidden, visible.hidden)
+    np.testing.assert_array_equal(quiet.canvas_weights, visible.canvas_weights)
+    np.testing.assert_array_equal(quiet.visual_weights, visible.visual_weights)
+    assert preview.hidden.shape == (32, 64, config.hidden_channels)
+    assert preview.prediction.shape == preview.observation.shape == (32, 64, 3)
+    np.testing.assert_array_equal(preview.prediction, spatial_preview(visible_prediction))
+    np.testing.assert_array_equal(preview.observation, spatial_preview(observation))
+    np.testing.assert_array_equal(preview.hidden, spatial_preview(visible.hidden))
+    assert not np.allclose(
+        preview.prediction, spatial_preview(np.tanh(visible.hidden) @ visible.visual_weights.T)
+    )
+    for field in (preview.prediction, preview.observation, preview.hidden):
+        assert field.dtype == np.float32
+        assert not field.flags.writeable
+    visible.hidden.fill(0)
+    observation.fill(0)
+    assert np.any(preview.hidden != 0)
+    assert np.any(preview.observation != 0)
+
+    visible.infer(canvas, observation)
+    assert visible.diagnostics.spatial is None
+    visible.predict(canvas)
+    visible.reset()
+    assert visible._preview_prediction is None
+    assert visible.diagnostics is None
+
+
+def test_spatial_preview_requires_both_opt_ins_and_stops_sampling_when_disabled(monkeypatch):
+    import audioviz.readouts.predictive_coding as pc
+
+    readout = PredictiveCodingRGBReadout(canvas_shape=(2, 3, 3))
+    canvas = np.zeros((2, 3, 3))
+    readout.set_spatial_preview_enabled(True)
+    assert not readout.spatial_preview_enabled
+    readout.set_diagnostics_enabled(True)
+    readout.set_spatial_preview_enabled(True)
+    readout.predict(canvas)
+    readout.infer(canvas, np.ones_like(canvas))
+    assert readout.diagnostics.spatial is not None
+    readout.set_spatial_preview_enabled(False)
+    assert readout.diagnostics.spatial is None
+
+    def unexpected_sample(_field):
+        raise AssertionError("disabled previews must not sample spatial fields")
+
+    monkeypatch.setattr(pc, "spatial_preview", unexpected_sample)
+    readout.predict(canvas)
+    readout.infer(canvas, np.ones_like(canvas))
+    assert readout.diagnostics is not None
+    assert readout.diagnostics.spatial is None
+    readout.set_diagnostics_enabled(False)
+    assert not readout.spatial_preview_enabled

@@ -22,6 +22,13 @@ class EnergyStatistics:
 
 
 @dataclass(frozen=True)
+class SensoryPreview:
+    hidden: np.ndarray
+    prediction: np.ndarray
+    observation: np.ndarray
+
+
+@dataclass(frozen=True)
 class PredictiveCodingDiagnostics:
     hidden: EnergyStatistics
     visual: EnergyStatistics
@@ -34,6 +41,7 @@ class PredictiveCodingDiagnostics:
     learning_enabled: bool
     learning_rate: float
     weight_update_norm: float
+    spatial: SensoryPreview | None = None
 
 
 def mean_energy(hidden_error: np.ndarray, visual_error: np.ndarray) -> float:

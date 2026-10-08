@@ -27,6 +27,9 @@ class VisualReadout(Protocol):
     def set_diagnostics_enabled(self, enabled: bool) -> None:
         """Control optional energy and learning telemetry."""
 
+    def set_spatial_preview_enabled(self, enabled: bool) -> None:
+        """Capture bounded sensory previews for the next prediction/inference frame."""
+
 
 class IdentityRGBReadout:
     def __init__(self, *, canvas_shape: tuple[int, ...]) -> None:
