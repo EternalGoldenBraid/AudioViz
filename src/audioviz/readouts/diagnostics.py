@@ -44,6 +44,9 @@ class PredictiveCodingDiagnostics:
     learning_rate: float
     weight_update_norm: float
     spatial: SensoryPreview | None = None
+    observation_present: bool = True
+    cross_modal_weights: np.ndarray | None = None
+    cross_parent_means: tuple[float, ...] = ()
 
 
 def mean_energy(hidden_error: np.ndarray, visual_error: np.ndarray) -> float:

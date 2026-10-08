@@ -11,7 +11,7 @@ from audioviz.readouts import (
 )
 from audioviz.sources.audio import AudioRippleSource, AudioSourceConfig
 from audioviz.readouts.audio import PredictiveCodingAudioReadout
-from audioviz.readouts.predictive_coding import infer_joint
+from audioviz.readouts.predictive_coding import PredictiveCodingHiddenCoupling, infer_joint
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
 from audioviz.transforms.prediction_error import PredictionErrorTransform
@@ -73,6 +73,12 @@ class RippleSourceOrchestrator:
             if processor is not None else None
         )
         self.audio_prediction: np.ndarray | None = None
+        self.hidden_coupling = (
+            PredictiveCodingHiddenCoupling(self.visual_readout, self.audio_readout)
+            if isinstance(self.visual_readout, PredictiveCodingRGBReadout) and self.audio_readout is not None
+            else None
+        )
+        self._validate_cross_modal(config.visual_pathway.cross_modal_enabled)
         self.visual_observation: np.ndarray | None = None
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
@@ -146,6 +152,11 @@ class RippleSourceOrchestrator:
 
     def predict_visual(self) -> np.ndarray:
         prior = self.engine.get_prior_numpy()
+        if self.visual_readout.config.cross_modal_enabled:
+            if self.hidden_coupling is None:
+                raise RuntimeError("Cross-modal prediction requires both predictive readouts.")
+            prediction, self.audio_prediction = self.hidden_coupling.predict(prior)
+            return prediction
         self.audio_prediction = None
         if self.audio_readout is not None:
             self.audio_prediction = self.audio_readout.predict(prior)
@@ -167,6 +178,21 @@ class RippleSourceOrchestrator:
     def correct_from_observations(self) -> np.ndarray | None:
         self.visual_observation = None
         audio = self.audio_source.observation()
+        if self.visual_readout.config.cross_modal_enabled:
+            if self.hidden_coupling is None:
+                raise RuntimeError("Cross-modal inference requires both predictive readouts.")
+            image = (
+                self.camera_source.excitation()
+                if self.prediction_error_transform.applies_to("camera_frame") else None
+            )
+            self.visual_observation = image
+            correction = infer_joint(
+                self.engine.get_prior_numpy(),
+                ((self.hidden_coupling.branches[0], image), (self.hidden_coupling.branches[1], audio)),
+                coupling=self.hidden_coupling,
+            )
+            self.engine.apply_observation_correction(correction)
+            return correction
         if audio is None:
             correction = self.resolve_visual_observation_correction()
         else:
@@ -191,9 +217,15 @@ class RippleSourceOrchestrator:
         return correction
 
     def update_pathway_config(self, **changes) -> None:
+        if "cross_modal_enabled" in changes:
+            self._validate_cross_modal(changes["cross_modal_enabled"])
         self.visual_readout.update_config(**changes)
         if self.audio_readout is not None:
             self.audio_readout.update_config(**changes)
+
+    def _validate_cross_modal(self, enabled: bool) -> None:
+        if enabled and (self.hidden_coupling is None or self.engine.use_shader):
+            raise ValueError("Cross-modal inference requires camera/audio readouts and an array-backed canvas.")
 
     def set_diagnostics_enabled(self, enabled: bool) -> None:
         self.visual_readout.set_diagnostics_enabled(enabled)

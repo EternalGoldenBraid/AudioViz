@@ -186,6 +186,7 @@ def test_local_learning_improves_pre_observation_prediction_over_frozen_weights(
         {"weight_decay": -1.0},
         {"gradient_clip": 0.0},
         {"weight_clip": np.inf},
+        {"cross_modal_enabled": 1},
     ],
 )
 def test_config_rejects_invalid_values(changes):

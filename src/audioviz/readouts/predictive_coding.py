@@ -24,8 +24,11 @@ class PredictiveCodingConfig:
     weight_decay: float = 0.0
     weight_clip: float = 10.0
     gradient_clip: float = 1.0
+    cross_modal_enabled: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.cross_modal_enabled, bool):
+            raise ValueError("cross_modal_enabled must be a boolean")
         for name in ("hidden_channels", "inference_steps"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -106,12 +109,15 @@ class PredictiveCodingRGBReadout:
         self._preview_prediction = None
 
     def predict(self, prior: np.ndarray) -> np.ndarray:
-        self.diagnostics = None
-        self._preview_prediction = None
         canvas = self._coerce(prior, name="canvas prior")
         predicted_hidden = np.tanh(canvas) @ self.canvas_weights.T
         # Advance memory from the wave prior before any new sensory evidence.
         self.hidden += self.config.inference_rate * (predicted_hidden - self.hidden)
+        return self._capture_prediction()
+
+    def _capture_prediction(self) -> np.ndarray:
+        self.diagnostics = None
+        self._preview_prediction = None
         prediction = self._predict_observation(np.tanh(self.hidden))
         self._require_finite(self.hidden, prediction)
         if self.spatial_preview_enabled:
@@ -122,24 +128,43 @@ class PredictiveCodingRGBReadout:
         return infer_joint(prior, ((self, observation),))
 
     def _finish_inference(
-        self, canvas: np.ndarray, observed: np.ndarray, inference_energy: list[float]
+        self, canvas: np.ndarray, observed: np.ndarray | None, inference_energy: list[float],
+        *, hidden_error: np.ndarray | None = None, learn: bool = True,
+        cross_weights: np.ndarray | None = None,
+        cross_parent_means: tuple[float, ...] = (),
+        cross_update_norm: float = 0.0,
     ) -> None:
-        self.hidden_error, self.visual_error = self._errors(canvas, observed)
+        self.hidden_error = (
+            self.hidden - np.tanh(canvas) @ self.canvas_weights.T
+            if hidden_error is None else hidden_error
+        )
+        self.visual_error = (
+            np.zeros_like(self.visual_error) if observed is None
+            else observed - self._predict_observation(np.tanh(self.hidden))
+        )
         weights_before = None
         if self.diagnostics_enabled:
             weights_before = self.canvas_weights.copy(), self.visual_weights.copy()
-        if self.config.learning_enabled and self.config.learning_rate:
-            self._learn(canvas)
+        if learn and self.config.learning_enabled and self.config.learning_rate:
+            self._learn(canvas, learn_sensory=observed is not None)
         if weights_before is not None:
             self.diagnostics = PredictiveCodingDiagnostics(
                 hidden=EnergyStatistics.from_error(self.hidden_error),
-                visual=EnergyStatistics.from_error(self.visual_error),
+                visual=(
+                    EnergyStatistics.from_error(self.visual_error) if observed is not None
+                    else EnergyStatistics(
+                        np.nan, np.nan, (np.nan,) * self.visual_weights.shape[0]
+                    )
+                ),
                 inference_energy=tuple(inference_energy),
                 canvas_means=tuple(float(value) for value in canvas.mean(axis=(0, 1))),
                 hidden_means=tuple(float(value) for value in self.hidden.mean(axis=(0, 1))),
                 observation_means=tuple(
                     float(value)
-                    for value in observed.mean(axis=tuple(range(observed.ndim - 1)))
+                    for value in (
+                        observed if observed is not None
+                        else self._predict_observation(np.tanh(self.hidden))
+                    ).mean(axis=tuple(range(self.visual_error.ndim - 1)))
                 ),
                 canvas_weights=copy_weights(self.canvas_weights),
                 visual_weights=copy_weights(self.visual_weights),
@@ -149,6 +174,7 @@ class PredictiveCodingRGBReadout:
                     np.sqrt(
                         np.sum((self.canvas_weights - weights_before[0]) ** 2)
                         + np.sum((self.visual_weights - weights_before[1]) ** 2)
+                        + cross_update_norm**2
                     )
                 ),
                 spatial=(
@@ -157,9 +183,12 @@ class PredictiveCodingRGBReadout:
                         prediction=self._preview_prediction,
                         observation=self._preview_observation(observed),
                     )
-                    if self.spatial_preview_enabled and self._preview_prediction is not None
+                    if observed is not None and self.spatial_preview_enabled and self._preview_prediction is not None
                     else None
                 ),
+                observation_present=observed is not None,
+                cross_modal_weights=copy_weights(cross_weights) if cross_weights is not None else None,
+                cross_parent_means=cross_parent_means,
             )
         self._preview_prediction = None
 
@@ -178,25 +207,23 @@ class PredictiveCodingRGBReadout:
             observation - self._predict_observation(np.tanh(self.hidden)),
         )
 
-    def _learn(self, canvas: np.ndarray) -> None:
+    def _learn(self, canvas: np.ndarray, *, learn_sensory: bool = True) -> None:
         pixel_count = self.canvas_shape[0] * self.canvas_shape[1]
         canvas_gradient = (
             self.hidden_error.reshape(-1, self.config.hidden_channels).T
             @ np.tanh(canvas).reshape(-1, 3)
         ) / pixel_count
-        visual_gradient = self._observation_gradient()
-        for weights, gradient in (
-            (self.canvas_weights, canvas_gradient),
-            (self.visual_weights, visual_gradient),
-        ):
-            gradient = gradient - self.config.weight_decay * weights
-            weights += self.config.learning_rate * np.clip(
-                gradient, -self.config.gradient_clip, self.config.gradient_clip
-            )
-            np.clip(
-                weights, -self.config.weight_clip, self.config.weight_clip, out=weights
-            )
-            self._require_finite(weights)
+        self._update_weights(self.canvas_weights, canvas_gradient)
+        if learn_sensory:
+            self._update_weights(self.visual_weights, self._observation_gradient())
+
+    def _update_weights(self, weights: np.ndarray, gradient: np.ndarray) -> None:
+        gradient = gradient - self.config.weight_decay * weights
+        weights += self.config.learning_rate * np.clip(
+            gradient, -self.config.gradient_clip, self.config.gradient_clip
+        )
+        np.clip(weights, -self.config.weight_clip, self.config.weight_clip, out=weights)
+        self._require_finite(weights)
 
     def _observation_gradient(self) -> np.ndarray:
         pixel_count = self.canvas_shape[0] * self.canvas_shape[1]
@@ -230,13 +257,70 @@ class PredictiveCodingRGBReadout:
             )
 
 
+class PredictiveCodingHiddenCoupling:
+    """Two zero-initialized, shared per-pixel hidden-to-hidden projections."""
+
+    def __init__(
+        self, camera: PredictiveCodingRGBReadout, audio: PredictiveCodingRGBReadout
+    ) -> None:
+        if camera is audio or camera.canvas_shape != audio.canvas_shape:
+            raise ValueError("Hidden coupling requires distinct branches on the same canvas.")
+        self.branches = (camera, audio)
+        self.weights = {
+            target: np.zeros((target.hidden.shape[-1], parent.hidden.shape[-1]))
+            for target, parent in ((camera, audio), (audio, camera))
+        }
+
+    def parent(self, branch: PredictiveCodingRGBReadout) -> PredictiveCodingRGBReadout:
+        if branch is self.branches[0]:
+            return self.branches[1]
+        if branch is self.branches[1]:
+            return self.branches[0]
+        raise ValueError("Readout does not belong to this hidden coupling.")
+
+    def hidden_errors(self, canvas: np.ndarray) -> dict[PredictiveCodingRGBReadout, np.ndarray]:
+        activity = np.tanh(canvas)
+        return {
+            branch: branch.hidden - activity @ branch.canvas_weights.T
+            - np.tanh(self.parent(branch).hidden) @ self.weights[branch].T
+            for branch in self.branches
+        }
+
+    def feedback(
+        self, branch: PredictiveCodingRGBReadout,
+        errors: dict[PredictiveCodingRGBReadout, np.ndarray],
+    ) -> np.ndarray:
+        child = self.parent(branch)
+        return errors[child] @ self.weights[child]
+
+    def predict(self, prior: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        canvas = self.branches[0]._coerce(prior, name="canvas prior")
+        errors = self.hidden_errors(canvas)
+        updates = [
+            branch.config.inference_rate * (
+                -errors[branch] + (1 - np.tanh(branch.hidden)**2) * self.feedback(branch, errors)
+            )
+            for branch in self.branches
+        ]
+        for branch, update in zip(self.branches, updates):
+            branch.hidden += update
+        camera, audio = self.branches
+        return camera._capture_prediction(), audio._capture_prediction()
+
+
 def infer_joint(
     prior: np.ndarray,
-    branches: tuple[tuple[PredictiveCodingRGBReadout, np.ndarray], ...],
+    branches: tuple[tuple[PredictiveCodingRGBReadout, np.ndarray | None], ...],
+    *,
+    coupling: PredictiveCodingHiddenCoupling | None = None,
 ) -> np.ndarray:
     """Infer active sensory branches synchronously, with weights fixed until settling."""
     if not branches:
         raise ValueError("Joint inference requires at least one observed branch.")
+    if coupling is not None and (
+        len(branches) != 2 or {branch for branch, _ in branches} != set(coupling.branches)
+    ):
+        raise ValueError("Coupled inference requires both hidden branches.")
     first = branches[0][0]
     canvas = first._coerce(prior, name="canvas prior").copy()
     steps = first.config.inference_steps
@@ -244,7 +328,9 @@ def infer_joint(
     for branch, observed in branches:
         if branch.canvas_shape != first.canvas_shape or branch.config.inference_steps != steps:
             raise ValueError("Joint branches must share canvas shape and inference step count.")
-        observations.append((branch, branch._coerce_observation(observed)))
+        if observed is None and coupling is None:
+            raise ValueError("Uncoupled inference requires sensory evidence.")
+        observations.append((branch, branch._coerce_observation(observed) if observed is not None else None))
     collect = any(branch.diagnostics_enabled for branch, _ in observations)
     trajectory: list[float] = []
     for _ in range(steps):
@@ -252,16 +338,26 @@ def infer_joint(
         correction = np.zeros_like(canvas)
         hidden_updates = []
         energy = 0.0
+        errors = coupling.hidden_errors(canvas) if coupling is not None else {
+            branch: branch.hidden - canvas_activity @ branch.canvas_weights.T
+            for branch, _ in observations
+        }
         for branch, observed in observations:
             hidden_activity = np.tanh(branch.hidden)
-            hidden_error = branch.hidden - canvas_activity @ branch.canvas_weights.T
-            sensory_error = observed - branch._predict_observation(hidden_activity)
+            hidden_error = errors[branch]
+            sensory_error = (
+                np.zeros_like(branch.visual_error) if observed is None
+                else observed - branch._predict_observation(hidden_activity)
+            )
             correction += branch.config.canvas_rate * (
                 (1.0 - canvas_activity**2) * (hidden_error @ branch.canvas_weights)
             )
+            feedback = sensory_error @ branch.visual_weights
+            if coupling is not None:
+                feedback = feedback + coupling.feedback(branch, errors)
             hidden_updates.append(
                 branch.config.inference_rate
-                * (-hidden_error + (1.0 - hidden_activity**2) * (sensory_error @ branch.visual_weights))
+                * (-hidden_error + (1.0 - hidden_activity**2) * feedback)
             )
             if collect:
                 energy += mean_energy(hidden_error, sensory_error)
@@ -272,10 +368,40 @@ def infer_joint(
         for (branch, _), update in zip(observations, hidden_updates):
             branch.hidden += update
             branch._require_finite(canvas, branch.hidden)
+    final_errors = coupling.hidden_errors(canvas) if coupling is not None else {
+        branch: branch.hidden - np.tanh(canvas) @ branch.canvas_weights.T
+        for branch, _ in observations
+    }
     if collect:
-        trajectory.append(sum(branch.energy(canvas, observed) for branch, observed in observations))
+        trajectory.append(sum(
+            mean_energy(final_errors[branch], np.zeros_like(branch.visual_error) if observed is None
+                        else observed - branch._predict_observation(np.tanh(branch.hidden)))
+            for branch, observed in observations
+        ))
+    learn = any(observed is not None for _, observed in observations)
+    cross_updates = {}
+    if coupling is not None and learn:
+        for branch in coupling.branches:
+            weights = coupling.weights[branch]
+            before = weights.copy() if branch.diagnostics_enabled else None
+            if branch.config.learning_enabled and branch.config.learning_rate:
+                parent = coupling.parent(branch)
+                gradient = (
+                    final_errors[branch].reshape(-1, branch.hidden.shape[-1]).T
+                    @ np.tanh(parent.hidden).reshape(-1, parent.hidden.shape[-1])
+                ) / (canvas.shape[0] * canvas.shape[1])
+                branch._update_weights(weights, gradient)
+            cross_updates[branch] = float(np.linalg.norm(weights - before)) if before is not None else 0.0
     for branch, observed in observations:
-        branch._finish_inference(canvas, observed, trajectory)
+        branch._finish_inference(
+            canvas, observed, trajectory, hidden_error=final_errors[branch], learn=learn,
+            cross_weights=coupling.weights[branch] if coupling is not None else None,
+            cross_parent_means=(
+                tuple(float(value) for value in coupling.parent(branch).hidden.mean(axis=(0, 1)))
+                if coupling is not None else ()
+            ),
+            cross_update_norm=cross_updates.get(branch, 0.0),
+        )
     correction = canvas - first._coerce(prior, name="canvas prior")
     first._require_finite(correction)
     return correction.astype(np.float32)
