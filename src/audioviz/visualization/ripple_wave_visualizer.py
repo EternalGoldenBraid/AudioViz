@@ -592,7 +592,7 @@ class RippleWaveVisualizer(VisualizerBase):
         for source, readout, prediction, observation, enabled in (
             (self.camera_source, orchestrator.visual_readout, self.visual_prediction,
              orchestrator.visual_observation,
-             self.camera_source.enabled and self.prediction_error_transform.applies_to("camera_frame")),
+             self.camera_source.enabled),
             (self.audio_source, orchestrator.audio_readout, orchestrator.audio_prediction,
              self.audio_source.recent_observation(), self.audio_source.enabled),
         ):
@@ -609,9 +609,7 @@ class RippleWaveVisualizer(VisualizerBase):
                 recurrent_parent=(
                     "audio" if mapping.key == "camera" else "camera"
                 ) if orchestrator.visual_readout.config.cross_modal_enabled else None,
-                stream_state=(
-                    source.enabled if readout is not None and readout.config.stream_state_enabled else None
-                ),
+                stream_state=source.enabled if readout is not None else None,
                 stream_state_prediction=readout.stream_state_prediction if readout is not None else None,
             ))
         sources.append(SourceScenePreview(

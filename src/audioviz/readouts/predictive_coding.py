@@ -27,12 +27,10 @@ class PredictiveCodingConfig:
     weight_clip: float = 10.0
     gradient_clip: float = 1.0
     cross_modal_enabled: bool = False
-    stream_state_enabled: bool = False
 
     def __post_init__(self) -> None:
-        for name in ("cross_modal_enabled", "stream_state_enabled"):
-            if not isinstance(getattr(self, name), bool):
-                raise ValueError(f"{name} must be a boolean")
+        if not isinstance(self.cross_modal_enabled, bool):
+            raise ValueError("cross_modal_enabled must be a boolean")
         for name in ("hidden_channels", "inference_steps"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -127,9 +125,7 @@ class PredictiveCodingRGBReadout:
         self.diagnostics = None
         self._preview_prediction = None
         prediction = self._predict_observation(np.tanh(self.hidden))
-        self.stream_state_prediction = (
-            self.predict_stream_state() if self.config.stream_state_enabled else None
-        )
+        self.stream_state_prediction = self.predict_stream_state()
         self._require_finite(self.hidden, prediction)
         if self.spatial_preview_enabled:
             self._preview_prediction = self._preview_observation(prediction)
@@ -376,9 +372,9 @@ def infer_joint(
     states = {} if stream_states is None else dict(stream_states)
     if not set(states).issubset({branch for branch, _ in branches}):
         raise ValueError("Stream-state context must belong to an inferred branch.")
-    for branch, state in states.items():
-        if not isinstance(state, bool) or not branch.config.stream_state_enabled:
-            raise ValueError("Stream-state context requires a boolean observation and an enabled context node.")
+    for state in states.values():
+        if not isinstance(state, bool):
+            raise ValueError("Stream-state context requires a boolean observation.")
     canvas = first._coerce(prior, name="canvas prior").copy()
     steps = first.config.inference_steps
     observations = []

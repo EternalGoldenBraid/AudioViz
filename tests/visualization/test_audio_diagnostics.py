@@ -44,7 +44,8 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
     sources = {source.mapping.key: source for source in scene.sources}
 
     assert len(audio.history) == 1
-    assert root.latest is None
+    assert root.latest.stream_state.observed is False
+    assert not root.latest.observation_present
     assert sources["audio"].mapping.representation == "spectrum"
     assert sources["audio"].observation.shape == (AUDIO_SPECTRAL_BANDS,)
     assert sources["audio"].hidden.shape == (10, 20, 6)
@@ -55,11 +56,12 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
     assert not visualizer.source_orchestrator.visual_readout.spatial_preview_enabled
     clock[0] = 0.05
     visualizer.update_visualization()
-    assert len(audio.history) == 1
+    assert len(audio.history) == 2
     assert scene.layer_view.updates == 1
     clock[0] = 0.6
     visualizer.update_visualization()
-    assert audio.latest is None
+    assert audio.latest.stream_state.observed is True
+    assert not audio.latest.observation_present
     assert next(source for source in scene.sources if source.mapping.key == "audio").observation is None
     assert scene.canvas is not None
 
@@ -68,8 +70,8 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
     processor.spectrogram_buffers[0].fill(0)
     visualizer.update_visualization()
     audio.refresh()
-    assert len(audio._graph_nodes.data) == 3 + 6 + AUDIO_SPECTRAL_BANDS
-    assert len(audio._graph_edges) == 3 * 6 + 6 * AUDIO_SPECTRAL_BANDS
+    assert len(audio._graph_nodes.data) == 3 + 6 + AUDIO_SPECTRAL_BANDS + 1
+    assert len(audio._graph_edges) == 3 * 6 + 6 * AUDIO_SPECTRAL_BANDS + 6
     np.testing.assert_array_equal(audio.latest.observation_means, 0)
     np.testing.assert_array_equal(
         next(source for source in scene.sources if source.mapping.key == "audio").observation, 0
@@ -108,11 +110,9 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
     assert not scene.isVisible()
 
 
-@pytest.mark.parametrize(
-    "cross_modal_enabled,stream_state_enabled", ((False, False), (True, False), (False, True), (True, True))
-)
+@pytest.mark.parametrize("cross_modal_enabled", (False, True))
 def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
-    qapp, monkeypatch, layer_view_stub, cross_modal_enabled, stream_state_enabled
+    qapp, monkeypatch, layer_view_stub, cross_modal_enabled
 ):
     import audioviz.sources.audio as source_module
     import audioviz.visualization.prediction_scene_window as scene_module
@@ -128,7 +128,7 @@ def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
         synthetic=SyntheticSourceConfig(enabled=False), audio=AudioSourceConfig(enabled=True),
         prediction_error=PredictionErrorTransformConfig(enabled=True),
         visual_pathway=PredictiveCodingConfig(
-            learning_enabled=True, cross_modal_enabled=cross_modal_enabled, stream_state_enabled=stream_state_enabled,
+            learning_enabled=True, cross_modal_enabled=cross_modal_enabled,
         ),
     )
     baseline, visible = (
@@ -193,8 +193,8 @@ def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
     root.refresh()
     assert not root.latest.observation_present
     assert np.isnan(root.latest.visual.mean)
-    assert len(root._graph_edges) == 36 + 36
-    assert len(root._graph_nodes.data) == 12 + 6
+    assert len(root._graph_edges) == 36 + 36 + 6
+    assert len(root._graph_nodes.data) == 12 + 6 + 1
     assert root.latest.cross_modal_weights.shape == (6, 6)
     assert "missing evidence" in root.status.text()
     sources = {source.mapping.key: source for source in visualizer.prediction_scene.sources}
@@ -209,7 +209,7 @@ def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
 
 
 @pytest.mark.parametrize("audio_available", (False, True))
-def test_stream_context_control_plots_real_off_evidence_without_inventing_sensory_samples(
+def test_source_toggles_automatically_clamp_stream_nodes_without_inventing_sensory_samples(
     qapp, monkeypatch, layer_view_stub, audio_available
 ):
     import audioviz.visualization.prediction_scene_window as scene_module
@@ -230,9 +230,7 @@ def test_stream_context_control_plots_real_off_evidence_without_inventing_sensor
     visualizer.set_prediction_diagnostics_visible(True)
     visualizer.set_prediction_scene_visible(True)
     visualizer.toggle_controls()
-    context_toggle = visualizer.control_panel.source_control_widgets[("learning-dynamics", "stream_state_enabled")]
-    assert not context_toggle.isChecked()
-    context_toggle.click()
+    assert ("learning-dynamics", "stream_state_enabled") not in visualizer.control_panel.source_control_widgets
     visualizer.source_control_binding.update_control("learning-dynamics", "learning_enabled", True)
     visualizer.update_visualization()
     root = visualizer.prediction_diagnostics
@@ -269,11 +267,17 @@ def test_stream_context_control_plots_real_off_evidence_without_inventing_sensor
     assert "Stream state ON (clamped)" in root.status.text()
     sources = {source.mapping.key: source for source in visualizer.prediction_scene.sources}
     assert sources["camera"].stream_state is True
+    assert sources["camera"].enabled is True
     assert sources["audio"].stream_state is (True if audio_available else None)
-    context_toggle.click()
+    visualizer.camera_source.set_enabled(False)
+    visualizer.audio_source.set_enabled(False)
+    clock[0] = .4
     visualizer.update_visualization()
-    assert root.latest is None
     root.refresh()
-    assert np.isnan(root.stream_mean_curve.getData()[1][-1])
+    assert root.latest.stream_state.observed is False
+    assert np.isfinite(root.stream_mean_curve.getData()[1][-1])
+    sources = {source.mapping.key: source for source in visualizer.prediction_scene.sources}
+    assert sources["camera"].stream_state is False
+    assert sources["audio"].stream_state is (False if audio_available else None)
     visualizer.control_panel.close()
     visualizer.close()

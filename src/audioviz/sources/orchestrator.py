@@ -79,7 +79,6 @@ class RippleSourceOrchestrator:
             else None
         )
         self._validate_cross_modal(config.visual_pathway.cross_modal_enabled)
-        self._validate_stream_state(config.visual_pathway.stream_state_enabled)
         self.visual_observation: np.ndarray | None = None
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
@@ -163,25 +162,26 @@ class RippleSourceOrchestrator:
             self.audio_prediction = self.audio_readout.predict(prior)
         return self.visual_readout.predict(prior)
 
-    def resolve_visual_observation_correction(self) -> np.ndarray | None:
-        self.visual_observation = None
-        if not self.prediction_error_transform.applies_to("camera_frame"):
-            return None
-        observation = self.camera_source.excitation()
+    def resolve_visual_observation_correction(self) -> np.ndarray:
+        observation = (
+            self.camera_source.excitation()
+            if self.prediction_error_transform.applies_to("camera_frame") else None
+        )
         self.visual_observation = observation
-        if observation is None:
-            return None
         return self.visual_readout.infer(
             self.engine.get_prior_numpy(),
             observation,
+            stream_state=self.camera_source.enabled,
         )
 
-    def correct_from_observations(self) -> np.ndarray | None:
+    def correct_from_observations(self) -> np.ndarray:
+        if self.engine.use_shader:
+            raise NotImplementedError("Sensory inference requires an array-backed canvas.")
         self.visual_observation = None
         audio = self.audio_source.observation()
-        if self.visual_readout.config.cross_modal_enabled or self.visual_readout.config.stream_state_enabled:
-            if self.visual_readout.config.cross_modal_enabled and self.hidden_coupling is None:
-                raise RuntimeError("Cross-modal inference requires both predictive readouts.")
+        if self.audio_readout is None:
+            correction = self.resolve_visual_observation_correction()
+        else:
             image = (
                 self.camera_source.excitation()
                 if self.prediction_error_transform.applies_to("camera_frame") else None
@@ -189,50 +189,21 @@ class RippleSourceOrchestrator:
             self.visual_observation = image
             if not isinstance(self.visual_readout, PredictiveCodingRGBReadout):
                 raise TypeError("Stream-state inference requires a predictive-coding readout.")
-            branches = [(self.visual_readout, image)]
-            states = (
-                {self.visual_readout: self.camera_source.enabled}
-                if self.visual_readout.config.stream_state_enabled else None
-            )
-            if self.audio_readout is not None:
-                branches.append((self.audio_readout, audio))
-                if states is not None:
-                    states[self.audio_readout] = self.audio_source.enabled
             correction = infer_joint(
-                self.engine.get_prior_numpy(), tuple(branches),
+                self.engine.get_prior_numpy(),
+                ((self.visual_readout, image), (self.audio_readout, audio)),
                 coupling=self.hidden_coupling if self.visual_readout.config.cross_modal_enabled else None,
-                stream_states=states,
+                stream_states={
+                    self.visual_readout: self.camera_source.enabled,
+                    self.audio_readout: self.audio_source.enabled,
+                },
             )
-            self.engine.apply_observation_correction(correction)
-            return correction
-        if audio is None:
-            correction = self.resolve_visual_observation_correction()
-        else:
-            if self.engine.use_shader:
-                raise NotImplementedError("Audio predictive inference requires an array-backed canvas.")
-            prior = self.engine.get_prior_numpy()
-            image = (
-                self.camera_source.excitation()
-                if self.prediction_error_transform.applies_to("camera_frame") else None
-            )
-            self.visual_observation = image
-            if self.audio_readout is None:
-                raise RuntimeError("Audio evidence requires an audio predictive readout.")
-            if image is None:
-                correction = self.audio_readout.infer(prior, audio)
-            else:
-                if not isinstance(self.visual_readout, PredictiveCodingRGBReadout):
-                    raise TypeError("Joint inference requires a predictive-coding visual readout.")
-                correction = infer_joint(prior, ((self.visual_readout, image), (self.audio_readout, audio)))
-        if correction is not None:
-            self.engine.apply_observation_correction(correction)
+        self.engine.apply_observation_correction(correction)
         return correction
 
     def update_pathway_config(self, **changes) -> None:
         if "cross_modal_enabled" in changes:
             self._validate_cross_modal(changes["cross_modal_enabled"])
-        if "stream_state_enabled" in changes:
-            self._validate_stream_state(changes["stream_state_enabled"])
         self.visual_readout.update_config(**changes)
         if self.audio_readout is not None:
             self.audio_readout.update_config(**changes)
@@ -240,10 +211,6 @@ class RippleSourceOrchestrator:
     def _validate_cross_modal(self, enabled: bool) -> None:
         if enabled and (self.hidden_coupling is None or self.engine.use_shader):
             raise ValueError("Cross-modal inference requires camera/audio readouts and an array-backed canvas.")
-
-    def _validate_stream_state(self, enabled: bool) -> None:
-        if enabled and (not isinstance(self.visual_readout, PredictiveCodingRGBReadout) or self.engine.use_shader):
-            raise ValueError("Stream-state context requires a predictive readout and an array-backed canvas.")
 
     def set_diagnostics_enabled(self, enabled: bool) -> None:
         self.visual_readout.set_diagnostics_enabled(enabled)

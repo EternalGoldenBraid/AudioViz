@@ -118,7 +118,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self.graph_legend.setText(
             self.graph_legend.text()
             + "\nLoop on: P = peer hidden. Incoming loop weights shown; reciprocal weights in the other tab."
-            + "\nContext on: S = clamped stream state; pooled hidden -> sigmoid."
+            + "\nS = clamped stream ON/OFF state; pooled hidden -> sigmoid."
         )
         policy = self.graph_legend.sizePolicy()
         policy.setVerticalPolicy(QtWidgets.QSizePolicy.Preferred)

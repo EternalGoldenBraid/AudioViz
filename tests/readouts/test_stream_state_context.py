@@ -42,7 +42,7 @@ def _energy(canvas, branches, coupling, states):
 @pytest.mark.parametrize("learning", (False, True))
 def test_stream_context_state_and_weight_updates_follow_full_nonlinear_energy_gradients(coupled, learning):
     config = PredictiveCodingConfig(
-        hidden_channels=2, inference_steps=1, stream_state_enabled=True,
+        hidden_channels=2, inference_steps=1,
         inference_rate=0 if learning else .001, canvas_rate=0 if learning else .001,
         learning_enabled=learning, learning_rate=.001, gradient_clip=100,
     )
@@ -100,7 +100,7 @@ def test_off_streams_are_context_evidence_learning_is_explicit_and_waiting_is_no
             audio=AudioSourceConfig(enabled=False),
             prediction_error=PredictionErrorTransformConfig(enabled=True),
             visual_pathway=PredictiveCodingConfig(
-                cross_modal_enabled=True, stream_state_enabled=True, learning_enabled=True,
+                cross_modal_enabled=True, learning_enabled=True,
                 learning_rate=.1, weight_decay=.001,
             ),
         ),
@@ -147,22 +147,24 @@ def test_off_streams_are_context_evidence_learning_is_explicit_and_waiting_is_no
         np.testing.assert_array_equal(array, original)
     source.camera_source.set_enabled(False)
     source.audio_source.set_enabled(False)
-    source.update_pathway_config(learning_enabled=True, stream_state_enabled=False)
+    loop_before = {branch: source.hidden_coupling.weights[branch].copy() for branch in source.hidden_coupling.branches}
+    source.update_pathway_config(learning_enabled=True, cross_modal_enabled=False)
     engine.propagate()
     source.predict_visual()
     source.correct_from_observations()
-    for array, original in zip(parameters, before):
-        np.testing.assert_array_equal(array, original)
-    for branch in source.hidden_coupling.branches:
-        assert branch.diagnostics.stream_state is None
+    for branch, sensory_weights in zip(source.hidden_coupling.branches, sensory_before):
+        assert branch.diagnostics.stream_state.observed is False
+        assert branch.diagnostics.weight_update_norm > 0
+        np.testing.assert_array_equal(branch.visual_weights, sensory_weights)
+        np.testing.assert_array_equal(
+            source.hidden_coupling.weights[branch],
+            loop_before[branch],
+        )
 
 
-def test_context_rejects_unknown_non_boolean_and_disabled_observations():
+def test_context_rejects_unknown_branches_and_non_boolean_observations():
     camera = PredictiveCodingRGBReadout(canvas_shape=(2, 3, 3))
     canvas = np.zeros(camera.canvas_shape)
-    with pytest.raises(ValueError, match="enabled context"):
-        camera.infer(canvas, None, stream_state=False)
-    camera.update_config(stream_state_enabled=True)
     with pytest.raises(ValueError, match="boolean"):
         camera.infer(canvas, None, stream_state=0)
     other = PredictiveCodingRGBReadout(canvas_shape=canvas.shape)
@@ -175,7 +177,6 @@ def test_camera_only_context_is_independent_of_preview_collection_and_rejects_sh
     source = RippleSourceOrchestrator(
         config=RippleSourceOrchestratorConfig(
             audio=AudioSourceConfig(enabled=False),
-            visual_pathway=PredictiveCodingConfig(stream_state_enabled=True),
         ),
         processor=None, engine=engine, resolution=engine.resolution, n_sources=1,
     )
@@ -193,8 +194,6 @@ def test_camera_only_context_is_independent_of_preview_collection_and_rejects_sh
     assert source.visual_readout.stream_state_prediction is None
     np.testing.assert_array_equal(source.visual_readout.stream_state_weights, weights)
     np.testing.assert_array_equal(source.visual_readout.stream_state_bias, bias)
-    source.update_pathway_config(stream_state_enabled=False)
     engine.use_shader = True
-    with pytest.raises(ValueError, match="array-backed"):
-        source.update_pathway_config(stream_state_enabled=True)
-    assert not source.visual_readout.config.stream_state_enabled
+    with pytest.raises(NotImplementedError, match="array-backed"):
+        source.correct_from_observations()

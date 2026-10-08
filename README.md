@@ -128,10 +128,10 @@ Each physical frame:
 5. Apply the net surface correction to both wave-state buffers, preserving wave
    velocity, and render the corrected **surface**, not the camera expectation.
 
-With both the cross-modal loop and stream-state context off (the default),
-missing evidence skips inference
-and learning for that branch; the other branch can still correct the shared
-surface. Both hidden fields continue to
+Each available modality has a clamped ON/OFF stream-state node derived directly
+from its source toggle. Inference and enabled learning continue when sensory
+samples are absent; missing image/spectrum targets remain unclamped and their
+decoder weights stay frozen. Both hidden fields continue to
 advance from the wave prior. Reset clears the surface, both hidden fields,
 and errors, retaining their learned weights. Weights are session-local.
 
@@ -301,11 +301,10 @@ includes sensory residuals for observations actually available in that frame.
 Missing sensors are **unclamped**, not replaced by silent audio or black images.
 Every physical frame runs the configured bounded inference loop, even with
 both sensors absent, so learned recurrence can affect hidden states, predictions,
-and the canvas impulse response. This costs more than the default mode.
-Without sensory or stream-state evidence, **all weights remain frozen**, even
-if learning is armed.
-With evidence in one modality, hidden and recurrent weights may learn in both
-branches, but the absent modality's sensory weights (including decay) stay frozen.
+and the canvas impulse response. Recurrence adds computation to independent
+pathways. Stream ON/OFF state remains evidence with both captures off, so
+enabled hidden and recurrent weight learning can continue in both branches.
+An absent modality's sensory weights (including decay) stay frozen.
 Turning the loop off or resetting states retains its learned weights.
 Weight/gradient clipping uses the existing controls; it does not guarantee
 stable recurrent dynamics. Reduce state rates or disable the loop if it diverges.
@@ -316,11 +315,10 @@ spatial scene recall or audio localization, and persistence is not guaranteed.
 
 ### Stream-state context: closed is evidence
 
-Enable **Stream State Context** in **Sensory Inference and Learning** to add
-one clamped ON/OFF node per available modality. This mode is independently
-toggleable and off by default. It works with or without the camera/audio loop,
-including a camera-only setup. Startup configuration uses
-`transforms.prediction_error.inference.stream_state_enabled`.
+Every available modality has one clamped ON/OFF node. There is no separate
+context setting: the node follows its source directly, disabled = OFF and
+enabled = ON. This works with or without the camera/audio loop, including a
+camera-only setup, on an array-backed CPU/GPU canvas.
 
 The context observation comes from the actual source toggle: enabled is ON,
 disabled is OFF. It describes the application's capture setting, not physical
@@ -357,8 +355,7 @@ weights may learn from the clamped context and final latent residuals. The
 absent modality's image/spectrum decoder weights remain frozen, including
 decay, because there is no target for them. **Pathway Learning** remains the
 explicit switch to freeze all weights during an impulse or recall probe.
-Turning context off stops its weight/bias updates and restores the existing
-missing-evidence policy; resetting states retains its learned parameters.
+Resetting states retains learned context parameters.
 Learning while probing can alter stored associations, so freezing remains
 useful even though a closed stream now supplies a valid context observation.
 
@@ -376,7 +373,7 @@ camera-level energy means and variances over simulation time, and the latest
 frame's energy trajectory across fixed-weight inference steps. The status line
 shows whether weight learning is enabled, its rate, and the actual combined
 weight-update norm. Missing camera evidence inserts a gap, not a fabricated
-zero-energy sample. With the loop or context on, hidden/total inference energy continues
+zero-energy sample. Hidden/total inference energy continues
 to be sampled without sensors; missing sensory energy remains a gap, and
 sensory graph nodes show predictions. Reset clears the diagnostic history.
 
@@ -399,7 +396,7 @@ and synthetic drives remain outside this learned-pathway graph. With the
 hidden loop enabled, extra peer nodes `P` show the other modality's hidden
 means and its learned incoming recurrent weights. The other tab shows the
 reciprocal projection; the update norm includes incoming recurrent weights.
-With context enabled, node `S` shows clamped ON/OFF, predicted `p(on)`, local
+Node `S` shows clamped ON/OFF, predicted `p(on)`, local
 error energy, bias and incoming weights. The green **Stream state** curve
 tracks its energy; population variance is zero for a single scalar node,
 not a temporal-variance estimate. Total inference energy and weight-update
@@ -438,7 +435,7 @@ Synthetic/pose attachments do not acquire invented predictive hidden layers.
 Layout links distinguish the sensory pathways from direct drive/medium
 attachments; labeled hidden-to-hidden links identify the optional loop.
 Individual learned connections remain in the 2D weight plots.
-Stream-context mode also shows one labeled ON/OFF node per sensory branch,
+The scene also shows one labeled ON/OFF node per sensory branch,
 linked to its hidden field, with the predicted `p(on)` **before new evidence**.
 Disabled sources are identified in the status line. Missing evidence removes
 that source's observed geometry; the canvas, hidden states, and predictions

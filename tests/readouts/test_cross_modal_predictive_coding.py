@@ -198,7 +198,7 @@ def test_paired_learning_predicts_missing_camera_and_changes_an_absent_sensor_im
                 audio=AudioSourceConfig(enabled=False),
                 camera_frame=CameraFrameSourceConfig(enabled=False),
                 visual_pathway=PredictiveCodingConfig(
-                    cross_modal_enabled=True, learning_enabled=True, weight_decay=.1,
+                    cross_modal_enabled=True, learning_enabled=False, weight_decay=.1,
                 ),
             ),
             processor=SimpleNamespace(frame_counter=0), engine=engine,
@@ -240,7 +240,8 @@ def test_paired_learning_predicts_missing_camera_and_changes_an_absent_sensor_im
     source.update_pathway_config(cross_modal_enabled=False)
     source.engine.propagate()
     source.predict_visual()
-    assert source.correct_from_observations() is None
+    assert source.correct_from_observations() is not None
+    assert source.visual_readout.diagnostics.stream_state.observed is False
     source.reset_readouts()
     source.update_pathway_config(cross_modal_enabled=True)
     for branch, trained in zip(source.hidden_coupling.branches, coupling.branches):

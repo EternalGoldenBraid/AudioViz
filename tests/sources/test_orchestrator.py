@@ -31,10 +31,11 @@ class _FakeProcessor:
 
 
 class _RecordingVisualReadout(PredictiveCodingRGBReadout):
-    def infer(self, prior, observation):
+    def infer(self, prior, observation, *, stream_state=None):
         self.received_prior = prior.copy()
-        self.received_observation = observation.copy()
-        return super().infer(prior, observation)
+        self.received_observation = None if observation is None else observation.copy()
+        self.received_stream_state = stream_state
+        return super().infer(prior, observation, stream_state=stream_state)
 
 
 def _build_engine(*, amplitude: float = 1.0) -> RippleEngine:
@@ -143,7 +144,7 @@ def test_captured_audio_does_not_drive_waves_or_scale_external_stimulation():
     assert resolved.drive_grid is None
 
 
-def test_ripple_source_orchestrator_skips_correction_when_camera_feed_is_off():
+def test_ripple_source_orchestrator_infers_off_context_without_a_camera_image():
     engine = _build_engine()
     scalar_state = np.array(
         [
@@ -187,7 +188,9 @@ def test_ripple_source_orchestrator_skips_correction_when_camera_feed_is_off():
     correction = orchestrator.resolve_visual_observation_correction()
 
     assert source_frame.drive_grid is None
-    assert correction is None
+    assert correction is not None
+    assert np.any(correction != 0)
+    assert orchestrator.visual_observation is None
     np.testing.assert_array_equal(engine.get_field_numpy(), prior)
 
 
@@ -221,6 +224,7 @@ def test_ripple_source_orchestrator_routes_inference_through_readout():
     np.testing.assert_allclose(prediction, 0.0)
     np.testing.assert_array_equal(readout.received_prior, engine.get_prior_numpy())
     np.testing.assert_array_equal(readout.received_observation, observation)
+    assert readout.received_stream_state is orchestrator.camera_source.enabled
     assert np.any(correction != 0.0)
     np.testing.assert_allclose(engine.get_field_numpy(), correction)
 
@@ -263,7 +267,7 @@ def test_visual_pathway_learning_does_not_change_conductances_or_wave_velocity()
     assert np.any(orchestrator.visual_readout.visual_weights != weights_before)
 
 
-def test_missing_camera_frame_does_not_infer_or_learn_from_black():
+def test_missing_camera_frame_infers_context_without_learning_from_black():
     engine = _build_engine()
     orchestrator = RippleSourceOrchestrator(
         config=RippleSourceOrchestratorConfig(
@@ -275,17 +279,20 @@ def test_missing_camera_frame_does_not_infer_or_learn_from_black():
         resolution=engine.resolution,
         n_sources=1,
     )
+    orchestrator.set_diagnostics_enabled(True)
     orchestrator.camera_source.excitation = lambda: None
     engine.propagate(np.ones(engine.canvas_shape))
     orchestrator.predict_visual()
     hidden_before = orchestrator.visual_readout.hidden.copy()
     weights_before = orchestrator.visual_readout.visual_weights.copy()
 
-    assert orchestrator.correct_from_observations() is None
+    assert orchestrator.correct_from_observations() is not None
 
-    np.testing.assert_array_equal(orchestrator.visual_readout.hidden, hidden_before)
+    assert np.any(orchestrator.visual_readout.hidden != hidden_before)
     np.testing.assert_array_equal(orchestrator.visual_readout.visual_weights, weights_before)
-    np.testing.assert_array_equal(engine.get_field_numpy(), engine.get_prior_numpy())
+    assert not orchestrator.visual_readout.diagnostics.observation_present
+    assert orchestrator.visual_readout.diagnostics.stream_state.observed is False
+    assert orchestrator.visual_readout.diagnostics.weight_update_norm > 0
 
 
 def test_audio_and_camera_joint_inference_use_one_observation_and_preserve_wave_velocity(monkeypatch):
@@ -332,7 +339,7 @@ def test_audio_and_camera_joint_inference_use_one_observation_and_preserve_wave_
     orchestrator.camera_source.excitation = lambda: None
     engine.propagate()
     orchestrator.predict_visual()
-    assert orchestrator.correct_from_observations() is None
+    assert orchestrator.correct_from_observations() is not None
     assert orchestrator.visual_observation is None
     np.testing.assert_array_equal(orchestrator.audio_readout.visual_weights, audio_weights)
 

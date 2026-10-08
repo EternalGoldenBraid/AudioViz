@@ -86,8 +86,6 @@ class RippleSourceControlBinding:
                         cross_modal_available=(
                             visualizer.source_orchestrator.hidden_coupling is not None and not visualizer.use_shader
                         ),
-                        stream_state_enabled=pathway_config.stream_state_enabled,
-                        stream_state_available=not visualizer.use_shader,
                     ).get_controls(),
                     expanded=True,
                 )
@@ -265,7 +263,7 @@ class RippleSourceControlBinding:
         if control_key in ("inference_rate", "canvas_rate"):
             readout.update_pathway_config(**{control_key: float(value)})
             return
-        if control_key in ("learning_enabled", "cross_modal_enabled", "stream_state_enabled"):
+        if control_key in ("learning_enabled", "cross_modal_enabled"):
             readout.update_pathway_config(**{control_key: bool(value)})
             return
         if control_key == "learning_rate":

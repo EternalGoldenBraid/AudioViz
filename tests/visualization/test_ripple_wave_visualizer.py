@@ -136,6 +136,8 @@ def test_ripple_visualizer_pose_medium_overlay_smoke(qapp):
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
+    # Isolate passive pose-medium coupling from stream-state canvas correction.
+    visualizer.source_orchestrator.update_pathway_config(canvas_rate=0)
 
     visualizer.update_visualization()
     first_pose_positions = visualizer._latest_pose_render_positions[visualizer._latest_pose_valid]
@@ -376,9 +378,11 @@ def test_ripple_visualizer_diagnostics_toggle_missing_frame_reset_and_close(qapp
     visualizer.diagnostics_button.click()
     visualizer.update_visualization()
     view.refresh()
-    assert view.latest is None
-    assert np.isnan(view.history[-1][1])
-    assert "No fresh camera evidence" in view.status.text()
+    assert view.latest is not None
+    assert np.isfinite(view.history[-1][1])
+    assert np.isnan(view.history[-1][2])
+    assert view.latest.stream_state.observed is True
+    assert "missing evidence (unclamped)" in view.status.text()
     visualizer.engine.reset()
     visualizer._sync_after_reset()
     assert len(view.history) == 0
