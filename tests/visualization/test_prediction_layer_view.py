@@ -1,4 +1,5 @@
 import numpy as np
+from dataclasses import replace
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 from audioviz.readouts import PredictiveCodingRGBReadout
@@ -62,6 +63,18 @@ def test_layer_planes_reuse_items_preserve_camera_and_clear_pixels(qapp):
     view.clear_evidence("audio")
     assert not view.histograms["audio/observation"].visible()
     assert view.histograms["audio/prediction"].visible()
+    view.set_scene(field, (
+        replace(camera_source, enabled=False, observation=None, recurrent_parent="audio"),
+        replace(audio_source, enabled=False, observation=None, recurrent_parent="camera"),
+    ))
+    assert view.lines["camera/recurrent"].visible()
+    assert view.lines["audio/recurrent"].visible()
+    assert view.planes["camera/prediction"].visible()
+    assert not view.planes["camera/observation"].visible()
+    assert not view.histograms["audio/observation"].visible()
+    view.set_scene(field, (camera_source, audio_source))
+    assert not view.lines["camera/recurrent"].visible()
+    assert not view.lines["audio/recurrent"].visible()
     view.clear_preview()
     assert all(not plane.visible() for plane in planes.values())
     assert all(plane.data.shape == (1, 1, 4) for plane in planes.values())

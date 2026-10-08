@@ -606,6 +606,9 @@ class RippleWaveVisualizer(VisualizerBase):
                     readout.diagnostics.hidden.channel_means
                     if readout is not None and readout.diagnostics is not None else ()
                 ),
+                recurrent_parent=(
+                    "audio" if mapping.key == "camera" else "camera"
+                ) if orchestrator.visual_readout.config.cross_modal_enabled else None,
             ))
         sources.append(SourceScenePreview(
             mapping=self.synthetic_source.scene_mapping,

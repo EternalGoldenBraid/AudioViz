@@ -18,7 +18,7 @@ collect_ignore = [
 ]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def qapp():
     qt_widgets = pytest.importorskip("PyQt5.QtWidgets")
     return qt_widgets.QApplication.instance() or qt_widgets.QApplication([])

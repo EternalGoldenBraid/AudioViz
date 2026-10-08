@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from copy import deepcopy
 
 import numpy as np
+import pytest
 
 from audioviz.sources import AudioSourceConfig, RippleSourceOrchestratorConfig, SyntheticSourceConfig
 from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
@@ -107,8 +108,9 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
     assert not scene.isVisible()
 
 
+@pytest.mark.parametrize("cross_modal_enabled", (False, True))
 def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
-    qapp, monkeypatch, layer_view_stub
+    qapp, monkeypatch, layer_view_stub, cross_modal_enabled
 ):
     import audioviz.sources.audio as source_module
     import audioviz.visualization.prediction_scene_window as scene_module
@@ -123,7 +125,7 @@ def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
     config = RippleSourceOrchestratorConfig(
         synthetic=SyntheticSourceConfig(enabled=False), audio=AudioSourceConfig(enabled=True),
         prediction_error=PredictionErrorTransformConfig(enabled=True),
-        visual_pathway=PredictiveCodingConfig(learning_enabled=True),
+        visual_pathway=PredictiveCodingConfig(learning_enabled=True, cross_modal_enabled=cross_modal_enabled),
     )
     baseline, visible = (
         RippleWaveVisualizer(
@@ -151,6 +153,50 @@ def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
             np.testing.assert_array_equal(actual.hidden, expected.hidden)
             np.testing.assert_array_equal(actual.canvas_weights, expected.canvas_weights)
             np.testing.assert_array_equal(actual.visual_weights, expected.visual_weights)
+            np.testing.assert_array_equal(
+                visible.source_orchestrator.hidden_coupling.weights[actual],
+                baseline.source_orchestrator.hidden_coupling.weights[expected],
+            )
     assert visible.prediction_diagnostics is None
     baseline.close()
     visible.close()
+
+
+def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
+    qapp, layer_view_stub
+):
+    processor = SimpleNamespace(frame_counter=0, current_top_k_frequencies=[], current_signal_level=0)
+    visualizer = RippleWaveVisualizer(
+        processor=processor, resolution=(6, 8), plane_size_m=(1, 1), speed=1,
+        source_orchestrator_config=RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(enabled=False), audio=AudioSourceConfig(enabled=False),
+        ),
+    )
+    visualizer.timer.stop()
+    visualizer.set_prediction_diagnostics_visible(True)
+    visualizer.set_prediction_scene_visible(True)
+    visualizer.toggle_controls()
+    checkbox = visualizer.control_panel.source_control_widgets[("learning-dynamics", "cross_modal_enabled")]
+    assert not checkbox.isChecked()
+    checkbox.click()
+    assert visualizer.source_orchestrator.visual_readout.config.cross_modal_enabled
+    assert visualizer.source_orchestrator.audio_readout.config.cross_modal_enabled
+    visualizer.update_visualization()
+    root = visualizer.prediction_diagnostics
+    root.graph_toggle.setChecked(True)
+    root.refresh()
+    assert not root.latest.observation_present
+    assert np.isnan(root.latest.visual.mean)
+    assert len(root._graph_edges) == 36 + 36
+    assert len(root._graph_nodes.data) == 12 + 6
+    assert root.latest.cross_modal_weights.shape == (6, 6)
+    assert "missing evidence" in root.status.text()
+    sources = {source.mapping.key: source for source in visualizer.prediction_scene.sources}
+    assert sources["camera"].recurrent_parent == "audio"
+    assert sources["audio"].recurrent_parent == "camera"
+    assert sources["camera"].observation is None
+    assert sources["camera"].prediction is not None
+    checkbox.click()
+    assert not visualizer.source_orchestrator.visual_readout.config.cross_modal_enabled
+    visualizer.control_panel.close()
+    visualizer.close()

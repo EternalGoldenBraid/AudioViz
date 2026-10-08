@@ -33,6 +33,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self._dirty = True
         self._graph_channels = 0
         self._observation_channels = 3
+        self._cross_channels = 0
         self._graph_edges: list[tuple[pg.PlotDataItem, int, int, int]] = []
         self._graph_labels: list[pg.TextItem] = []
 
@@ -107,6 +108,10 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
                 "Edges: blue + / orange -; width = |weight|.\n"
                 "Nodes: mean state and local mean energy."
             )
+        self.graph_legend.setText(
+            self.graph_legend.text()
+            + "\nLoop on: P = peer hidden. Incoming loop weights shown; reciprocal weights in the other tab."
+        )
         policy = self.graph_legend.sizePolicy()
         policy.setVerticalPolicy(QtWidgets.QSizePolicy.Preferred)
         self.graph_legend.setSizePolicy(policy)
@@ -207,11 +212,17 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             return
         snapshot = self.latest
         learning = "on" if snapshot.learning_enabled else "off"
+        sensory_status = (
+            f"{self.modality} mean {snapshot.visual.mean:.4g}, variance {snapshot.visual.variance:.4g}"
+            if snapshot.observation_present else f"{self.modality}: missing evidence (unclamped)"
+        )
         self.status.setText(
             f"Hidden mean {snapshot.hidden.mean:.4g}, variance {snapshot.hidden.variance:.4g}"
-            f" | {self.modality} mean {snapshot.visual.mean:.4g}, variance {snapshot.visual.variance:.4g}"
+            f" | {sensory_status}"
             f"\nWeight learning {learning} (rate {snapshot.learning_rate:g})"
             f" | actual ||delta W|| = {snapshot.weight_update_norm:.4g}"
+            + (" | missing evidence: sensory nodes show predictions, sensory energy is unavailable"
+               if not snapshot.observation_present else "")
         )
         self.inference_curve.setData(
             np.arange(len(snapshot.inference_energy)), snapshot.inference_energy
@@ -232,11 +243,12 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self._dirty = True
         self.refresh()
 
-    def _build_graph(self, hidden_channels: int) -> None:
+    def _build_graph(self, hidden_channels: int, cross_channels: int = 0) -> None:
         self.graph_plot.clear()
         self._graph_edges.clear()
         self._graph_labels.clear()
         self._graph_channels = hidden_channels
+        self._cross_channels = cross_channels
         height = max(hidden_channels - 1, self._observation_channels - 1, 2)
         positions = [
             np.column_stack(
@@ -253,6 +265,25 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
                     )
                     self.graph_plot.addItem(edge)
                     self._graph_edges.append((edge, layer, destination, source))
+        if cross_channels:
+            peers = np.column_stack(
+                (np.full(cross_channels, -1.4), np.linspace(0, height, cross_channels))
+            )
+            self._node_positions = np.concatenate((self._node_positions, peers))
+            for destination, end in enumerate(positions[1]):
+                for source, start in enumerate(peers):
+                    edge = pg.PlotDataItem(
+                        [start[0], -0.7, 1.0, end[0]],
+                        [start[1], -1.5 - .05 * source, -1.5 - .05 * destination, end[1]],
+                    )
+                    self.graph_plot.addItem(edge)
+                    self._graph_edges.append((edge, 2, destination, source))
+            label = pg.TextItem("Peer hidden -> hidden", color=(225, 230, 235), anchor=(0.5, 0.5))
+            label.setPos(-1.1, height + 0.7)
+            self.graph_plot.addItem(label)
+            recurrent = pg.TextItem("recurrent predictions", color=(225, 230, 235), anchor=(0.5, 0.5))
+            recurrent.setPos(0.2, -2.05)
+            self.graph_plot.addItem(recurrent)
         self._graph_nodes = pg.ScatterPlotItem(size=16, pen=pg.mkPen("w", width=1))
         self.graph_plot.addItem(self._graph_nodes)
         for x, y in self._node_positions:
@@ -263,10 +294,12 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             label.setPos(x + 0.1, y)
             self.graph_plot.addItem(label)
             self._graph_labels.append(label)
-        for column, title in enumerate(("Wave canvas", "Hidden belief", f"{self.modality} (clamped)")):
+        for column, title in enumerate(("Wave canvas", "Hidden belief", self.modality)):
             label = pg.TextItem(title, color=(225, 230, 235), anchor=(0.5, 0.5))
             label.setPos(column * 1.4 + 0.2, height + 0.7)
             self.graph_plot.addItem(label)
+            if column == 2:
+                self._sensory_title = label
         for column in (0, 1):
             left = column * 1.4
             right = left + 1.4
@@ -286,36 +319,50 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             label.setPos(left + 0.7, -1.05)
             self.graph_plot.addItem(label)
         self.graph_plot.setRange(
-            xRange=(-0.3, 3.9), yRange=(-1.4, height + 1.2), padding=0
+            xRange=(-1.8 if cross_channels else -0.3, 4.3 if cross_channels else 3.9),
+            yRange=(-2.5 if cross_channels else -1.4, height + 1.2), padding=0
         )
 
     def _update_graph(self, snapshot: PredictiveCodingDiagnostics) -> None:
         count = len(snapshot.hidden_means)
         observation_channels = len(snapshot.observation_means)
-        if self._graph_channels != count or self._observation_channels != observation_channels:
+        cross_channels = len(snapshot.cross_parent_means)
+        if (self._graph_channels != count or self._observation_channels != observation_channels
+                or self._cross_channels != cross_channels):
             self._observation_channels = observation_channels
-            self._build_graph(count)
-        weights = snapshot.canvas_weights, snapshot.visual_weights
+            self._build_graph(count, cross_channels)
+        weights = snapshot.canvas_weights, snapshot.visual_weights, snapshot.cross_modal_weights
+        self._sensory_title.setText(
+            f"{self.modality} ({'observed' if snapshot.observation_present else 'predicted'})"
+        )
         for edge, layer, destination, source in self._graph_edges:
-            weight = float(weights[layer][destination, source])
+            matrix = weights[layer]
+            if matrix is None:
+                raise ValueError("Recurrent graph nodes require incoming recurrent weights.")
+            weight = float(matrix[destination, source])
             color = POSITIVE_WEIGHT_COLOR if weight >= 0 else NEGATIVE_WEIGHT_COLOR
             edge.setPen(pg.mkPen((*color, 110), width=0.5 + min(abs(weight), 3.0)))
             edge.setVisible(weight != 0.0)
-        energies = (None,) * 3 + snapshot.hidden.channel_means + snapshot.visual.channel_means
-        means = snapshot.canvas_means + snapshot.hidden_means + snapshot.observation_means
+        energies = ((None,) * 3 + snapshot.hidden.channel_means
+                    + tuple(value if np.isfinite(value) else None for value in snapshot.visual.channel_means)
+                    + (None,) * cross_channels)
+        means = snapshot.canvas_means + snapshot.hidden_means + snapshot.observation_means + snapshot.cross_parent_means
         names = (
             tuple(f"C{index}" for index in range(3))
             + tuple(f"H{index}" for index in range(count))
             + tuple(f"Y{index}" for index in range(self._observation_channels))
+            + tuple(f"P{index}" for index in range(cross_channels))
         )
-        maximum = max((*snapshot.hidden.channel_means, *snapshot.visual.channel_means, 1e-12))
+        maximum = max((value for value in energies if value is not None), default=1e-12)
+        maximum = max(maximum, 1e-12)
         brushes = []
         for label, name, value, energy in zip(self._graph_labels, names, means, energies):
             level = 0.0 if energy is None else energy / maximum
             brushes.append(pg.mkBrush(40 + int(210 * level), 100 + int(60 * level), 155 - int(90 * level)))
             text = f"{name}: {value:+.3g}"
             if energy is not None:
-                text += f"\nE={energy:.2g}"
+                separator = " " if name.startswith("Y") and self._observation_channels > 8 else "\n"
+                text += f"{separator}E={energy:.2g}"
             label.setText(text)
         self._graph_nodes.setData(
             self._node_positions[:, 0], self._node_positions[:, 1], brush=brushes

@@ -41,3 +41,4 @@ class SourceScenePreview:
     hidden: np.ndarray | None = None
     hidden_energies: tuple[float, ...] = ()
     edges: np.ndarray | None = None
+    recurrent_parent: str | None = None

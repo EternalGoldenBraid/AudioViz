@@ -128,8 +128,9 @@ Each physical frame:
 5. Apply the net surface correction to both wave-state buffers, preserving wave
    velocity, and render the corrected **surface**, not the camera expectation.
 
-Missing evidence skips inference and learning for that branch; the other
-branch can still correct the shared surface. Both hidden fields continue to
+With the cross-modal loop off (the default), missing evidence skips inference
+and learning for that branch; the other branch can still correct the shared
+surface. Both hidden fields continue to
 advance from the wave prior. Reset clears the surface, both hidden fields,
 and errors, retaining their learned weights. Weights are session-local.
 
@@ -244,7 +245,8 @@ the unscaled energy gradients. Both state and weight rules retain `tanh`;
 only state updates contain its derivative.
 
 Each audio analysis generation is consumed once. Waiting between blocks does
-not repeat inference or weight learning on cached evidence. Diagnostics hold
+not reuse cached evidence for inference or learning. With the optional loop on,
+unclamped hidden inference continues between blocks. Diagnostics hold
 the latest audio sample for at most half a second, then mark missing evidence
 and clear its planes. The offline audio renderer exercises this same pathway;
 its legacy frequency-mapping arguments now affect reported peak metadata only.
@@ -261,6 +263,57 @@ invisible. Lowering **Low-Level Reference Scale** changes visibility without
 changing inference; increasing evidence/canvas rates changes the model and
 can destabilize it. No automatic gain or physics changes are made to compensate.
 
+### Optional camera/audio hidden loop
+
+Enable **Camera / Audio Hidden Loop** in **Sensory Inference and Learning**
+to add reciprocal, per-pixel projections between the two hidden fields. It is
+off by default, preserving the independent-pathway behavior. Both matrices
+start at zero, have destination-by-source shape `(hidden_channels, hidden_channels)`,
+and share weights across pixels; there is no dense spatial graph or pruning.
+Enable **Pathway Learning** with paired camera/audio evidence to learn the
+connections, then freeze learning to probe them. In startup configuration,
+`transforms.prediction_error.inference.cross_modal_enabled` enables the same mode.
+An audio processor must exist, but its observation toggle can be off.
+The shader-only backend does not support the loop.
+
+With `h` the camera hidden field and `a` the audio hidden field:
+
+```text
+predicted_h = W_hc tanh(c) + V_ha tanh(a)
+predicted_a = W_ac tanh(c) + V_ah tanh(h)
+e_h = h - predicted_h
+e_a = a - predicted_a
+
+delta_h = hidden_rate [-e_h + tanh'(h) * (W_yh.T e_y + V_ah.T e_a)]
+delta_a = hidden_rate [-e_a + tanh'(a) * (W_sa.T e_s + V_ha.T e_h)]
+delta_V_ha = learning_rate spatial_mean(e_h tanh(a).T)
+delta_V_ah = learning_rate spatial_mean(e_a tanh(h).T)
+```
+
+These are local negative energy gradients, including error feedback from
+each hidden state's outgoing recurrent connection. Directions are synchronous;
+all weights remain fixed throughout settling. The canvas correction still
+uses both hidden errors and has no additional wave-prior restoring penalty.
+The joint energy always includes both hidden residuals in this mode, and only
+includes sensory residuals for observations actually available in that frame.
+
+Missing sensors are **unclamped**, not replaced by silent audio or black images.
+Every physical frame runs the configured bounded inference loop, even with
+both sensors absent, so learned recurrence can affect hidden states, predictions,
+and the canvas impulse response. This costs more than the default mode.
+Without evidence, **all weights remain frozen**, even if learning is armed.
+With evidence in one modality, hidden and recurrent weights may learn in both
+branches, but the absent modality's sensory weights (including decay) stay frozen.
+Turning the loop off or resetting states retains its learned weights.
+Weight/gradient clipping uses the existing controls; it does not guarantee
+stable recurrent dynamics. Reduce state rates or disable the loop if it diverges.
+
+Audio-to-camera associations can now be tested with the camera off.
+Shared per-pixel weights and global audio pooling do not provide arbitrary
+spatial scene recall or audio localization, and persistence is not guaranteed.
+
+### Inference and learning diagnostics
+
 The visual readout also supports opt-in energy diagnostics. A node's energy is
 `0.5 * prediction_error**2`; layer statistics report its mean and population
 variance over pixels and channels. Diagnostics capture the fixed-weight
@@ -273,7 +326,9 @@ camera-level energy means and variances over simulation time, and the latest
 frame's energy trajectory across fixed-weight inference steps. The status line
 shows whether weight learning is enabled, its rate, and the actual combined
 weight-update norm. Missing camera evidence inserts a gap, not a fabricated
-zero-energy sample. Reset clears the diagnostic history.
+zero-energy sample. With the loop on, hidden/total inference energy continues
+to be sampled without sensors; missing sensory energy remains a gap, and
+sensory graph nodes show predictions. Reset clears the diagnostic history.
 
 With an audio processor present, the catalogue has **Camera** and **Audio**
 tabs. Select **Energy and inference plots**, **2D weights and hidden states**,
@@ -290,7 +345,10 @@ spatial mean states and local mean energies; signed edge colors and widths show
 the shared weights. Dashed arrows indicate local error feedback. This is the
 channel graph repeated at each spatial site, not a graph with one vertex for
 every pixel (with spatial pooling at the audio readout). The fixed wave operator
-and synthetic drives remain outside this learned-pathway graph.
+and synthetic drives remain outside this learned-pathway graph. With the
+hidden loop enabled, extra peer nodes `P` show the other modality's hidden
+means and its learned incoming recurrent weights. The other tab shows the
+reciprocal projection; the update norm includes incoming recurrent weights.
 
 History is limited to 300 entries and plots refresh at most ten times per
 second. Closing or hiding the window stops its timer and telemetry collection;
@@ -322,7 +380,8 @@ identity, role, representation, and bounded sampling:
 
 Synthetic/pose attachments do not acquire invented predictive hidden layers.
 Layout links distinguish the sensory pathways from direct drive/medium
-attachments; individual learned connections remain in the 2D weight plots.
+attachments; labeled hidden-to-hidden links identify the optional loop.
+Individual learned connections remain in the 2D weight plots.
 Disabled sources are identified in the status line. Missing evidence removes
 that source's observed geometry; the canvas, hidden states, and predictions
 continue to show the belief. Audio holds its latest genuine observation for

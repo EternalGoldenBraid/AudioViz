@@ -111,6 +111,10 @@ class PredictionLayerView(gl.GLViewWidget):
         self._set_plane("canvas", rgb_texture(canvas), (-3, -3 * aspect, 3.5), 6,
                         text="Canvas (corrected)")
         branches = [source for source in sources if source.mapping.role == "sensory" and source.hidden is not None]
+        centers = {
+            source.mapping.key: (index - (len(branches) - 1) / 2) * 4.8
+            for index, source in enumerate(branches)
+        }
         for index, source in enumerate(branches):
             center = (index - (len(branches) - 1) / 2) * 4.8
             self._set_hidden(source, center, aspect)
@@ -131,6 +135,18 @@ class PredictionLayerView(gl.GLViewWidget):
             self._set_lines(f"{source.mapping.key}/pathway", np.array([
                 [0, 0, 3.5], [center, 0, 1.2], [center, 0, -0.8], [center, 0, -3.0],
             ]), mode="line_strip")
+            if source.recurrent_parent in centers:
+                parent_center = centers[source.recurrent_parent]
+                depth = 2.9 + 0.35 * index
+                y = -2 * aspect - 0.6
+                self._set_lines(f"{source.mapping.key}/recurrent", np.array([
+                    [parent_center, 0, 1.2], [parent_center, y, depth],
+                    [center, y, depth], [center, 0, 1.2],
+                ]), mode="line_strip")
+                self._set_label(
+                    f"{source.mapping.key}/recurrent-label", (-1.5, y, depth),
+                    f"{source.recurrent_parent.capitalize()} -> {source.mapping.label} hidden",
+                )
         attachments = [source for source in sources if source.mapping.role != "sensory" and source.enabled]
         for index, source in enumerate(attachments):
             center = -7.0 if index % 2 == 0 else 7.0
