@@ -5,10 +5,12 @@ from audioviz.readouts.predictive_coding import (
     PredictiveCodingConfig,
     PredictiveCodingRGBReadout,
 )
+from audioviz.readouts.audio import PredictiveCodingAudioReadout
 
 __all__ = [
     "IdentityRGBReadout",
     "VisualReadout",
     "PredictiveCodingConfig",
     "PredictiveCodingRGBReadout",
+    "PredictiveCodingAudioReadout",
 ]

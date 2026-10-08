@@ -110,40 +110,23 @@ class PredictiveCodingRGBReadout:
         self._preview_prediction = None
         canvas = self._coerce(prior, name="canvas prior")
         predicted_hidden = np.tanh(canvas) @ self.canvas_weights.T
-        # Advance memory from the wave prior before any new camera evidence.
+        # Advance memory from the wave prior before any new sensory evidence.
         self.hidden += self.config.inference_rate * (predicted_hidden - self.hidden)
-        prediction = np.tanh(self.hidden) @ self.visual_weights.T
+        prediction = self._predict_observation(np.tanh(self.hidden))
         self._require_finite(self.hidden, prediction)
         if self.spatial_preview_enabled:
-            self._preview_prediction = spatial_preview(prediction)
+            self._preview_prediction = self._preview_observation(prediction)
         return prediction.astype(np.float32)
 
     def infer(self, prior: np.ndarray, observation: np.ndarray) -> np.ndarray:
-        canvas = self._coerce(prior, name="canvas prior").copy()
-        observed = self._coerce(observation, name="camera observation")
-        inference_energy: list[float] = []
-        for _ in range(self.config.inference_steps):
-            canvas_activity = np.tanh(canvas)
-            hidden_activity = np.tanh(self.hidden)
-            hidden_error = self.hidden - canvas_activity @ self.canvas_weights.T
-            visual_error = observed - hidden_activity @ self.visual_weights.T
-            if self.diagnostics_enabled:
-                inference_energy.append(mean_energy(hidden_error, visual_error))
-            canvas_direction = (1.0 - canvas_activity**2) * (
-                hidden_error @ self.canvas_weights
-            )
-            hidden_direction = -hidden_error + (1.0 - hidden_activity**2) * (
-                visual_error @ self.visual_weights
-            )
-            # Both state directions use the same pre-update errors and weights.
-            canvas += self.config.canvas_rate * canvas_direction
-            self.hidden += self.config.inference_rate * hidden_direction
-            self._require_finite(canvas, self.hidden)
+        return infer_joint(prior, ((self, observation),))
 
+    def _finish_inference(
+        self, canvas: np.ndarray, observed: np.ndarray, inference_energy: list[float]
+    ) -> None:
         self.hidden_error, self.visual_error = self._errors(canvas, observed)
         weights_before = None
         if self.diagnostics_enabled:
-            inference_energy.append(mean_energy(self.hidden_error, self.visual_error))
             weights_before = self.canvas_weights.copy(), self.visual_weights.copy()
         if self.config.learning_enabled and self.config.learning_rate:
             self._learn(canvas)
@@ -154,7 +137,10 @@ class PredictiveCodingRGBReadout:
                 inference_energy=tuple(inference_energy),
                 canvas_means=tuple(float(value) for value in canvas.mean(axis=(0, 1))),
                 hidden_means=tuple(float(value) for value in self.hidden.mean(axis=(0, 1))),
-                observation_means=tuple(float(value) for value in observed.mean(axis=(0, 1))),
+                observation_means=tuple(
+                    float(value)
+                    for value in observed.mean(axis=tuple(range(observed.ndim - 1)))
+                ),
                 canvas_weights=copy_weights(self.canvas_weights),
                 visual_weights=copy_weights(self.visual_weights),
                 learning_enabled=self.config.learning_enabled,
@@ -169,21 +155,18 @@ class PredictiveCodingRGBReadout:
                     SensoryPreview(
                         hidden=spatial_preview(self.hidden),
                         prediction=self._preview_prediction,
-                        observation=spatial_preview(observed),
+                        observation=self._preview_observation(observed),
                     )
                     if self.spatial_preview_enabled and self._preview_prediction is not None
                     else None
                 ),
             )
         self._preview_prediction = None
-        correction = canvas - self._coerce(prior, name="canvas prior")
-        self._require_finite(correction)
-        return correction.astype(np.float32)
 
     def energy(self, canvas: np.ndarray, observation: np.ndarray) -> float:
         hidden_error, visual_error = self._errors(
             self._coerce(canvas, name="canvas state"),
-            self._coerce(observation, name="camera observation"),
+            self._coerce_observation(observation),
         )
         return mean_energy(hidden_error, visual_error)
 
@@ -192,7 +175,7 @@ class PredictiveCodingRGBReadout:
     ) -> tuple[np.ndarray, np.ndarray]:
         return (
             self.hidden - np.tanh(canvas) @ self.canvas_weights.T,
-            observation - np.tanh(self.hidden) @ self.visual_weights.T,
+            observation - self._predict_observation(np.tanh(self.hidden)),
         )
 
     def _learn(self, canvas: np.ndarray) -> None:
@@ -201,10 +184,7 @@ class PredictiveCodingRGBReadout:
             self.hidden_error.reshape(-1, self.config.hidden_channels).T
             @ np.tanh(canvas).reshape(-1, 3)
         ) / pixel_count
-        visual_gradient = (
-            self.visual_error.reshape(-1, 3).T
-            @ np.tanh(self.hidden).reshape(-1, self.config.hidden_channels)
-        ) / pixel_count
+        visual_gradient = self._observation_gradient()
         for weights, gradient in (
             (self.canvas_weights, canvas_gradient),
             (self.visual_weights, visual_gradient),
@@ -217,6 +197,22 @@ class PredictiveCodingRGBReadout:
                 weights, -self.config.weight_clip, self.config.weight_clip, out=weights
             )
             self._require_finite(weights)
+
+    def _observation_gradient(self) -> np.ndarray:
+        pixel_count = self.canvas_shape[0] * self.canvas_shape[1]
+        return (
+            self.visual_error.reshape(-1, 3).T
+            @ np.tanh(self.hidden).reshape(-1, self.config.hidden_channels)
+        ) / pixel_count
+
+    def _predict_observation(self, hidden_activity: np.ndarray) -> np.ndarray:
+        return hidden_activity @ self.visual_weights.T
+
+    def _coerce_observation(self, observation: np.ndarray) -> np.ndarray:
+        return self._coerce(observation, name="camera observation")
+
+    def _preview_observation(self, observation: np.ndarray) -> np.ndarray:
+        return spatial_preview(observation)
 
     def _coerce(self, values: np.ndarray, *, name: str) -> np.ndarray:
         array = np.asarray(values, dtype=np.float64)
@@ -232,3 +228,54 @@ class PredictiveCodingRGBReadout:
             raise FloatingPointError(
                 "Predictive coding diverged; reduce inference or learning rates."
             )
+
+
+def infer_joint(
+    prior: np.ndarray,
+    branches: tuple[tuple[PredictiveCodingRGBReadout, np.ndarray], ...],
+) -> np.ndarray:
+    """Infer active sensory branches synchronously, with weights fixed until settling."""
+    if not branches:
+        raise ValueError("Joint inference requires at least one observed branch.")
+    first = branches[0][0]
+    canvas = first._coerce(prior, name="canvas prior").copy()
+    steps = first.config.inference_steps
+    observations = []
+    for branch, observed in branches:
+        if branch.canvas_shape != first.canvas_shape or branch.config.inference_steps != steps:
+            raise ValueError("Joint branches must share canvas shape and inference step count.")
+        observations.append((branch, branch._coerce_observation(observed)))
+    collect = any(branch.diagnostics_enabled for branch, _ in observations)
+    trajectory: list[float] = []
+    for _ in range(steps):
+        canvas_activity = np.tanh(canvas)
+        correction = np.zeros_like(canvas)
+        hidden_updates = []
+        energy = 0.0
+        for branch, observed in observations:
+            hidden_activity = np.tanh(branch.hidden)
+            hidden_error = branch.hidden - canvas_activity @ branch.canvas_weights.T
+            sensory_error = observed - branch._predict_observation(hidden_activity)
+            correction += branch.config.canvas_rate * (
+                (1.0 - canvas_activity**2) * (hidden_error @ branch.canvas_weights)
+            )
+            hidden_updates.append(
+                branch.config.inference_rate
+                * (-hidden_error + (1.0 - hidden_activity**2) * (sensory_error @ branch.visual_weights))
+            )
+            if collect:
+                energy += mean_energy(hidden_error, sensory_error)
+        if collect:
+            trajectory.append(energy)
+        # Every direction is computed before any branch or the shared canvas moves.
+        canvas += correction
+        for (branch, _), update in zip(observations, hidden_updates):
+            branch.hidden += update
+            branch._require_finite(canvas, branch.hidden)
+    if collect:
+        trajectory.append(sum(branch.energy(canvas, observed) for branch, observed in observations))
+    for branch, observed in observations:
+        branch._finish_inference(canvas, observed, trajectory)
+    correction = canvas - first._coerce(prior, name="canvas prior")
+    first._require_finite(correction)
+    return correction.astype(np.float32)

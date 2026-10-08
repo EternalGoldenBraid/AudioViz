@@ -17,7 +17,9 @@ class EnergyStatistics:
         return cls(
             mean=float(energy.mean()),
             variance=float(energy.var()),
-            channel_means=tuple(float(value) for value in energy.mean(axis=(0, 1))),
+            channel_means=tuple(
+                float(value) for value in energy.mean(axis=tuple(range(error.ndim - 1)))
+            ),
         )
 
 
@@ -45,7 +47,9 @@ class PredictiveCodingDiagnostics:
 
 
 def mean_energy(hidden_error: np.ndarray, visual_error: np.ndarray) -> float:
-    """Mean per-pixel sum of local node energies."""
+    """Spatially averaged field energy, with global sensory energy counted once."""
+    if visual_error.ndim == 1:
+        return float(0.5 * (np.sum(hidden_error**2, axis=-1).mean() + np.sum(visual_error**2)))
     return float(
         0.5
         * (
