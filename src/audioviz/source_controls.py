@@ -222,6 +222,8 @@ class PredictionLearningControls(SourceControlProvider):
     gradient_clip: float = 1.0
     cross_modal_enabled: bool = False
     cross_modal_available: bool = True
+    stream_state_enabled: bool = False
+    stream_state_available: bool = True
 
     def get_controls(self) -> Sequence[SourceControl]:
         return (
@@ -233,7 +235,7 @@ class PredictionLearningControls(SourceControlProvider):
                 maximum=64,
                 step=1,
                 tooltip=(
-                    "Number of fixed-weight settling steps on sensory evidence, or every frame with the cross-modal loop on. "
+                    "Number of fixed-weight settling steps on sensory evidence, or every frame with the hidden loop or stream context on. "
                     "More steps increase computation and total state correction. Weights learn once after settling."
                 ),
             ),
@@ -271,6 +273,7 @@ class PredictionLearningControls(SourceControlProvider):
                 tooltip=(
                     "Learn both sensory pathways' predictive weights from final local errors. "
                     "Off freezes weights, not hidden inference or canvas correction. Wave conductances remain fixed."
+                    " Enabled stream-state context is evidence even with camera and microphone off."
                 ),
             ),
             SourceControl(
@@ -327,10 +330,25 @@ class PredictionLearningControls(SourceControlProvider):
                 tooltip=(
                     "Enable reciprocal learned predictions between camera and audio hidden states. "
                     "Connections start at zero; enable Pathway Learning with paired evidence to learn them. "
-                    "Missing sensors remain unclamped and hidden/canvas inference continues; no evidence means no weight learning. "
+                    "Missing sensors remain unclamped and hidden/canvas inference continues. "
+                    "With stream context off, no evidence means no weight learning. "
                     "Off retains the loop weights and restores independent pathways. Recurrence can destabilize large state rates."
                 ),
             ),) if self.cross_modal_available else ()
+        ) + (
+            (SourceControl(
+                key="stream_state_enabled",
+                label="Stream State Context",
+                default=self.stream_state_enabled,
+                kind="toggle",
+                tooltip=(
+                    "Add one clamped ON/OFF context node per modality, predicted from pooled hidden states. "
+                    "Source toggles define this evidence; waiting for samples or a failed read does not mean OFF. "
+                    "Hidden/canvas inference and enabled pathway learning continue with streams off. "
+                    "Missing images and audio remain unclamped and their sensory weights stay frozen. "
+                    "Turn Pathway Learning off to freeze all weights during a probe."
+                ),
+            ),) if self.stream_state_available else ()
         )
 
 
