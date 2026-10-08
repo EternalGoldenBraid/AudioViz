@@ -397,11 +397,11 @@ def test_ripple_visualizer_diagnostics_toggle_missing_frame_reset_and_close(qapp
 def test_3d_preview_uses_corrected_canvas_one_observation_and_bounded_sampling(
     qapp, monkeypatch, layer_view_stub, pose_enabled
 ):
-    import audioviz.visualization.prediction_diagnostics_view as diagnostics_view
+    import audioviz.visualization.prediction_scene_window as scene_module
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
     clock = [0.0]
-    monkeypatch.setattr(diagnostics_view, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(scene_module, "monotonic", lambda: clock[0])
     visualizer = RippleWaveVisualizer(
         resolution=(100, 200),
         plane_size_m=(1, 1),
@@ -438,33 +438,32 @@ def test_3d_preview_uses_corrected_canvas_one_observation_and_bounded_sampling(
 
     monkeypatch.setattr(visualizer.engine, "get_field_preview", sample_canvas)
     visualizer.diagnostics_button.click()
-    view = visualizer.prediction_diagnostics
-    view.graph_toggle.setChecked(True)
-    view.layer_toggle.setChecked(True)
-    assert readout.spatial_preview_enabled
+    plots = visualizer.prediction_diagnostics
+    visualizer.scene_button.click()
+    view = visualizer.prediction_scene
+    assert not readout.spatial_preview_enabled
     visualizer.update_visualization()
-    view.refresh()
-    canvas, snapshot = view.layer_view.preview
+    canvas, sources = view.layer_view.preview
+    snapshot = next(source for source in sources if source.mapping.key == "camera")
 
     assert captures == [True]
     assert preview_calls == [True]
     assert canvas.shape == (32, 64, 3)
     np.testing.assert_array_equal(canvas, spatial_preview(visualizer.renderer.field))
-    np.testing.assert_array_equal(snapshot.spatial.observation, spatial_preview(observation))
-    np.testing.assert_array_equal(snapshot.spatial.prediction, spatial_preview(visualizer.visual_prediction))
-    np.testing.assert_array_equal(snapshot.spatial.hidden, spatial_preview(readout.hidden))
+    np.testing.assert_array_equal(snapshot.observation, spatial_preview(observation))
+    np.testing.assert_array_equal(snapshot.prediction, spatial_preview(visualizer.visual_prediction))
+    np.testing.assert_array_equal(snapshot.hidden, spatial_preview(readout.hidden))
     assert np.any(canvas != 0)
-    assert np.all(snapshot.spatial.prediction == 0)
+    assert np.all(snapshot.prediction == 0)
 
     clock[0] = 0.05
     visualizer.update_visualization()
-    view.refresh()
     assert captures == [True, True]
     assert preview_calls == [True]
     assert readout.diagnostics.spatial is None
-    assert len(view.history) == 2
+    assert len(plots.history) == 2
     assert view.layer_view.updates == 1
-    assert view.layer_view.preview[1] is snapshot
+    assert view.layer_view.preview[1] is sources
 
     readout.set_spatial_preview_enabled(True)
     visualizer.engine.reset()
@@ -473,8 +472,9 @@ def test_3d_preview_uses_corrected_canvas_one_observation_and_bounded_sampling(
     assert readout.diagnostics is None
     assert readout._preview_prediction is None
     assert not readout.spatial_preview_enabled
-    view.graph_toggle.setChecked(False)
     assert not readout.spatial_preview_enabled
+    plots.close()
+    assert readout.diagnostics_enabled
     view.close()
     assert not readout.diagnostics_enabled
     assert not readout.spatial_preview_enabled

@@ -65,91 +65,34 @@ def test_diagnostics_visibility_controls_refresh_timer(qapp):
     assert events == [True, False]
 
 
-def test_layer_mode_is_lazy_throttled_and_clears_missing_or_hidden_previews(
-    qapp, monkeypatch, layer_view_stub
-):
-    import audioviz.visualization.prediction_diagnostics_view as diagnostics_view
-
-    clock = [0.0]
-    monkeypatch.setattr(diagnostics_view, "monotonic", lambda: clock[0])
+def test_catalogue_selects_energy_and_2d_weights_without_holding_spatial_previews(qapp):
     view = PredictionDiagnosticsView()
-    events = []
-    view.spatial_preview_changed.connect(events.append)
     view.show()
+    assert view.charts.isVisible()
+    assert not view.graph_container.isVisible()
     view.graph_toggle.setChecked(True)
-    assert view.layer_view is None
-    assert not view.take_spatial_preview_request()
-    view.layer_toggle.setChecked(True)
-    assert isinstance(view.layer_view, layer_view_stub)
-    assert view.graph_stack.currentWidget() is view.layer_view
-    assert view.take_spatial_preview_request()
-    assert not view.take_spatial_preview_request()
-
-    snapshot = _snapshot(spatial=True)
-    canvas = np.full((2, 3, 3), 0.4, dtype=np.float32)
-    view.record(1.0, snapshot, canvas_preview=canvas)
-    assert view.layer_view.updates == 0
+    view.energy_toggle.setChecked(False)
+    view.record(1.0, _snapshot(spatial=True))
     view.refresh()
-    assert view.layer_view.preview == (canvas, snapshot)
-    assert view.layer_view.updates == 1
-    view.refresh()
-    assert view.layer_view.updates == 1
-    view.reset_camera.click()
-    assert view.layer_view.resets == 1
-
-    clock[0] = 0.05
-    view.record(1.05, None)
-    assert view.layer_view.preview is None
-    assert view.layer_view.clears == 1
-    view.record(1.06, None)
-    assert view.layer_view.clears == 1
-    assert not view.take_spatial_preview_request()
-    clock[0] = 0.1
-    assert view.take_spatial_preview_request()
-    assert not view.take_spatial_preview_request()
-
-    view.graph_toggle.setChecked(False)
-    assert not view.take_spatial_preview_request()
-    assert events[-1] is False
-    view.graph_toggle.setChecked(True)
-    assert view.take_spatial_preview_request()
-    view.record(2.0, snapshot, canvas_preview=canvas)
-    view.layer_toggle.setChecked(False)
-    assert view.graph_stack.currentWidget() is view.graph_plot
-    assert view._spatial_sample is None
+    assert not view.charts.isVisible()
+    assert view.graph_container.isVisible()
     assert view.latest.spatial is None
-    assert not view.take_spatial_preview_request()
-    view.layer_toggle.setChecked(True)
-    view.record(3.0, snapshot, canvas_preview=canvas)
-    view.hide()
-    assert view._spatial_sample is None
-    assert not view.take_spatial_preview_request()
-    assert events[-1] is False
-    view.show()
-    assert view.take_spatial_preview_request()
-    view.clear()
-    assert view._spatial_sample is None
-    assert view.take_spatial_preview_request()
-    qapp.processEvents()
-    assert view.graph_legend.height() >= view.graph_legend.heightForWidth(
-        view.graph_legend.width()
-    )
+    assert len(view._graph_edges) == 36
+    view.graph_toggle.setChecked(False)
+    assert view.empty_catalogue.isVisible()
+    view.energy_toggle.setChecked(True)
+    assert view.charts.isVisible()
+    assert not view.empty_catalogue.isVisible()
     view.close()
 
 
-def test_layer_context_failure_is_explicit_and_restores_usable_2d_graph(qapp, layer_view_stub):
+def test_catalogue_forwards_scene_requests_from_both_modalities(qapp):
     view = PredictionDiagnosticsView()
+    view.add_audio_tab()
+    requests = []
+    view.open_scene_requested.connect(lambda: requests.append(True))
     view.show()
-    view.graph_toggle.setChecked(True)
-    view.record(1.0, _snapshot())
-    view.layer_toggle.setChecked(True)
-
-    view.layer_view.rendering_failed.emit("No compatible OpenGL context")
-
-    assert not view.layer_toggle.isChecked()
-    assert view.layer_error.isVisible()
-    assert "No compatible OpenGL context" in view.layer_error.text()
-    assert view.graph_stack.currentWidget() is view.graph_plot
-    assert len(view._graph_edges) == 36
-    assert not view.wants_spatial_preview()
+    view.open_scene_requested.emit()
+    view.audio_view.open_scene_requested.emit()
+    assert requests == [True, True]
     view.close()

@@ -27,8 +27,7 @@ _configure_opengl_platform()
 from OpenGL import platform
 from pyqtgraph import opengl as gl
 
-from audioviz.readouts.diagnostics import PredictiveCodingDiagnostics
-from audioviz.utils.source_preview import SourceSceneMapping, SourceScenePreview
+from audioviz.utils.source_preview import SourceScenePreview
 from audioviz.visualization.ripple_renderers import _canvas_to_rgb
 
 
@@ -84,13 +83,8 @@ class PredictionLayerView(gl.GLViewWidget):
 
     rendering_failed = QtCore.pyqtSignal(str)
 
-    def __init__(self, parent=None, *, modality: str = "Camera") -> None:
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        if modality not in ("Camera", "Audio"):
-            raise ValueError(f"Unsupported sensory modality: {modality}")
-        self._legacy_mapping = SourceSceneMapping(
-            modality.lower(), modality, "rgb" if modality == "Camera" else "spectrum", "sensory"
-        )
         self.setMinimumSize(360, 360)
         self.setBackgroundColor((20, 25, 30))
         self.planes: dict[str, gl.GLImageItem] = {}
@@ -110,15 +104,6 @@ class PredictionLayerView(gl.GLViewWidget):
             elevation=25,
             azimuth=-90,
         )
-
-    def set_preview(self, canvas: np.ndarray, snapshot: PredictiveCodingDiagnostics) -> None:
-        preview = snapshot.spatial
-        if preview is None:
-            raise ValueError("A layer view requires a fresh spatial preview.")
-        self.set_scene(canvas, (SourceScenePreview(
-            self._legacy_mapping, True, preview.observation, preview.prediction,
-            preview.hidden, snapshot.hidden.channel_means,
-        ),))
 
     def set_scene(self, canvas: np.ndarray, sources: tuple[SourceScenePreview, ...]) -> None:
         self._hide_items()
