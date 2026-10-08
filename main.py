@@ -25,6 +25,7 @@ from audioviz.sources import (
 from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
+from audioviz.readouts import PredictiveCodingConfig
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 
 from audioviz.utils.guitar_profiles import GuitarProfile  
@@ -149,22 +150,17 @@ RIPPLE_CONFIG = {
         "prediction_error": {
             "enabled": True,
             "inputs": ("camera_frame",),
-            "predictor": {
-                "model": "gaussian_fixed_variance",
-                "sigma": 0.1,
-            },
-            "output": {
-                "activation": {
-                    "function": "softsign",
-                    "scale": 1.0,
-                },
-                "gain": .01,
+            "inference": {
+                "hidden_channels": 6,
+                "steps": 8,
+                "hidden_rate": 0.1,
+                "canvas_rate": 0.01,
             },
             "learning": {
                 "enabled": False,
-                "learning_rate": 1e-4,
+                "learning_rate": 0.01,
                 "weight_decay": 1e-4,
-                "weight_clip": 1.0,
+                "weight_clip": 10.0,
                 "gradient_clip": 1.0,
             },
         },
@@ -182,8 +178,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     pose_boundary = pose["boundary"]
     camera_frame = sources["camera_frame"]
     prediction_error = config["transforms"]["prediction_error"]
-    prediction_error_predictor = prediction_error["predictor"]
-    prediction_error_output = prediction_error["output"]
+    prediction_error_inference = prediction_error["inference"]
     prediction_error_learning = prediction_error["learning"]
     backend = renderer["backend"]
 
@@ -214,15 +209,17 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             prediction_error=PredictionErrorTransformConfig(
                 enabled=prediction_error["enabled"],
                 inputs=tuple(prediction_error["inputs"]),
-                sigma=prediction_error_predictor["sigma"],
-                activation_function=prediction_error_output["activation"]["function"],
-                activation_scale=prediction_error_output["activation"]["scale"],
-                gain=prediction_error_output["gain"],
+            ),
+            visual_pathway=PredictiveCodingConfig(
+                hidden_channels=prediction_error_inference["hidden_channels"],
+                inference_steps=prediction_error_inference["steps"],
+                inference_rate=prediction_error_inference["hidden_rate"],
+                canvas_rate=prediction_error_inference["canvas_rate"],
                 learning_enabled=prediction_error_learning["enabled"],
                 learning_rate=prediction_error_learning["learning_rate"],
-                learning_weight_decay=prediction_error_learning["weight_decay"],
-                learning_weight_clip=prediction_error_learning["weight_clip"],
-                learning_gradient_clip=prediction_error_learning["gradient_clip"],
+                weight_decay=prediction_error_learning["weight_decay"],
+                weight_clip=prediction_error_learning["weight_clip"],
+                gradient_clip=prediction_error_learning["gradient_clip"],
             ),
         ),
         "pose_config": RipplePoseConfig(

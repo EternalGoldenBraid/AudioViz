@@ -576,10 +576,14 @@ class RippleControlPanel(QtWidgets.QWidget):
     ) -> None:
         if self.on_source_control_changed is not None:
             self.on_source_control_changed(section_key, control_key, value)
-        if section_key == "learning-dynamics" and control_key == "learning_enabled":
+        if (
+            section_key == "learning-dynamics"
+            and control_key == "learning_enabled"
+            and bool(value)
+        ):
             section = self.section_widgets.get(section_key)
             if section is not None:
-                section.set_expanded(bool(value))
+                section.set_expanded(True)
         if section_key == "learning-overlay" and control_key == "show_learning_overlay":
             section = self.section_widgets.get(section_key)
             if section is not None:

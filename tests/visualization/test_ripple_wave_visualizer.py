@@ -9,6 +9,7 @@ from audioviz.sources import (
 )
 from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
+from audioviz.readouts import PredictiveCodingConfig
 
 
 class _FakeCapture:
@@ -264,6 +265,71 @@ def test_ripple_visualizer_render_uses_surface_not_camera_prediction(qapp):
         visualizer.renderer.field, visualizer.engine.get_field_numpy()
     )
     assert not np.array_equal(visualizer.renderer.field, visualizer.visual_prediction)
+
+
+def test_ripple_visualizer_reset_clears_hidden_memory_and_renders_zero_surface(qapp):
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        resolution=(6, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        source_orchestrator_config=RippleSourceOrchestratorConfig(
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
+            visual_pathway=PredictiveCodingConfig(learning_enabled=True),
+        ),
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+    readout = visualizer.source_orchestrator.visual_readout
+    readout.predict(np.ones(visualizer.engine.canvas_shape))
+    readout.infer(
+        np.ones(visualizer.engine.canvas_shape),
+        np.full(visualizer.engine.canvas_shape, 0.2),
+    )
+    weights_before = readout.visual_weights.copy()
+    visualizer.engine.Z.fill(0.5)
+
+    visualizer.engine.reset()
+    visualizer._sync_after_reset()
+
+    np.testing.assert_array_equal(readout.hidden, 0.0)
+    np.testing.assert_array_equal(readout.hidden_error, 0.0)
+    np.testing.assert_array_equal(readout.visual_error, 0.0)
+    np.testing.assert_array_equal(readout.visual_weights, weights_before)
+    np.testing.assert_array_equal(visualizer.visual_prediction, 0.0)
+    np.testing.assert_array_equal(visualizer.renderer.field, 0.0)
+
+
+def test_ripple_visualizer_pose_path_uses_same_visual_inference(qapp):
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        resolution=(10, 20),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        damping=1.0,
+        source_orchestrator_config=_source_config(
+            prediction_error=PredictionErrorTransformConfig(enabled=True)
+        ),
+        pose_config=_pose_config(enabled=True),
+        pose_capture=_FakeCapture(),
+        pose_extractor=_FakeExtractor(),
+    )
+    visualizer.timer.stop()
+    visualizer.renderer = _FakeRenderer()
+    visualizer.camera_source.excitation = lambda: np.full(
+        visualizer.engine.canvas_shape, 0.7, dtype=np.float32
+    )
+
+    visualizer.update_visualization()
+
+    assert np.any(visualizer.source_orchestrator.visual_readout.hidden != 0.0)
+    assert np.any(visualizer.engine.get_field_numpy() != 0.0)
+    np.testing.assert_array_equal(
+        visualizer.renderer.field, visualizer.engine.get_field_numpy()
+    )
+    visualizer.close_pose_sources()
 
 
 def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut(qapp):

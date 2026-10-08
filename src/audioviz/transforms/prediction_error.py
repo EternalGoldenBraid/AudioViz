@@ -9,17 +9,11 @@ import numpy as np
 class PredictionErrorTransformConfig:
     enabled: bool = False
     inputs: tuple[str, ...] = ("camera_frame",)
-    sigma: float = 0.1
     activation_function: str = "softsign"
     activation_scale: float = 1.0
     gain: float = 1.0
     prediction_clip: float = 10.0
     max_output: float = 10.0
-    learning_enabled: bool = False
-    learning_rate: float = 1e-4
-    learning_weight_decay: float = 1e-4
-    learning_weight_clip: float = 1.0
-    learning_gradient_clip: float = 1.0
 
 
 class PredictionErrorTransform:
@@ -135,27 +129,12 @@ class PredictionErrorTransform:
         return np.clip(field, -clip, clip).astype(np.float32, copy=False)
 
     def _validate_config(self) -> None:
-        if self.config.sigma <= 0.0:
-            raise ValueError("prediction_error_sigma must be positive")
         if self.config.prediction_clip <= 0.0:
             raise ValueError("prediction_error_prediction_clip must be positive")
         if self.config.max_output <= 0.0:
             raise ValueError("prediction_error_max_output must be positive")
         if self.config.activation_scale <= 0.0:
             raise ValueError("prediction_error_activation_scale must be positive")
-        if self.config.learning_rate < 0.0:
-            raise ValueError("prediction_error_learning_rate must be non-negative")
-        if (
-            self.config.learning_weight_decay < 0.0
-            or self.config.learning_weight_decay > 1.0
-        ):
-            raise ValueError(
-                "prediction_error_learning_weight_decay must be between 0 and 1"
-            )
-        if self.config.learning_weight_clip <= 0.0:
-            raise ValueError("prediction_error_learning_weight_clip must be positive")
-        if self.config.learning_gradient_clip <= 0.0:
-            raise ValueError("prediction_error_learning_gradient_clip must be positive")
         valid_activation_functions = {
             "linear_clipped",
             "tanh",

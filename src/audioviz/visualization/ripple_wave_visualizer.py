@@ -302,6 +302,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _sync_after_reset(self) -> None:
         self.time = self.engine.time
+        self.source_orchestrator.visual_readout.reset()
         reset_view = getattr(self.renderer, "reset_view", None)
         if callable(reset_view):
             reset_view()
@@ -354,11 +355,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if not self.renderer.prepare_frame():
             return
 
-        self.engine.propagate(source_frame.drive_grid)
-        self.visual_prediction = self.source_orchestrator.predict_visual()
-        self.source_orchestrator.correct_from_observations(
-            visual_prediction=self.visual_prediction,
-        )
+        self._advance_canvas(source_frame.drive_grid)
         self.time = self.engine.time
         self._render_scene()
         self.source_control_binding.sync_audio_panel(
@@ -484,11 +481,12 @@ class RippleWaveVisualizer(VisualizerBase):
     ) -> None:
         if not self.renderer.prepare_frame():
             return
+        self._advance_canvas(drive_grid)
+
+    def _advance_canvas(self, drive_grid: np.ndarray | None) -> None:
         self.engine.propagate(drive_grid)
         self.visual_prediction = self.source_orchestrator.predict_visual()
-        self.source_orchestrator.correct_from_observations(
-            visual_prediction=self.visual_prediction,
-        )
+        self.source_orchestrator.correct_from_observations()
 
     def _update_pose_ripple_states(
         self,

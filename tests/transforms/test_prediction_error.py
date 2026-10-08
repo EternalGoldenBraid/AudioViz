@@ -96,11 +96,11 @@ def test_prediction_neighbor_fields_preserves_rgb_channel_axis():
 
 
 def test_prediction_error_transform_rejects_invalid_config():
-    with pytest.raises(ValueError, match="prediction_error_sigma"):
+    with pytest.raises(ValueError, match="prediction_error_prediction_clip"):
         PredictionErrorTransform(
             config=PredictionErrorTransformConfig(
                 enabled=True,
-                sigma=0.0,
+                prediction_clip=0.0,
             ),
             resolution=(2, 2),
         )

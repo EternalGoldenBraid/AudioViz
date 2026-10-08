@@ -12,7 +12,6 @@ from audioviz.physics.wave_propagator import (
     load_cupy,
 )
 from audioviz.physics.opengl_wave_propagator import WavePropagatorOpenGL
-from audioviz.transforms.prediction_error import PredictionErrorTransform
 
 
 class RippleEngine:
@@ -231,22 +230,6 @@ class RippleEngine:
     def step_without_excitation(self):
         return self.propagate()
 
-    def apply_legacy_conductance_learning(
-        self,
-        *,
-        error: np.ndarray,
-        transform: PredictionErrorTransform,
-    ) -> None:
-        prior = self._coerce_prediction_field(
-            self.get_prior_numpy(),
-            prediction_clip=transform.config.prediction_clip,
-        )
-        self._update_conductances_from_legacy_rule(
-            error=error,
-            field=prior,
-            transform=transform,
-        )
-
     def apply_observation_correction(self, correction_grid: np.ndarray) -> np.ndarray:
         if self.use_shader:
             raise NotImplementedError(
@@ -333,35 +316,6 @@ class RippleEngine:
             )
         return excitation
 
-    def _coerce_prediction_field(
-        self,
-        values: np.ndarray,
-        *,
-        prediction_clip: float,
-    ) -> np.ndarray:
-        field = np.asarray(values, dtype=np.float32)
-        if field.shape != self.canvas_shape:
-            raise ValueError("prediction field must match engine canvas shape")
-        clip = np.float32(prediction_clip)
-        field = np.nan_to_num(field, nan=0.0, posinf=clip, neginf=-clip)
-        return np.clip(field, -clip, clip).astype(np.float32, copy=False)
-
-    @staticmethod
-    def _shared_edge_gradients(
-        *,
-        error: np.ndarray,
-        field: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        field64 = field.astype(np.float64, copy=False)
-        error64 = error.astype(np.float64, copy=False)
-        horizontal_gradient = (
-            error64[:, :-1] * field64[:, 1:] + error64[:, 1:] * field64[:, :-1]
-        )
-        vertical_gradient = (
-            error64[:-1, :] * field64[1:, :] + error64[1:, :] * field64[:-1, :]
-        )
-        return horizontal_gradient, vertical_gradient
-
     def _capture_prior(self):
         if self.use_shader:
             prior = self.propagator.get_state()
@@ -370,78 +324,6 @@ class RippleEngine:
             self.prior_Z[...] = self.Z
         self._has_prior = True
         return self.prior_Z
-
-    def _update_conductances_from_legacy_rule(
-        self,
-        *,
-        error: np.ndarray,
-        field: np.ndarray,
-        transform: PredictionErrorTransform,
-    ) -> None:
-        config = transform.config
-        if not config.learning_enabled or config.learning_rate == 0.0:
-            return
-        denom = (
-            np.float64(config.sigma)
-            * np.float64(config.sigma)
-            * np.float64(np.log(2.0))
-        )
-        horizontal_gradient, vertical_gradient = self._shared_edge_gradients(
-            error=error,
-            field=field,
-        )
-        horizontal_gradient = np.nan_to_num(
-            horizontal_gradient / denom,
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
-        vertical_gradient = np.nan_to_num(
-            vertical_gradient / denom,
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
-        horizontal_gradient = np.clip(
-            horizontal_gradient,
-            -config.learning_gradient_clip,
-            config.learning_gradient_clip,
-        )
-        vertical_gradient = np.clip(
-            vertical_gradient,
-            -config.learning_gradient_clip,
-            config.learning_gradient_clip,
-        )
-        horizontal_weights = self.prediction_horizontal_edge_weights.astype(
-            np.float64,
-            copy=False,
-        )
-        vertical_weights = self.prediction_vertical_edge_weights.astype(
-            np.float64,
-            copy=False,
-        )
-        horizontal_delta = horizontal_weights - 1.0
-        vertical_delta = vertical_weights - 1.0
-        if config.learning_weight_decay:
-            decay = np.float64(1.0 - config.learning_weight_decay)
-            horizontal_delta *= decay
-            vertical_delta *= decay
-        horizontal_delta += np.float64(config.learning_rate) * horizontal_gradient
-        vertical_delta += np.float64(config.learning_rate) * vertical_gradient
-        horizontal_delta = np.clip(
-            horizontal_delta,
-            -config.learning_weight_clip,
-            config.learning_weight_clip,
-        )
-        vertical_delta = np.clip(
-            vertical_delta,
-            -config.learning_weight_clip,
-            config.learning_weight_clip,
-        )
-        self._set_prediction_conductances(
-            horizontal=(1.0 + horizontal_delta).astype(np.float32, copy=False),
-            vertical=(1.0 + vertical_delta).astype(np.float32, copy=False),
-        )
 
     @staticmethod
     def _coerce_edge_weight_array(

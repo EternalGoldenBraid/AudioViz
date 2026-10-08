@@ -2,10 +2,6 @@ import numpy as np
 
 from audioviz.engine import RippleEngine
 from audioviz.readouts import IdentityRGBReadout
-from audioviz.transforms.prediction_error import (
-    PredictionErrorTransform,
-    PredictionErrorTransformConfig,
-)
 
 
 def _build_engine() -> RippleEngine:
@@ -40,107 +36,6 @@ def _prepare_stationary_prior(
     return engine.get_prior_numpy().copy()
 
 
-def _learn_from_visual_observation(
-    engine: RippleEngine,
-    transform: PredictionErrorTransform,
-    observation: np.ndarray,
-) -> None:
-    readout = IdentityRGBReadout(canvas_shape=engine.canvas_shape)
-    prediction = readout.predict(engine.get_prior_numpy())
-    visual_error = transform.compute_error(
-        source_key="camera_frame",
-        observation=observation,
-        prediction=prediction,
-    )
-    assert visual_error is not None
-    engine.apply_legacy_conductance_learning(
-        error=readout.backproject(visual_error),
-        transform=transform,
-    )
-
-
-def test_ripple_engine_observation_updates_symmetric_prediction_edges():
-    engine = _build_engine()
-    transform = PredictionErrorTransform(
-        config=PredictionErrorTransformConfig(
-            enabled=True,
-            activation_function="linear_clipped",
-            sigma=1.0,
-            learning_enabled=True,
-            learning_rate=0.05,
-            learning_weight_decay=0.0,
-            learning_weight_clip=100.0,
-            learning_gradient_clip=100.0,
-        ),
-        resolution=engine.canvas_shape,
-    )
-    prior = _prepare_stationary_prior(
-        engine,
-        _rgb_field([[1.0, 2.0], [3.0, 4.0]]),
-    )
-    observation = prior + np.ones_like(prior)
-
-    _learn_from_visual_observation(engine, transform, observation)
-
-    assert engine.prediction_horizontal_edge_weights is not None
-    assert engine.prediction_vertical_edge_weights is not None
-    np.testing.assert_allclose(
-        engine.prediction_horizontal_edge_weights,
-        _rgb_field(
-            1.0 + 0.05 * np.array([[3.0], [7.0]], dtype=np.float32) / np.log(2.0)
-        ),
-        rtol=1e-6,
-        atol=1e-6,
-    )
-    np.testing.assert_allclose(
-        engine.prediction_vertical_edge_weights,
-        _rgb_field(
-            1.0 + 0.05 * np.array([[4.0, 6.0]], dtype=np.float32) / np.log(2.0)
-        ),
-        rtol=1e-6,
-        atol=1e-6,
-    )
-
-
-def test_ripple_engine_observation_learning_toggle_takes_effect_on_next_observation():
-    engine = _build_engine()
-    transform = PredictionErrorTransform(
-        config=PredictionErrorTransformConfig(
-            enabled=True,
-            sigma=1.0,
-            learning_enabled=False,
-            learning_rate=0.5,
-            learning_weight_decay=0.0,
-            learning_weight_clip=100.0,
-            learning_gradient_clip=100.0,
-        ),
-        resolution=engine.canvas_shape,
-    )
-    prior = _prepare_stationary_prior(
-        engine,
-        _rgb_field([[1.0, 2.0], [3.0, 4.0]]),
-    )
-    observation = prior + 1.0
-
-    _learn_from_visual_observation(engine, transform, observation)
-    np.testing.assert_array_equal(
-        engine.prediction_horizontal_edge_weights,
-        np.ones((2, 1, 3), dtype=np.float32),
-    )
-    np.testing.assert_array_equal(
-        engine.prediction_vertical_edge_weights,
-        np.ones((1, 2, 3), dtype=np.float32),
-    )
-
-    transform.update_config(learning_enabled=True)
-    _learn_from_visual_observation(engine, transform, observation)
-
-    assert engine.prediction_horizontal_edge_weights is not None
-    assert engine.prediction_vertical_edge_weights is not None
-    assert np.any(engine.prediction_horizontal_edge_weights != 1.0)
-    assert np.any(engine.prediction_vertical_edge_weights != 1.0)
-
-
 def test_identity_readout_reads_prior_without_graph_aggregation():
     engine = _build_engine()
     prior = _prepare_stationary_prior(
@@ -161,41 +56,6 @@ def test_identity_readout_reads_prior_without_graph_aggregation():
     ).predict(engine.get_prior_numpy())
 
     np.testing.assert_allclose(prediction, prior, rtol=1e-6, atol=1e-6)
-
-
-def test_ripple_engine_learns_prediction_edges_per_canvas_channel():
-    engine = _build_engine()
-    transform = PredictionErrorTransform(
-        config=PredictionErrorTransformConfig(
-            enabled=True,
-            activation_function="linear_clipped",
-            sigma=1.0,
-            learning_enabled=True,
-            learning_rate=0.05,
-            learning_weight_decay=0.0,
-            learning_weight_clip=100.0,
-            learning_gradient_clip=100.0,
-        ),
-        resolution=engine.canvas_shape,
-    )
-    field = np.zeros(engine.canvas_shape, dtype=np.float32)
-    field[..., 0] = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
-    prior = _prepare_stationary_prior(engine, field)
-    observation = prior.copy()
-    observation[..., 0] += 1.0
-
-    _learn_from_visual_observation(engine, transform, observation)
-
-    assert np.any(engine.prediction_horizontal_edge_weights[..., 0] != 1.0)
-    assert np.any(engine.prediction_vertical_edge_weights[..., 0] != 1.0)
-    np.testing.assert_array_equal(
-        engine.prediction_horizontal_edge_weights[..., 1:],
-        1.0,
-    )
-    np.testing.assert_array_equal(
-        engine.prediction_vertical_edge_weights[..., 1:],
-        1.0,
-    )
 
 
 def test_ripple_engine_requires_propagation_before_reading_prior():

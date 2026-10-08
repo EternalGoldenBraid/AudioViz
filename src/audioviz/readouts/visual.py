@@ -4,13 +4,23 @@ from typing import Protocol
 
 import numpy as np
 
+from audioviz.readouts.predictive_coding import PredictiveCodingConfig
+
 
 class VisualReadout(Protocol):
-    def predict(self, prior: np.ndarray) -> np.ndarray:
-        """Map a canvas prior to an RGB prediction."""
+    config: PredictiveCodingConfig
 
-    def backproject(self, visual_correction: np.ndarray) -> np.ndarray:
-        """Map a visual-space correction back into the canvas."""
+    def predict(self, prior: np.ndarray) -> np.ndarray:
+        """Advance hidden belief from a canvas prior and predict RGB evidence."""
+
+    def infer(self, prior: np.ndarray, observation: np.ndarray) -> np.ndarray:
+        """Infer hidden and canvas states; return the net canvas correction."""
+
+    def update_config(self, **changes) -> None:
+        """Update inference and learning controls."""
+
+    def reset(self) -> None:
+        """Clear hidden belief while retaining learned weights."""
 
 
 class IdentityRGBReadout:

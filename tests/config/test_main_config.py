@@ -20,9 +20,10 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     config["sources"]["camera_frame"]["enabled"] = True
     config["sources"]["camera_frame"]["camera_index"] = 2
     config["transforms"]["prediction_error"]["enabled"] = True
-    config["transforms"]["prediction_error"]["predictor"]["sigma"] = 0.25
-    config["transforms"]["prediction_error"]["output"]["activation"]["function"] = "tanh"
-    config["transforms"]["prediction_error"]["output"]["activation"]["scale"] = 2.0
+    config["transforms"]["prediction_error"]["inference"]["hidden_channels"] = 4
+    config["transforms"]["prediction_error"]["inference"]["steps"] = 12
+    config["transforms"]["prediction_error"]["inference"]["hidden_rate"] = 0.2
+    config["transforms"]["prediction_error"]["inference"]["canvas_rate"] = 0.03
     config["transforms"]["prediction_error"]["learning"]["enabled"] = True
     config["transforms"]["prediction_error"]["learning"]["learning_rate"] = 0.01
 
@@ -38,11 +39,12 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     assert orchestrator_config.camera_frame.camera_index == 2
     assert orchestrator_config.prediction_error.enabled is True
     assert orchestrator_config.prediction_error.inputs == ("camera_frame",)
-    assert orchestrator_config.prediction_error.sigma == 0.25
-    assert orchestrator_config.prediction_error.activation_function == "tanh"
-    assert orchestrator_config.prediction_error.activation_scale == 2.0
-    assert orchestrator_config.prediction_error.learning_enabled is True
-    assert orchestrator_config.prediction_error.learning_rate == 0.01
+    assert orchestrator_config.visual_pathway.hidden_channels == 4
+    assert orchestrator_config.visual_pathway.inference_steps == 12
+    assert orchestrator_config.visual_pathway.inference_rate == 0.2
+    assert orchestrator_config.visual_pathway.canvas_rate == 0.03
+    assert orchestrator_config.visual_pathway.learning_enabled is True
+    assert orchestrator_config.visual_pathway.learning_rate == 0.01
     assert pose_config.camera_index == config["sources"]["pose"]["camera_index"]
     assert (
         pose_config.body_boundary_transmission

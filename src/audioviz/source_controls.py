@@ -208,22 +208,49 @@ class CameraFrameSourceControls(SourceControlProvider):
 @dataclass
 class PredictionLearningControls(SourceControlProvider):
     enabled: bool = False
-    learning_rate: float = 1e-4
-    weight_decay: float = 1e-4
-    weight_clip: float = 1.0
+    inference_steps: int = 8
+    inference_rate: float = 0.1
+    canvas_rate: float = 0.01
+    learning_rate: float = 0.01
+    weight_decay: float = 0.0
+    weight_clip: float = 10.0
     gradient_clip: float = 1.0
 
     def get_controls(self) -> Sequence[SourceControl]:
         return (
             SourceControl(
+                key="inference_steps",
+                label="Inference Steps",
+                default=self.inference_steps,
+                minimum=1,
+                maximum=64,
+                step=1,
+            ),
+            SourceControl(
+                key="inference_rate",
+                label="Hidden State Rate",
+                default=self.inference_rate,
+                minimum=0.0,
+                maximum=1.0,
+                step=0.001,
+            ),
+            SourceControl(
+                key="canvas_rate",
+                label="Canvas Correction Rate",
+                default=self.canvas_rate,
+                minimum=0.0,
+                maximum=1.0,
+                step=0.001,
+            ),
+            SourceControl(
                 key="learning_enabled",
-                label="Learning Enabled",
+                label="Pathway Learning",
                 default=self.enabled,
                 kind="toggle",
             ),
             SourceControl(
                 key="learning_rate",
-                label="Learning Rate",
+                label="Weight Learning Rate",
                 default=self.learning_rate,
                 minimum=0.0,
                 maximum=1.0,
@@ -267,7 +294,7 @@ class PredictionOverlayControls(SourceControlProvider):
         return (
             SourceControl(
                 key="show_learning_overlay",
-                label="Show Overlay",
+                label="Show Fixed Conductances",
                 default=self.enabled,
                 kind="toggle",
             ),

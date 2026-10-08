@@ -7,6 +7,7 @@ from audioviz.sources import (
     SyntheticSourceConfig,
 )
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
+from audioviz.readouts import PredictiveCodingConfig
 
 
 class _FakeProcessor:
@@ -31,6 +32,7 @@ def _source_config(
     use_synthetic: bool = False,
     use_audio_source: bool | None = None,
     prediction_error: PredictionErrorTransformConfig | None = None,
+    visual_pathway: PredictiveCodingConfig | None = None,
 ) -> RippleSourceOrchestratorConfig:
     return RippleSourceOrchestratorConfig(
         synthetic=SyntheticSourceConfig(enabled=use_synthetic, frequency=440.0),
@@ -40,6 +42,9 @@ def _source_config(
             PredictionErrorTransformConfig()
             if prediction_error is None
             else prediction_error
+        ),
+        visual_pathway=(
+            PredictiveCodingConfig() if visual_pathway is None else visual_pathway
         ),
     )
 
@@ -134,11 +139,13 @@ def test_ripple_source_binding_updates_learning_dynamics_config(qapp):
             use_synthetic=False,
             prediction_error=PredictionErrorTransformConfig(
                 enabled=True,
+            ),
+            visual_pathway=PredictiveCodingConfig(
                 learning_enabled=False,
                 learning_rate=1e-4,
-                learning_weight_decay=1e-4,
-                learning_weight_clip=1.0,
-                learning_gradient_clip=1.0,
+                weight_decay=1e-4,
+                weight_clip=1.0,
+                gradient_clip=1.0,
             ),
         ),
     )
@@ -170,12 +177,48 @@ def test_ripple_source_binding_updates_learning_dynamics_config(qapp):
         4.0,
     )
 
-    config = visualizer.prediction_error_transform.config
+    for key, value in (
+        ("inference_steps", 12),
+        ("inference_rate", 0.2),
+        ("canvas_rate", 0.03),
+    ):
+        visualizer.source_control_binding.update_control("learning-dynamics", key, value)
+
+    config = visualizer.source_orchestrator.visual_readout.config
     assert config.learning_enabled is True
     assert config.learning_rate == 0.05
-    assert config.learning_weight_decay == 0.02
-    assert config.learning_weight_clip == 3.0
-    assert config.learning_gradient_clip == 4.0
+    assert config.weight_decay == 0.02
+    assert config.weight_clip == 3.0
+    assert config.gradient_clip == 4.0
+    assert config.inference_steps == 12
+    assert config.inference_rate == 0.2
+    assert config.canvas_rate == 0.03
+    sections = {section.key: section for section in visualizer.source_control_binding.build_sections()}
+    assert sections["learning-dynamics"].title == "Visual Inference and Learning"
+    assert sections["learning-overlay"].title == "Substrate Conductances (Fixed)"
+
+
+def test_disabling_pathway_learning_keeps_inference_controls_visible(qapp):
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        resolution=(2, 2),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        source_orchestrator_config=_source_config(
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
+            visual_pathway=PredictiveCodingConfig(learning_enabled=True),
+        ),
+    )
+    visualizer.timer.stop()
+    visualizer.toggle_controls()
+    panel = visualizer.control_panel
+    checkbox = panel.source_control_widgets[("learning-dynamics", "learning_enabled")]
+    checkbox.click()
+
+    assert not visualizer.source_orchestrator.visual_readout.config.learning_enabled
+    assert panel.section_widgets["learning-dynamics"].is_expanded()
+    visualizer.close()
 
 
 def test_ripple_source_binding_updates_learning_overlay_state(qapp):

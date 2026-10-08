@@ -1,6 +1,7 @@
 import numpy as np
 
 from audioviz.engine import RippleEngine
+from audioviz.readouts import PredictiveCodingConfig, PredictiveCodingRGBReadout
 from audioviz.sources import (
     AudioSourceConfig,
     CameraFrameSourceConfig,
@@ -29,12 +30,11 @@ class _FakeProcessor:
         self.current_top_k_frequencies = values
 
 
-class _OffsetVisualReadout:
-    def predict(self, prior):
-        return np.asarray(prior, dtype=np.float32) + np.float32(0.25)
-
-    def backproject(self, visual_correction):
-        return np.asarray(visual_correction, dtype=np.float32) * np.float32(2.0)
+class _RecordingVisualReadout(PredictiveCodingRGBReadout):
+    def infer(self, prior, observation):
+        self.received_prior = prior.copy()
+        self.received_observation = observation.copy()
+        return super().infer(prior, observation)
 
 
 def _build_engine(*, amplitude: float = 1.0) -> RippleEngine:
@@ -170,7 +170,6 @@ def test_ripple_source_orchestrator_skips_correction_when_camera_feed_is_off():
                 inputs=("camera_frame",),
                 activation_function="linear_clipped",
                 gain=1.0,
-                learning_enabled=False,
                 max_output=10.0,
             ),
         ),
@@ -183,18 +182,17 @@ def test_ripple_source_orchestrator_skips_correction_when_camera_feed_is_off():
     source_frame = orchestrator.resolve()
     engine.propagate(source_frame.drive_grid)
     prior = engine.get_prior_numpy().copy()
-    visual_prediction = orchestrator.predict_visual()
-    correction = orchestrator.resolve_visual_observation_correction(
-        visual_prediction=visual_prediction,
-    )
+    orchestrator.predict_visual()
+    correction = orchestrator.resolve_visual_observation_correction()
 
     assert source_frame.drive_grid is None
     assert correction is None
     np.testing.assert_array_equal(engine.get_field_numpy(), prior)
 
 
-def test_ripple_source_orchestrator_routes_visual_error_through_readout():
+def test_ripple_source_orchestrator_routes_inference_through_readout():
     engine = _build_engine()
+    readout = _RecordingVisualReadout(canvas_shape=engine.canvas_shape)
     orchestrator = RippleSourceOrchestrator(
         config=RippleSourceOrchestratorConfig(
             synthetic=SyntheticSourceConfig(enabled=False),
@@ -210,17 +208,80 @@ def test_ripple_source_orchestrator_routes_visual_error_through_readout():
         engine=engine,
         resolution=engine.resolution,
         n_sources=1,
-        visual_readout=_OffsetVisualReadout(),
+        visual_readout=readout,
     )
     observation = np.ones(engine.canvas_shape, dtype=np.float32)
     orchestrator.camera_source.excitation = lambda: observation
     engine.propagate()
 
     prediction = orchestrator.predict_visual()
-    correction = orchestrator.correct_from_observations(
-        visual_prediction=prediction,
-    )
+    correction = orchestrator.correct_from_observations()
 
-    np.testing.assert_allclose(prediction, 0.25)
-    np.testing.assert_allclose(correction, 1.5)
-    np.testing.assert_allclose(engine.get_field_numpy(), 1.5)
+    np.testing.assert_allclose(prediction, 0.0)
+    np.testing.assert_array_equal(readout.received_prior, engine.get_prior_numpy())
+    np.testing.assert_array_equal(readout.received_observation, observation)
+    assert np.any(correction != 0.0)
+    np.testing.assert_allclose(engine.get_field_numpy(), correction)
+
+
+def test_visual_pathway_learning_does_not_change_conductances_or_wave_velocity():
+    engine = _build_engine()
+    orchestrator = RippleSourceOrchestrator(
+        config=RippleSourceOrchestratorConfig(
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
+            visual_pathway=PredictiveCodingConfig(
+                learning_enabled=True, learning_rate=1.0
+            ),
+        ),
+        processor=None,
+        engine=engine,
+        resolution=engine.resolution,
+        n_sources=1,
+    )
+    reads = []
+    observation = np.full(engine.canvas_shape, 0.7, dtype=np.float32)
+
+    def observe():
+        reads.append(True)
+        return observation
+
+    orchestrator.camera_source.excitation = observe
+    weights_before = orchestrator.visual_readout.visual_weights.copy()
+    for _ in range(10):
+        engine.propagate()
+        prior = engine.get_prior_numpy().copy()
+        velocity_before = engine.Z - engine.Z_old
+        orchestrator.predict_visual()
+        orchestrator.correct_from_observations()
+        np.testing.assert_array_equal(engine.get_prior_numpy(), prior)
+        np.testing.assert_allclose(engine.Z - engine.Z_old, velocity_before, atol=1e-6)
+        np.testing.assert_array_equal(engine.prediction_horizontal_edge_weights, 1.0)
+        np.testing.assert_array_equal(engine.prediction_vertical_edge_weights, 1.0)
+
+    assert len(reads) == 10
+    assert np.any(orchestrator.visual_readout.visual_weights != weights_before)
+
+
+def test_missing_camera_frame_does_not_infer_or_learn_from_black():
+    engine = _build_engine()
+    orchestrator = RippleSourceOrchestrator(
+        config=RippleSourceOrchestratorConfig(
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
+            visual_pathway=PredictiveCodingConfig(learning_enabled=True),
+        ),
+        processor=None,
+        engine=engine,
+        resolution=engine.resolution,
+        n_sources=1,
+    )
+    orchestrator.camera_source.excitation = lambda: None
+    engine.propagate(np.ones(engine.canvas_shape))
+    orchestrator.predict_visual()
+    hidden_before = orchestrator.visual_readout.hidden.copy()
+    weights_before = orchestrator.visual_readout.visual_weights.copy()
+
+    assert orchestrator.correct_from_observations() is None
+
+    np.testing.assert_array_equal(orchestrator.visual_readout.hidden, hidden_before)
+    np.testing.assert_array_equal(orchestrator.visual_readout.visual_weights, weights_before)
+    np.testing.assert_array_equal(engine.get_field_numpy(), engine.get_prior_numpy())

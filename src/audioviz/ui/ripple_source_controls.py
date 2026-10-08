@@ -68,25 +68,29 @@ class RippleSourceControlBinding:
         )
         transform_config = visualizer.prediction_error_transform.config
         if transform_config.enabled:
+            pathway_config = visualizer.source_orchestrator.visual_readout.config
             sections.append(
                 ControlPanelSection(
                     key="learning-dynamics",
-                    title="Learning Dynamics",
+                    title="Visual Inference and Learning",
                     controls=PredictionLearningControls(
-                        enabled=transform_config.learning_enabled,
-                        learning_rate=transform_config.learning_rate,
-                        weight_decay=transform_config.learning_weight_decay,
-                        weight_clip=transform_config.learning_weight_clip,
-                        gradient_clip=transform_config.learning_gradient_clip,
+                        enabled=pathway_config.learning_enabled,
+                        inference_steps=pathway_config.inference_steps,
+                        inference_rate=pathway_config.inference_rate,
+                        canvas_rate=pathway_config.canvas_rate,
+                        learning_rate=pathway_config.learning_rate,
+                        weight_decay=pathway_config.weight_decay,
+                        weight_clip=pathway_config.weight_clip,
+                        gradient_clip=pathway_config.gradient_clip,
                     ).get_controls(),
-                    expanded=transform_config.learning_enabled,
+                    expanded=True,
                 )
             )
             if not visualizer.use_shader:
                 sections.append(
                     ControlPanelSection(
                         key="learning-overlay",
-                        title="Learning Overlay",
+                        title="Substrate Conductances (Fixed)",
                         controls=PredictionOverlayControls(
                             enabled=visualizer.show_learning_overlay,
                             stride=visualizer.learning_overlay_stride,
@@ -237,23 +241,29 @@ class RippleSourceControlBinding:
         control_key: str,
         value: ControlValue,
     ) -> None:
-        transform = self.visualizer.prediction_error_transform
+        readout = self.visualizer.source_orchestrator.visual_readout
+        if control_key == "inference_steps":
+            readout.update_config(inference_steps=int(value))
+            return
+        if control_key in ("inference_rate", "canvas_rate"):
+            readout.update_config(**{control_key: float(value)})
+            return
         if control_key == "learning_enabled":
-            transform.update_config(learning_enabled=bool(value))
+            readout.update_config(learning_enabled=bool(value))
             return
         if control_key == "learning_rate":
-            transform.update_config(learning_rate=float(value))
+            readout.update_config(learning_rate=float(value))
             return
         if control_key == "learning_weight_decay":
-            transform.update_config(learning_weight_decay=float(value))
+            readout.update_config(weight_decay=float(value))
             return
         if control_key == "learning_weight_clip":
-            transform.update_config(learning_weight_clip=float(value))
+            readout.update_config(weight_clip=float(value))
             return
         if control_key == "learning_gradient_clip":
-            transform.update_config(learning_gradient_clip=float(value))
+            readout.update_config(gradient_clip=float(value))
             return
-        raise KeyError(f"Unknown learning dynamics control: {control_key}")
+        raise KeyError(f"Unknown visual pathway control: {control_key}")
 
     def _update_learning_overlay_control(
         self,

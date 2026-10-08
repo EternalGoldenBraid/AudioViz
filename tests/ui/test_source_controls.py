@@ -47,6 +47,9 @@ def test_prediction_learning_controls_expose_toggle_and_learning_parameters():
     assert keys["learning_weight_decay"].default == 0.02
     assert keys["learning_weight_clip"].default == 3.0
     assert keys["learning_gradient_clip"].default == 4.0
+    assert keys["inference_steps"].default == 8
+    assert keys["inference_rate"].default == 0.1
+    assert keys["canvas_rate"].default == 0.01
 
 
 def test_prediction_overlay_controls_expose_overlay_parameters():
