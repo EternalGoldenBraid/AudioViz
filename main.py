@@ -36,8 +36,8 @@ APP_CONFIG = {
     "is_streaming": True,
     "windows": {
         "spectrogram": {
-            # "enabled": True,
-            "enabled": False,
+            "enabled": True,
+            # "enabled": False,
             "title": "Audio Visualizer",
             "size": (800, 600),
         },
@@ -76,12 +76,14 @@ AUDIO_CONFIG = {
 RIPPLE_CONFIG = {
     "field": {
         "n_sources": 5,
-        "plane_size_m": (500.0, 500.0),
-        # "plane_size_m": (50.0, 50.0),
+        # "plane_size_m": (500.0, 500.0),
+        "plane_size_m": (50.0, 50.0),
         # "resolution": (480, 640),
         # "resolution": (1080, 1920),
         # "resolution": (600, 800),
-        "resolution": (48, 64),
+        # "resolution": (300, 400),
+        "resolution": (100, 200),
+        # "resolution": (48, 64),
     },
     "dynamics": {
         "amplitude": 1.,
@@ -92,7 +94,7 @@ RIPPLE_CONFIG = {
     },
     "renderer": {
         "backend": "numpy",  # numpy | gpu | opengl
-        "rgb_canvas_enabled": False,
+        "rgb_canvas_enabled": True,
         "auto_color_activation_threshold": 0.1,
         "auto_color_floor": 0.1,
     },
@@ -158,7 +160,7 @@ RIPPLE_CONFIG = {
             },
             "learning": {
                 "enabled": False,
-                "learning_rate": 0.01,
+                "learning_rate": 1.,
                 "weight_decay": 1e-4,
                 "weight_clip": 10.0,
                 "gradient_clip": 1.0,
