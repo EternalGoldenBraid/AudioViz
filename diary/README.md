@@ -8,3 +8,4 @@ the path that led to them.
 
 - [2026-09-29: Canvas, prediction, and sensory readouts](2026-09-29-canvas-prediction-model.md)
 - [2026-10-07: Depth beneath the canvas](2026-10-07-depth-beneath-the-canvas.md)
+- [2026-10-08: When the evidence falls quiet](2026-10-08-when-the-evidence-falls-quiet.md)
