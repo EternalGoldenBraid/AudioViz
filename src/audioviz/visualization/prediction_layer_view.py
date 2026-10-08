@@ -32,6 +32,8 @@ from audioviz.visualization.ripple_renderers import _canvas_to_rgb
 
 
 def rgb_texture(field: np.ndarray) -> np.ndarray:
+    if field.ndim == 1:
+        field = np.broadcast_to(field[None, :, None], (8, field.size, 3))
     rgb = _canvas_to_rgb(field, limit=1.0)
     alpha = np.full((*rgb.shape[:2], 1), 255, dtype=np.uint8)
     return np.concatenate((rgb, alpha), axis=2).transpose(1, 0, 2)[:, ::-1]
@@ -54,8 +56,9 @@ class PredictionLayerView(gl.GLViewWidget):
 
     rendering_failed = QtCore.pyqtSignal(str)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, modality: str = "Camera") -> None:
         super().__init__(parent)
+        self.modality = modality
         self.setMinimumSize(360, 360)
         self.setBackgroundColor((20, 25, 30))
         self.planes: dict[str, gl.GLImageItem] = {}
@@ -82,8 +85,12 @@ class PredictionLayerView(gl.GLViewWidget):
         aspect = canvas.shape[0] / canvas.shape[1]
         for name, field, depth in (
             ("Canvas (corrected)", canvas, 3.0),
-            ("Prediction (before evidence)", preview.prediction, -0.6),
-            ("Camera (observed)", preview.observation, -2.4),
+            (
+                "Prediction (before evidence)" if self.modality == "Camera"
+                else "Audio prediction (before evidence)",
+                preview.prediction, -0.6,
+            ),
+            (f"{self.modality} (observed)", preview.observation, -2.4),
         ):
             self._set_plane(name, rgb_texture(field), (-2, -2 * aspect, depth), 4)
         count = preview.hidden.shape[2]

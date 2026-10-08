@@ -309,10 +309,11 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _sync_after_reset(self) -> None:
         self.time = self.engine.time
-        self.source_orchestrator.visual_readout.set_spatial_preview_enabled(False)
-        self.source_orchestrator.visual_readout.reset()
+        self.source_orchestrator.reset_readouts()
         if self.prediction_diagnostics is not None:
             self.prediction_diagnostics.clear()
+            if self.prediction_diagnostics.audio_view is not None:
+                self.prediction_diagnostics.audio_view.clear()
         reset_view = getattr(self.renderer, "reset_view", None)
         if callable(reset_view):
             reset_view()
@@ -332,13 +333,18 @@ class RippleWaveVisualizer(VisualizerBase):
                 self.prediction_diagnostics.spatial_preview_changed.connect(
                     self.source_orchestrator.visual_readout.set_spatial_preview_enabled
                 )
+                if self.source_orchestrator.audio_readout is not None:
+                    self.prediction_diagnostics.add_audio_tab()
+                    self.prediction_diagnostics.audio_view.spatial_preview_changed.connect(
+                        self.source_orchestrator.audio_readout.set_spatial_preview_enabled
+                    )
             self.prediction_diagnostics.show()
             self.prediction_diagnostics.raise_()
         elif self.prediction_diagnostics is not None:
             self.prediction_diagnostics.hide()
 
     def _set_diagnostics_collection(self, enabled: bool) -> None:
-        self.source_orchestrator.visual_readout.set_diagnostics_enabled(enabled)
+        self.source_orchestrator.set_diagnostics_enabled(enabled)
         self.diagnostics_button.setChecked(enabled)
 
     def _update_boundary_transmission(self, val: float) -> None:
@@ -518,6 +524,17 @@ class RippleWaveVisualizer(VisualizerBase):
             self.prediction_diagnostics is not None
             and self.prediction_diagnostics.take_spatial_preview_request()
         )
+        audio_view = (
+            self.prediction_diagnostics.audio_view
+            if self.prediction_diagnostics is not None else None
+        )
+        audio_readout = self.source_orchestrator.audio_readout
+        if audio_readout is not None:
+            audio_readout.set_spatial_preview_enabled(
+                audio_view is not None
+                and self.source_orchestrator.audio_source.has_new_observation()
+                and audio_view.take_spatial_preview_request()
+            )
         self.engine.propagate(drive_grid)
         self.visual_prediction = self.source_orchestrator.predict_visual()
         self.source_orchestrator.correct_from_observations()
@@ -535,6 +552,18 @@ class RippleWaveVisualizer(VisualizerBase):
                     else None
                 ),
             )
+            if audio_view is not None and audio_readout is not None:
+                audio_snapshot = audio_readout.diagnostics
+                if audio_snapshot is not None:
+                    audio_view.record(
+                        self.engine.time, audio_snapshot,
+                        canvas_preview=(
+                            self.engine.get_field_preview()
+                            if audio_snapshot.spatial is not None else None
+                        ),
+                    )
+                elif not self.source_orchestrator.audio_source.has_recent_observation():
+                    audio_view.record(self.engine.time, None)
 
     def _update_pose_ripple_states(
         self,

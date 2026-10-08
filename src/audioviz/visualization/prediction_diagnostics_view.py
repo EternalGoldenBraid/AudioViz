@@ -24,14 +24,17 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
     HISTORY_LIMIT = 300
     PREVIEW_INTERVAL = 0.1
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, modality: str = "Camera") -> None:
         super().__init__(parent, QtCore.Qt.Window)
+        self.modality = modality
+        self.audio_view = None
         self.setWindowTitle("Predictive Coding Diagnostics")
         self.resize(1100, 760)
         self.history: deque[tuple[float, ...]] = deque(maxlen=self.HISTORY_LIMIT)
         self.latest: PredictiveCodingDiagnostics | None = None
         self._dirty = True
         self._graph_channels = 0
+        self._observation_channels = 3
         self._graph_edges: list[tuple[pg.PlotDataItem, int, int, int]] = []
         self._graph_labels: list[pg.TextItem] = []
         self.layer_view = None
@@ -44,8 +47,13 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             "Energy = 0.5 * prediction_error^2. Layer mean and population variance "
             "are over pixels and channels, after inference and before weight learning."
         )
+        if modality == "Audio":
+            definition.setText(
+                "Energy = 0.5 * prediction_error^2. Hidden statistics: over pixels and channels; "
+                "audio statistics: over spectral bands. Errors: after inference, before learning."
+            )
         layout.addWidget(definition)
-        self.status = self._compact_label("Waiting for camera evidence.")
+        self.status = self._compact_label(f"Waiting for {modality.lower()} evidence.")
         layout.addWidget(self.status)
         self.graph_toggle = QtWidgets.QCheckBox("Show shared-channel computational graph")
         self.graph_toggle.toggled.connect(self._toggle_graph)
@@ -92,6 +100,15 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             "Canvas has no own error. Weights: after learning."
         )
         self._graph_legend_text = self.graph_legend.text()
+        if modality == "Audio":
+            self._graph_legend_text = (
+                "Canvas -> audio hidden field -> spectral bands.\n"
+                "The sensory readout pools tanh(hidden) over space.\n"
+                "Predictions ->; local errors <- (dashed).\n"
+                "Edges: blue + / orange -; width = |weight|.\n"
+                "Nodes: mean state and local mean energy."
+            )
+            self.graph_legend.setText(self._graph_legend_text)
         policy = self.graph_legend.sizePolicy()
         policy.setVerticalPolicy(QtWidgets.QSizePolicy.Preferred)
         self.graph_legend.setSizePolicy(policy)
@@ -125,12 +142,28 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         label.setSizePolicy(policy)
         return label
 
-    @staticmethod
-    def _layer_curves(plot) -> tuple[pg.PlotDataItem, pg.PlotDataItem]:
+    def add_audio_tab(self) -> None:
+        body = QtWidgets.QWidget()
+        body.setLayout(self.layout())
+        layout = QtWidgets.QVBoxLayout(self)
+        self.tabs = QtWidgets.QTabWidget()
+        layout.addWidget(self.tabs)
+        self.tabs.addTab(body, "Camera")
+        self.audio_view = PredictionDiagnosticsView(self, modality="Audio")
+        self.audio_view.setWindowFlags(QtCore.Qt.Widget)
+        self.tabs.addTab(self.audio_view, "Audio")
+        self.tabs.currentChanged.connect(self._tab_changed)
+
+    def _tab_changed(self, index: int) -> None:
+        if index != 0:
+            self._clear_spatial_preview()
+        self.spatial_preview_changed.emit(self.spatial_preview_active())
+
+    def _layer_curves(self, plot) -> tuple[pg.PlotDataItem, pg.PlotDataItem]:
         plot.addLegend(offset=(-10, 10), brush=pg.mkBrush(20, 25, 30, 210))
         return (
             plot.plot(name="Hidden", pen=pg.mkPen(HIDDEN_COLOR, width=2), connect="finite"),
-            plot.plot(name="Camera", pen=pg.mkPen(VISUAL_COLOR, width=2), connect="finite"),
+            plot.plot(name=self.modality, pen=pg.mkPen(VISUAL_COLOR, width=2), connect="finite"),
         )
 
     def record(
@@ -187,7 +220,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
                 curve.clear()
         if self.latest is None:
             self.status.setText(
-                "No fresh camera evidence: inference and weight learning are not sampled."
+                f"No fresh {self.modality.lower()} evidence: inference and weight learning are not sampled."
             )
             self.inference_curve.clear()
             self.graph_plot.clear()
@@ -197,7 +230,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         learning = "on" if snapshot.learning_enabled else "off"
         self.status.setText(
             f"Hidden mean {snapshot.hidden.mean:.4g}, variance {snapshot.hidden.variance:.4g}"
-            f" | Camera mean {snapshot.visual.mean:.4g}, variance {snapshot.visual.variance:.4g}"
+            f" | {self.modality} mean {snapshot.visual.mean:.4g}, variance {snapshot.visual.variance:.4g}"
             f"\nWeight learning {learning} (rate {snapshot.learning_rate:g})"
             f" | actual ||delta W|| = {snapshot.weight_update_norm:.4g}"
         )
@@ -215,6 +248,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
     def spatial_preview_active(self) -> bool:
         return (
             self.isVisible()
+            and self.graph_container.isVisible()
             and not self.isMinimized()
             and self.graph_toggle.isChecked()
             and self.layer_toggle.isChecked()
@@ -246,7 +280,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
     def _create_layer_view(self):
         from audioviz.visualization.prediction_layer_view import PredictionLayerView
 
-        return PredictionLayerView(self)
+        return PredictionLayerView(self, modality=self.modality)
 
     def _toggle_layer_mode(self, enabled: bool) -> None:
         if enabled and self.layer_view is None:
@@ -266,10 +300,14 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             self.layer_error.hide()
             self.graph_legend.setText(
                 "Drag: orbit; wheel: zoom; Ctrl-drag: pan.\n"
-                "Canvas / hidden channels / pre-evidence prediction / camera.\n"
+                f"Canvas / {self.modality.lower()} hidden / pre-evidence prediction / observation.\n"
                 "RGB clipped [0,1]. Hidden: tanh, blue - / orange +; labels = channel:energy.\n"
                 "Max 64x64, 10 Hz. Connections omitted."
             )
+            if self.modality == "Audio":
+                self.graph_legend.setText(
+                    self.graph_legend.text() + "\nAudio bands are columns; rows repeat for display."
+                )
         else:
             self.graph_legend.setText(self._graph_legend_text)
         self.spatial_preview_changed.emit(self.spatial_preview_active())
@@ -284,6 +322,9 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
 
     def _toggle_graph(self, enabled: bool) -> None:
         self.graph_container.setVisible(enabled)
+        if enabled and self.modality == "Audio":
+            width = self.splitter.width() // 2
+            self.splitter.setSizes([width, width])
         if not enabled:
             self._clear_spatial_preview()
         self.spatial_preview_changed.emit(self.spatial_preview_active())
@@ -295,12 +336,12 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self._graph_edges.clear()
         self._graph_labels.clear()
         self._graph_channels = hidden_channels
-        height = max(hidden_channels - 1, 2)
+        height = max(hidden_channels - 1, self._observation_channels - 1, 2)
         positions = [
             np.column_stack(
                 (np.full(count, column * 1.4), np.linspace(0, height, count))
             )
-            for column, count in enumerate((3, hidden_channels, 3))
+            for column, count in enumerate((3, hidden_channels, self._observation_channels))
         ]
         self._node_positions = np.concatenate(positions)
         for layer, (sources, destinations) in enumerate(zip(positions, positions[1:])):
@@ -321,7 +362,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
             label.setPos(x + 0.1, y)
             self.graph_plot.addItem(label)
             self._graph_labels.append(label)
-        for column, title in enumerate(("Wave canvas", "Hidden belief", "Camera (clamped)")):
+        for column, title in enumerate(("Wave canvas", "Hidden belief", f"{self.modality} (clamped)")):
             label = pg.TextItem(title, color=(225, 230, 235), anchor=(0.5, 0.5))
             label.setPos(column * 1.4 + 0.2, height + 0.7)
             self.graph_plot.addItem(label)
@@ -349,7 +390,9 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
 
     def _update_graph(self, snapshot: PredictiveCodingDiagnostics) -> None:
         count = len(snapshot.hidden_means)
-        if self._graph_channels != count:
+        observation_channels = len(snapshot.observation_means)
+        if self._graph_channels != count or self._observation_channels != observation_channels:
+            self._observation_channels = observation_channels
             self._build_graph(count)
         weights = snapshot.canvas_weights, snapshot.visual_weights
         for edge, layer, destination, source in self._graph_edges:
@@ -362,7 +405,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         names = (
             tuple(f"C{index}" for index in range(3))
             + tuple(f"H{index}" for index in range(count))
-            + tuple(f"Y{index}" for index in range(3))
+            + tuple(f"Y{index}" for index in range(self._observation_channels))
         )
         maximum = max((*snapshot.hidden.channel_means, *snapshot.visual.channel_means, 1e-12))
         brushes = []

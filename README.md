@@ -22,9 +22,9 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 - Optional synthetic tone generator for testing
 - Optional GPU acceleration (via CuPy); CPU wave propagation is the default
 - Adjustable wave physics: damping, decay, speed, amplitude
-- Three-channel wave surface with persistent hidden visual belief states
+- Three-channel wave surface with independent persistent visual/audio hidden belief states
 - Local nonlinear predictive coding: sensory surprise revises hidden states and the canvas
-- Learned visual pathway with fixed substrate conductances; the rendered image is the canvas surface
+- Learned sensory pathways with fixed substrate conductances; the rendered image is the canvas surface
 - Modular audio processor and visualizer structure
 
 ---
@@ -92,31 +92,45 @@ Accessible from GUI sliders:
 * **Amplitude**: Controls excitation strength
 * **Speed**: Wave propagation speed in meters per second
 * **RGB Canvas**: Displays the three simulated canvas channels directly as red, green, and blue
-* **Visual Inference and Learning**: Separate hidden-state inference, canvas correction, and weight-learning rates
+* **Sensory Inference and Learning**: Shared controls for camera/audio hidden-state inference, canvas correction, and weight learning
 * **Substrate Conductances (Fixed)**: Diagnostic overlay of the wave operator, not the learned visual weights
 * **Show Inference Diagnostics**: Opens a toggleable live energy and learning window
 
 ## Predictive canvas
 
-The wave surface predicts a hidden visual layer, which predicts RGB camera
-evidence. Camera evidence is clamped during inference; it is not directly added
-as a drive. Audio and synthetic sources still drive the wave equation.
+The wave surface has two learned sensory branches:
+
+```text
+                 visual hidden field <-> RGB camera evidence
+                /
+canvas surface
+                \
+                 audio hidden field  <-> spectral audio evidence
+```
+
+Each branch has persistent states and independent predictive weights. Sensory
+evidence is clamped during inference; neither microphone input nor camera
+frames are injected directly into the surface. Synthetic sources remain
+explicit wave drives. Sound now revises belief through prediction error,
+so the former frequency-to-ripple forcing pattern is not preserved.
 
 Each physical frame:
 
 1. Propagate the wave surface using its existing, fixed-conductance dynamics.
 2. Advance persistent hidden belief toward the propagated surface's prediction,
-   and save the expected camera image **before** reading the new camera evidence.
-3. Acquire one camera observation and run a bounded number of local inference
-   steps with weights fixed.
-4. Optionally learn the visual weights once from the final local errors.
+   and save camera and audio expectations **before** acquiring their evidence.
+3. Acquire available camera evidence and fresh audio evidence. At every local
+   inference step, compute both branches' directions from the same canvas and
+   pre-update states, sum their canvas directions, then advance all active
+   states together. Weights stay fixed during this bounded loop.
+4. Optionally learn each active branch's weights once from the final local errors.
 5. Apply the net surface correction to both wave-state buffers, preserving wave
    velocity, and render the corrected **surface**, not the camera expectation.
 
-Missing camera evidence skips sensory inference and weight learning. Hidden
-belief still advances from the wave prior. Reset clears the surface, hidden
-states, and errors, but retains learned visual weights. Weights are currently
-session-local and are not saved to disk.
+Missing evidence skips inference and learning for that branch; the other
+branch can still correct the shared surface. Both hidden fields continue to
+advance from the wave prior. Reset clears the surface, both hidden fields,
+and errors, retaining their learned weights. Weights are session-local.
 
 ### Local nonlinear updates
 
@@ -159,9 +173,11 @@ scaling. Hidden-state persistence and alternating wave/inference steps are this
 project's online extension, not a guarantee of learned temporal forecasting.
 
 Configure the pathway under `RIPPLE_CONFIG["transforms"]["prediction_error"]`
-in `main.py`: `enabled` and `inputs` select sensory correction; `inference`
+in `main.py`: `enabled` and `inputs` retain camera-feedback gating; `inference`
 sets hidden channels, step count, hidden rate, and canvas rate; `learning`
-controls only visual weights. The former Gaussian `predictor` and shaped-error
+controls both modalities' predictive weights. The **Audio** source toggle
+enables audio sensory correction independently of camera availability.
+The former Gaussian `predictor` and shaped-error
 `output` settings no longer drive camera correction. Nonlinearity belongs in
 the prediction and local inference equations, rather than an arbitrary shaping
 of the camera residual.
@@ -169,10 +185,61 @@ of the camera residual.
 Disabling **Pathway Learning** freezes weights, not state inference. Start with
 hidden rate `0.1`, canvas rate `0.01`, eight inference steps, and weight-learning
 rate `0.01`; a weight rate near `1` is an experiment, not a stability guarantee.
-The pathway runs in NumPy for CPU/GPU wave backends; OpenGL camera correction
+The pathways run in NumPy for CPU/GPU wave backends; OpenGL sensory correction
 remains unsupported and is explicitly rejected. Inference cost scales with
 image size and step count; reduce inference steps or resolution when exploring
 the live loop at high resolutions.
+
+### Audio observations and pooled readout
+
+Audio uses the newest frame of the existing STFT magnitude or square-root mel
+power analysis, averaged across input channels. Sixteen contiguous frequency
+groups retain mean magnitudes, scaled by `2 / sum(analysis_window)` and the
+**Audio Evidence Gain**. Smaller spectra are interpolated to sixteen bands.
+No second FFT, per-frame level normalization, or synthesized wave target is
+introduced. The optional `sources.audio.observation_gain` config key defaults
+to `1.0`. Peak gates and legacy frequency mappings do not select audio evidence;
+real silent blocks are valid zero-valued observations.
+
+For an audio hidden field `a` and spectral vector `s`:
+
+```text
+predicted_a = W_ac tanh(c)
+q = spatial_mean(tanh(a))
+predicted_s = W_sa q
+e_a = a - predicted_a
+e_s = s - predicted_s
+
+delta_a = hidden_rate [-e_a + tanh'(a) * (W_sa.T e_s)]
+delta_c_audio = canvas_rate [tanh'(c) * (W_ac.T e_a)]
+delta_W_ac = learning_rate spatial_mean(e_a tanh(c).T)
+delta_W_sa = learning_rate e_s q.T
+```
+
+This has the same two learned projection stages as vision. Audio's sensor
+nodes are global spectral bands: the fixed spatial mean pools the hidden
+field, rather than inventing an audio observation at every camera pixel.
+It does not encode audio spatial localization. For active branches, the
+joint energy is:
+
+```text
+E_joint = 0.5 * spatial_mean(
+    sum_channels(e_h_camera^2) + sum_channels(e_y_camera^2)
+    + sum_channels(e_a^2)
+) + 0.5 * sum_bands(e_s^2)
+```
+
+State rates multiply its gradient by the pixel
+count; this cancels the pooling derivative's `1/N` and preserves the existing
+resolution-independent local state-update convention. Weight updates use
+the unscaled energy gradients. Both state and weight rules retain `tanh`;
+only state updates contain its derivative.
+
+Each audio analysis generation is consumed once. Waiting between blocks does
+not repeat inference or weight learning on cached evidence. Diagnostics hold
+the latest audio sample for at most half a second, then mark missing evidence
+and clear its planes. The offline audio renderer exercises this same pathway;
+its legacy frequency-mapping arguments now affect reported peak metadata only.
 
 The visual readout also supports opt-in energy diagnostics. A node's energy is
 `0.5 * prediction_error**2`; layer statistics report its mean and population
@@ -188,13 +255,22 @@ shows whether weight learning is enabled, its rate, and the actual combined
 weight-update norm. Missing camera evidence inserts a gap, not a fabricated
 zero-energy sample. Reset clears the diagnostic history.
 
+With an audio processor present, the window has **Camera** and **Audio** tabs,
+each showing its own hidden/sensory means, variances, weights, and optional
+2D/3D graph. Both branches collect bounded scalar history while the window is
+open; spatial previews are captured only for the visible tab's enabled 3D
+view. An inference trajectory includes all branches active in that inference
+frame. Audio sensory statistics are over bands, not over repeated spatial
+copies. Audio 3D observation/prediction planes show grayscale band columns;
+rows repeat purely for display.
+
 Enable **Show shared-channel computational graph** in that window to inspect
-all connections in the current `canvas -> hidden -> camera` pathway. Nodes show
+all connections in the selected `canvas -> hidden -> sensory` pathway. Nodes show
 spatial mean states and local mean energies; signed edge colors and widths show
 the shared weights. Dashed arrows indicate local error feedback. This is the
 channel graph repeated at each spatial site, not a graph with one vertex for
-every pixel. The fixed wave operator and audio/synthetic drives remain outside
-this learned-pathway graph.
+every pixel (with spatial pooling at the audio readout). The fixed wave operator
+and synthetic drives remain outside this learned-pathway graph.
 
 History is limited to 300 entries and plots refresh at most ten times per
 second. Closing or hiding the window stops its timer and telemetry collection;

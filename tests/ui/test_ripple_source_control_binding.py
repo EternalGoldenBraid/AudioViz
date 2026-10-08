@@ -194,7 +194,7 @@ def test_ripple_source_binding_updates_learning_dynamics_config(qapp):
     assert config.inference_rate == 0.2
     assert config.canvas_rate == 0.03
     sections = {section.key: section for section in visualizer.source_control_binding.build_sections()}
-    assert sections["learning-dynamics"].title == "Visual Inference and Learning"
+    assert sections["learning-dynamics"].title == "Sensory Inference and Learning"
     assert sections["learning-overlay"].title == "Substrate Conductances (Fixed)"
 
 

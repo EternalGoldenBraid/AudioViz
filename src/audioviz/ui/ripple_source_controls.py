@@ -67,12 +67,12 @@ class RippleSourceControlBinding:
             )
         )
         transform_config = visualizer.prediction_error_transform.config
-        if transform_config.enabled:
+        if transform_config.enabled or visualizer.audio_source.processor is not None:
             pathway_config = visualizer.source_orchestrator.visual_readout.config
             sections.append(
                 ControlPanelSection(
                     key="learning-dynamics",
-                    title="Visual Inference and Learning",
+                    title="Sensory Inference and Learning",
                     controls=PredictionLearningControls(
                         enabled=pathway_config.learning_enabled,
                         inference_steps=pathway_config.inference_steps,
@@ -115,7 +115,7 @@ class RippleSourceControlBinding:
                 key="audio",
                 label="Audio",
                 enabled=visualizer.use_audio_source,
-                available=visualizer.audio_source.processor is not None,
+                available=visualizer.audio_source.processor is not None and not visualizer.use_shader,
             ),
             SourceToggle(
                 key="camera",
@@ -157,6 +157,8 @@ class RippleSourceControlBinding:
             visualizer.use_synthetic = enabled
             return
         if source_key == "audio":
+            if enabled and visualizer.use_shader:
+                raise NotImplementedError("Audio predictive inference requires the CPU/GPU ripple backend.")
             visualizer.audio_source.set_enabled(enabled)
             return
         if source_key == "camera":
@@ -179,6 +181,15 @@ class RippleSourceControlBinding:
         visualizer = self.visualizer
         audio_source = visualizer.audio_source
         if control_panel is None or audio_source.processor is None:
+            return
+        if audio_source.predictive:
+            control_panel.set_source_control_value(
+                "audio-source", "signal_level", f"{audio_source.signal_level():.2f}"
+            )
+            control_panel.set_source_control_value(
+                "audio-source", "observation_status",
+                "receiving" if audio_source.has_recent_observation() else "waiting",
+            )
             return
         gate_open = audio_source.gate_open(freqs)
         detected = audio_source.detected_frequencies()
@@ -241,27 +252,27 @@ class RippleSourceControlBinding:
         control_key: str,
         value: ControlValue,
     ) -> None:
-        readout = self.visualizer.source_orchestrator.visual_readout
+        readout = self.visualizer.source_orchestrator
         if control_key == "inference_steps":
-            readout.update_config(inference_steps=int(value))
+            readout.update_pathway_config(inference_steps=int(value))
             return
         if control_key in ("inference_rate", "canvas_rate"):
-            readout.update_config(**{control_key: float(value)})
+            readout.update_pathway_config(**{control_key: float(value)})
             return
         if control_key == "learning_enabled":
-            readout.update_config(learning_enabled=bool(value))
+            readout.update_pathway_config(learning_enabled=bool(value))
             return
         if control_key == "learning_rate":
-            readout.update_config(learning_rate=float(value))
+            readout.update_pathway_config(learning_rate=float(value))
             return
         if control_key == "learning_weight_decay":
-            readout.update_config(weight_decay=float(value))
+            readout.update_pathway_config(weight_decay=float(value))
             return
         if control_key == "learning_weight_clip":
-            readout.update_config(weight_clip=float(value))
+            readout.update_pathway_config(weight_clip=float(value))
             return
         if control_key == "learning_gradient_clip":
-            readout.update_config(gradient_clip=float(value))
+            readout.update_pathway_config(gradient_clip=float(value))
             return
         raise KeyError(f"Unknown visual pathway control: {control_key}")
 
