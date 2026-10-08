@@ -318,6 +318,7 @@ def test_ripple_visualizer_pose_path_uses_same_visual_inference(qapp):
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
+    visualizer.diagnostics_button.click()
     visualizer.camera_source.excitation = lambda: np.full(
         visualizer.engine.canvas_shape, 0.7, dtype=np.float32
     )
@@ -329,7 +330,65 @@ def test_ripple_visualizer_pose_path_uses_same_visual_inference(qapp):
     np.testing.assert_array_equal(
         visualizer.renderer.field, visualizer.engine.get_field_numpy()
     )
+    assert len(visualizer.prediction_diagnostics.history) == 1
+    assert visualizer.prediction_diagnostics.latest is not None
+    visualizer.close()
     visualizer.close_pose_sources()
+
+
+def test_ripple_visualizer_diagnostics_toggle_missing_frame_reset_and_close(qapp):
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    visualizer = RippleWaveVisualizer(
+        resolution=(6, 8),
+        plane_size_m=(1.0, 1.0),
+        speed=1.0,
+        source_orchestrator_config=_source_config(
+            use_camera_source=True,
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
+        ),
+        camera_capture=_FakeCapture(
+            frames=[np.full((4, 4, 3), 180, dtype=np.uint8) for _ in range(3)]
+        ),
+    )
+    visualizer.timer.stop()
+    readout = visualizer.source_orchestrator.visual_readout
+    assert visualizer.prediction_diagnostics is None
+    assert not readout.diagnostics_enabled
+    visualizer.update_visualization()
+    assert readout.diagnostics is None
+
+    visualizer.diagnostics_button.click()
+    view = visualizer.prediction_diagnostics
+    assert readout.diagnostics_enabled
+    assert view.isVisible()
+    visualizer.update_visualization()
+    assert len(view.history) == 1
+    assert view.latest is readout.diagnostics
+    visualizer.diagnostics_button.click()
+    assert not readout.diagnostics_enabled
+    assert not view.refresh_timer.isActive()
+    visualizer.update_visualization()
+    assert len(view.history) == 1
+
+    visualizer.diagnostics_button.click()
+    visualizer.update_visualization()
+    view.refresh()
+    assert view.latest is None
+    assert np.isnan(view.history[-1][1])
+    assert "No fresh camera evidence" in view.status.text()
+    visualizer.engine.reset()
+    visualizer._sync_after_reset()
+    assert len(view.history) == 0
+
+    view.close()
+    assert not readout.diagnostics_enabled
+    assert not visualizer.diagnostics_button.isChecked()
+    visualizer.diagnostics_button.click()
+    visualizer.close()
+    assert not view.isVisible()
+    assert not view.refresh_timer.isActive()
+    assert not readout.diagnostics_enabled
 
 
 def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut(qapp):

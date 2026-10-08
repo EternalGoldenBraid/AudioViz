@@ -31,21 +31,19 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self._graph_labels: list[pg.TextItem] = []
 
         layout = QtWidgets.QVBoxLayout(self)
-        definition = QtWidgets.QLabel(
+        definition = self._compact_label(
             "Energy = 0.5 * prediction_error^2. Layer mean and population variance "
             "are over pixels and channels, after inference and before weight learning."
         )
-        definition.setWordWrap(True)
         layout.addWidget(definition)
-        self.status = QtWidgets.QLabel("Waiting for camera evidence.")
-        self.status.setWordWrap(True)
+        self.status = self._compact_label("Waiting for camera evidence.")
         layout.addWidget(self.status)
         self.graph_toggle = QtWidgets.QCheckBox("Show shared-channel computational graph")
         self.graph_toggle.toggled.connect(self._toggle_graph)
         layout.addWidget(self.graph_toggle)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        layout.addWidget(splitter)
+        layout.addWidget(splitter, stretch=1)
         charts = pg.GraphicsLayoutWidget()
         splitter.addWidget(charts)
         mean_plot = charts.addPlot(row=0, col=0, title="Mean node energy")
@@ -57,11 +55,11 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         )
         self.mean_curves = self._layer_curves(mean_plot)
         self.variance_curves = self._layer_curves(variance_plot)
-        mean_plot.setLabel("left", "Mean energy")
-        variance_plot.setLabel("left", "Energy variance")
+        mean_plot.setLabel("left", "Energy")
+        variance_plot.setLabel("left", "Variance")
         variance_plot.setLabel("bottom", "Simulation time", units="s")
         variance_plot.setXLink(mean_plot)
-        inference_plot.setLabel("left", "Mean per-pixel total energy")
+        inference_plot.setLabel("left", "Total energy")
         inference_plot.setLabel("bottom", "State updates this frame")
         self.inference_curve = inference_plot.plot(pen=pg.mkPen((200, 235, 180), width=2))
         for plot in (mean_plot, variance_plot, inference_plot):
@@ -69,20 +67,19 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
 
         self.graph_container = QtWidgets.QWidget()
         graph_layout = QtWidgets.QVBoxLayout(self.graph_container)
-        legend = QtWidgets.QLabel(
-            "Predictions flow right through tanh; dashed local error feedback flows left.\n"
-            "Blue edges: positive weights. Orange: negative. Width: magnitude.\n"
-            "Node fill: final local mean energy; the canvas has no own error.\n"
-            "Nodes are channels repeated across pixels. Values are spatial means; "
-            "weights are the current shared matrices."
+        legend = self._compact_label(
+            "Shared channel graph, repeated at each pixel.\n"
+            "Predictions -> (tanh); local errors <- (dashed).\n"
+            "Edges: blue + / orange -; width = |weight|.\n"
+            "Nodes: state mean; fill = local mean energy.\n"
+            "Canvas has no own error. Weights: after learning."
         )
-        legend.setWordWrap(True)
         graph_layout.addWidget(legend)
         self.graph_plot = pg.PlotWidget()
         self.graph_plot.hideAxis("left")
         self.graph_plot.hideAxis("bottom")
         self.graph_plot.setMouseEnabled(x=False, y=False)
-        graph_layout.addWidget(self.graph_plot)
+        graph_layout.addWidget(self.graph_plot, stretch=1)
         splitter.addWidget(self.graph_container)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -93,8 +90,17 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self.refresh_timer.timeout.connect(self.refresh)
 
     @staticmethod
+    def _compact_label(text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setWordWrap(True)
+        policy = label.sizePolicy()
+        policy.setVerticalPolicy(QtWidgets.QSizePolicy.Maximum)
+        label.setSizePolicy(policy)
+        return label
+
+    @staticmethod
     def _layer_curves(plot) -> tuple[pg.PlotDataItem, pg.PlotDataItem]:
-        plot.addLegend(offset=(10, 10))
+        plot.addLegend(offset=(-10, 10), brush=pg.mkBrush(20, 25, 30, 210))
         return (
             plot.plot(name="Hidden", pen=pg.mkPen(HIDDEN_COLOR, width=2), connect="finite"),
             plot.plot(name="Camera", pen=pg.mkPen(VISUAL_COLOR, width=2), connect="finite"),
@@ -189,7 +195,10 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self._graph_nodes = pg.ScatterPlotItem(size=16, pen=pg.mkPen("w", width=1))
         self.graph_plot.addItem(self._graph_nodes)
         for x, y in self._node_positions:
-            label = pg.TextItem(color=(225, 230, 235), anchor=(0, 0.5))
+            label = pg.TextItem(
+                color=(225, 230, 235), anchor=(0, 0.5),
+                fill=pg.mkBrush(25, 35, 44, 220),
+            )
             label.setPos(x + 0.1, y)
             self.graph_plot.addItem(label)
             self._graph_labels.append(label)

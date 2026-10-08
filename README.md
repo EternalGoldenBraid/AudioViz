@@ -94,6 +94,7 @@ Accessible from GUI sliders:
 * **RGB Canvas**: Displays the three simulated canvas channels directly as red, green, and blue
 * **Visual Inference and Learning**: Separate hidden-state inference, canvas correction, and weight-learning rates
 * **Substrate Conductances (Fixed)**: Diagnostic overlay of the wave operator, not the learned visual weights
+* **Show Inference Diagnostics**: Opens a toggleable live energy and learning window
 
 ## Predictive canvas
 
@@ -179,6 +180,27 @@ variance over pixels and channels. Diagnostics capture the fixed-weight
 inference trajectory and final local errors before learning, plus the actual
 weight-change norm and weights after learning. Collection is disabled by
 default and does not change inference or learning.
+
+Click **Show Inference Diagnostics** below the canvas to see hidden-layer and
+camera-level energy means and variances over simulation time, and the latest
+frame's energy trajectory across fixed-weight inference steps. The status line
+shows whether weight learning is enabled, its rate, and the actual combined
+weight-update norm. Missing camera evidence inserts a gap, not a fabricated
+zero-energy sample. Reset clears the diagnostic history.
+
+Enable **Show shared-channel computational graph** in that window to inspect
+all connections in the current `canvas -> hidden -> camera` pathway. Nodes show
+spatial mean states and local mean energies; signed edge colors and widths show
+the shared weights. Dashed arrows indicate local error feedback. This is the
+channel graph repeated at each spatial site, not a graph with one vertex for
+every pixel. The fixed wave operator and audio/synthetic drives remain outside
+this learned-pathway graph.
+
+History is limited to 300 entries and plots refresh at most ten times per
+second. Closing or hiding the window stops its timer and telemetry collection;
+the graph is separately optional. This visualization does not change topology
+or prune weights. Arbitrary predictive graph topologies and a rotatable 3D
+layer stack remain separate extensions.
 
 ---
 

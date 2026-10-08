@@ -5,10 +5,12 @@ from typing import Protocol
 import numpy as np
 
 from audioviz.readouts.predictive_coding import PredictiveCodingConfig
+from audioviz.readouts.diagnostics import PredictiveCodingDiagnostics
 
 
 class VisualReadout(Protocol):
     config: PredictiveCodingConfig
+    diagnostics: PredictiveCodingDiagnostics | None
 
     def predict(self, prior: np.ndarray) -> np.ndarray:
         """Advance hidden belief from a canvas prior and predict RGB evidence."""
@@ -21,6 +23,9 @@ class VisualReadout(Protocol):
 
     def reset(self) -> None:
         """Clear hidden belief while retaining learned weights."""
+
+    def set_diagnostics_enabled(self, enabled: bool) -> None:
+        """Control optional energy and learning telemetry."""
 
 
 class IdentityRGBReadout:

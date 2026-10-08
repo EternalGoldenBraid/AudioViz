@@ -22,6 +22,7 @@ from audioviz.visualization.ripple_renderers import (
     OpenGLFieldRenderer,
 )
 from audioviz.visualization.pose_debug_view import PoseDebugView
+from audioviz.visualization.prediction_diagnostics_view import PredictionDiagnosticsView
 from audioviz.visualization.standing_body_renderer import (
     StandingBodyRenderer,
     lookup_table_from_renderer,
@@ -169,6 +170,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.damping = damping
         self.time = 0.0
         self.control_panel: Optional[RippleControlPanel] = None
+        self.prediction_diagnostics: PredictionDiagnosticsView | None = None
         self.source_control_binding = RippleSourceControlBinding(self)
         self.pose_graph_stiffness = pose_config.graph_stiffness
         self.pose_render_mode = normalize_pose_render_mode(pose_config.render_mode)
@@ -251,6 +253,11 @@ class RippleWaveVisualizer(VisualizerBase):
         controls_button = QtWidgets.QPushButton("Show Controls")
         controls_button.clicked.connect(self.toggle_controls)
         layout.addWidget(controls_button)
+        self.diagnostics_button = QtWidgets.QPushButton("Show Inference Diagnostics")
+        self.diagnostics_button.setCheckable(True)
+        self.diagnostics_button.setEnabled(not self.use_shader)
+        self.diagnostics_button.toggled.connect(self.set_prediction_diagnostics_visible)
+        layout.addWidget(self.diagnostics_button)
 
     def _update_speed(self, val: float):
         self.speed = val
@@ -303,6 +310,8 @@ class RippleWaveVisualizer(VisualizerBase):
     def _sync_after_reset(self) -> None:
         self.time = self.engine.time
         self.source_orchestrator.visual_readout.reset()
+        if self.prediction_diagnostics is not None:
+            self.prediction_diagnostics.clear()
         reset_view = getattr(self.renderer, "reset_view", None)
         if callable(reset_view):
             reset_view()
@@ -311,6 +320,22 @@ class RippleWaveVisualizer(VisualizerBase):
         )
         if self.renderer.prepare_frame():
             self._render_canvas()
+
+    def set_prediction_diagnostics_visible(self, visible: bool) -> None:
+        if visible:
+            if self.prediction_diagnostics is None:
+                self.prediction_diagnostics = PredictionDiagnosticsView(self)
+                self.prediction_diagnostics.visibility_changed.connect(
+                    self._set_diagnostics_collection
+                )
+            self.prediction_diagnostics.show()
+            self.prediction_diagnostics.raise_()
+        elif self.prediction_diagnostics is not None:
+            self.prediction_diagnostics.hide()
+
+    def _set_diagnostics_collection(self, enabled: bool) -> None:
+        self.source_orchestrator.visual_readout.set_diagnostics_enabled(enabled)
+        self.diagnostics_button.setChecked(enabled)
 
     def _update_boundary_transmission(self, val: float) -> None:
         self.body_boundary_transmission = float(val)
@@ -487,6 +512,14 @@ class RippleWaveVisualizer(VisualizerBase):
         self.engine.propagate(drive_grid)
         self.visual_prediction = self.source_orchestrator.predict_visual()
         self.source_orchestrator.correct_from_observations()
+        if (
+            self.prediction_diagnostics is not None
+            and self.prediction_diagnostics.isVisible()
+        ):
+            self.prediction_diagnostics.record(
+                self.engine.time,
+                self.source_orchestrator.visual_readout.diagnostics,
+            )
 
     def _update_pose_ripple_states(
         self,
@@ -560,6 +593,8 @@ class RippleWaveVisualizer(VisualizerBase):
         self.renderer.render(self.engine.get_field_numpy())
 
     def closeEvent(self, event):
+        if self.prediction_diagnostics is not None:
+            self.prediction_diagnostics.close()
         self.close_pose_sources()
         self.close_camera_source()
         super().closeEvent(event)
