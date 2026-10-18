@@ -116,6 +116,7 @@ class RippleSourceOrchestrator:
             gain=config.camera_frame.gain,
             enabled=bool(config.camera_frame.enabled),
             capture=camera_capture,
+            backend=engine.backend,
         )
         self.prediction_error_transform = PredictionErrorTransform(
             config=config.prediction_error,

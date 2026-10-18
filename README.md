@@ -95,7 +95,17 @@ Accessible from GUI sliders:
 * **Sensory Inference and Learning**: Shared controls for camera/audio hidden-state inference, canvas correction, and weight learning
 * **Substrate Conductances (Fixed)**: Diagnostic overlay of the wave operator, not the learned visual weights
 * **Show Inference / Learning Plots**: Opens the energy / 2D weight plot catalogue
-* **Show Multimodal 3D Scene**: Opens an independent, rotatable view of the shared canvas and every source
+* **Show Predictions / 3D Scene**: Opens a popup with selectable prediction layouts
+
+The prediction popup's **Layout** selector offers the existing **3D graph**,
+a **2D comparison** of the corrected canvas, pre-evidence camera prediction,
+camera evidence and audio spectra, and a large **Prediction only** image.
+Predictions are genuine pre-evidence expectations, not a copy of the camera or
+the corrected surface. Missing evidence is cleared instead of retaining a stale
+target. The 2D layouts do not need an OpenGL context and remain available if the
+3D renderer fails. Image previews preserve aspect ratio and are limited to 512
+pixels per side at 10 Hz; the 3D graph retains its 64-pixel limit. Switching
+layouts, minimizing, hiding and resetting release the old preview.
 
 ## Predictive canvas
 
@@ -189,19 +199,25 @@ Disabling **Pathway Learning** freezes weights, not state inference. Start with
 hidden rate `0.1`, canvas rate `0.01`, eight inference steps, and weight-learning
 rate `0.01`; a weight rate near `1` is an experiment, not a stability guarantee.
 The pathways use the wave engine's array backend: NumPy when the renderer's
-`backend` is `"numpy"`, and CuPy when it is `"gpu"`. Selecting `"gpu"` keeps the canvas, hidden states,
-errors, predictive weights, optional cross-modal coupling, inference, and learning
-on the GPU. Float64 inference and float32 wave states/predictions are preserved
-across backends. OpenGL sensory correction remains unsupported and is explicitly
+`backend` is `"numpy"`, and CuPy when it is `"gpu"`. Selecting `"gpu"` keeps the
+canvas, hidden states, errors, predictive weights, optional cross-modal coupling,
+inference, and learning on the GPU. Inference defaults to float64; set
+`transforms.prediction_error.inference.dtype` to `"float32"` explicitly for GPU
+throughput. Both backends support both precisions. Changing precision requires
+rebuilding the readouts; wave states and returned predictions/corrections remain
+float32. OpenGL sensory correction remains unsupported and is explicitly
 rejected; pose-medium coupling still requires the CPU backend.
 
 Numerical graph state stays on its selected backend. Host/device transfers belong
-only at sensor and presentation boundaries: OpenCV camera capture/preprocessing
-and audio analysis currently run on the CPU, evidence is uploaded for inference,
-and the corrected surface is downloaded for PyQtGraph rendering. Diagnostics
-export host snapshots; spatial previews are sampled to at most 64 pixels per
-side before downloading. Diagnostics add reductions and readbacks, so keep their
-windows closed when measuring compute throughput. Finite-state validation runs
+only at sensor and presentation boundaries: OpenCV capture and audio analysis
+run on the CPU. The GPU backend uploads raw camera frames and performs RGB
+conversion, normalization and resizing on the GPU. RGB canvas display also
+computes automatic levels and color conversion there, downloading packed uint8
+pixels rather than the full floating-point field. Grayscale display downloads
+only its single channel. Diagnostics export host snapshots, and spatial previews
+are sampled on-device before downloading. The 2D popup does not enable energy
+diagnostics; the 3D graph collects them on preview frames unless the plot catalogue
+is also open. Keep diagnostic plots closed when measuring throughput. Finite-state validation runs
 at settling boundaries rather than synchronizing the GPU on every inference
 step, and still raises explicitly on divergence before weight learning.
 
@@ -210,13 +226,58 @@ Benchmark the numerical path without live camera/audio devices or a GUI:
 ```bash
 uv run python scripts/benchmark_predictive_inference.py --backend both
 uv run python scripts/benchmark_predictive_inference.py --backend gpu --resolution 300 400 --inference-steps 8 --learning --cross-modal
+uv run python scripts/benchmark_predictive_inference.py --backend gpu --resolution 1080 1920 --dtype float32 --render --profile /tmp/inference.prof
 ```
 
 The benchmark uses deterministic camera/audio evidence, warmup frames, and
 explicit GPU synchronization for stage timings. It includes camera preprocessing
-and the final field download, but excludes camera capture, audio analysis, and
-GUI rendering; its throughput is not live application FPS. Inference cost scales
-with image size and step count; reduce either when exploring high resolutions.
+and the final field download. `--render` instead includes an RGB display,
+automatic levels and Qt paint events. Camera capture and audio analysis remain
+excluded, so neither mode is a claim about live device FPS. `--profile` saves
+per-backend cProfile data after warmup. Python profiles attribute asynchronous
+GPU wait time to synchronization points such as finite checks; synchronized
+stage timings are more useful for locating the actual cost.
+
+### Native 1080p profiling
+
+Measured on an RTX 3060 with two six-channel hidden fields, synthetic camera/audio
+evidence, no learning or cross-modal loop, and closed diagnostic windows:
+
+| Configuration | Mean frame time | Throughput |
+|---|---:|---:|
+| Before these optimizations: float64, 8 steps, no GUI | 1269 ms | 0.8 frames/s |
+| Optimized float64, 8 steps, no GUI | 455 ms | 2.2 frames/s |
+| Optimized float32, 8 steps, no GUI | 88 ms | 11.4 frames/s |
+| Optimized float32, 8 steps, offscreen Qt rendering | 108 ms | 9.2 frames/s |
+| Optimized float32, 2 steps, offscreen Qt rendering | 58 ms | 17.3 frames/s |
+
+The rendered float32 run used about 546 MiB of live GPU arrays and 1186 MiB of
+reserved CuPy pool memory. Capacity is not the primary limitation: eight-step
+inference still takes about 70 ms and Qt presentation about 18 ms. Native 1080p
+is substantially faster, but **30 frames/s at eight inference steps is not yet
+achieved**. Small shared-channel projections use a local GPU kernel, local state
+directions are fused, and spatial pooling reduces rows before reducing the image;
+large channel counts retain matrix multiplication.
+
+Enabling both weight learning and the camera/audio hidden loop at eight steps
+measured 152 ms/frame (6.6 frames/s), including offscreen Qt rendering, with about
+1281 MiB of reserved pool memory.
+
+For a throughput-oriented configuration, set these values in `main.py` before
+starting the application:
+
+```python
+RIPPLE_CONFIG["field"]["resolution"] = (1080, 1920)
+RIPPLE_CONFIG["renderer"]["backend"] = "gpu"
+RIPPLE_CONFIG["transforms"]["prediction_error"]["inference"].update(
+    dtype="float32", steps=2,
+)
+```
+
+Float32 reduces precision, and fewer settling steps change the inference dynamics
+and total per-frame correction; this is an explicit speed/quality tradeoff, not
+an equivalent result obtained by upscaling a smaller simulation. Default precision
+and inference step count are unchanged.
 
 Hover a source/inference control or its label for its update semantics,
 zero-value behavior, and stability caveats. **Canvas Correction Rate** is the

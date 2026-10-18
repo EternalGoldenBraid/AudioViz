@@ -16,9 +16,9 @@ class SourceSceneMapping:
     representation: Literal["rgb", "spectrum", "signed", "graph"]
     role: Literal["sensory", "drive", "medium"]
 
-    def sample(self, values: np.ndarray) -> np.ndarray:
+    def sample(self, values: np.ndarray, *, max_side: int = PREVIEW_MAX_SIDE) -> np.ndarray:
         if self.representation in ("rgb", "signed"):
-            return spatial_preview(values)
+            return spatial_preview(values, max_side=max_side)
         if self.representation == "spectrum":
             if values.ndim != 1 or not 0 < len(values) <= PREVIEW_MAX_SIDE:
                 raise ValueError("A spectral scene source must provide 1-64 bands.")

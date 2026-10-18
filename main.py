@@ -215,6 +215,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             ),
             visual_pathway=PredictiveCodingConfig(
                 hidden_channels=prediction_error_inference["hidden_channels"],
+                dtype=prediction_error_inference.get("dtype", "float64"),
                 inference_steps=prediction_error_inference["steps"],
                 inference_rate=prediction_error_inference["hidden_rate"],
                 canvas_rate=prediction_error_inference["canvas_rate"],

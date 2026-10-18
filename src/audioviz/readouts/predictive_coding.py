@@ -15,7 +15,9 @@ from audioviz.readouts.diagnostics import (
     mean_energy,
 )
 from audioviz.utils.spatial_preview import spatial_preview
-from audioviz.utils.array_backend import array_module, to_numpy
+from audioviz.utils.array_backend import (
+    array_module, canvas_direction, hidden_direction, project_channels, spatial_mean, to_numpy,
+)
 
 @dataclass(frozen=True)
 class PredictiveCodingConfig:
@@ -29,8 +31,11 @@ class PredictiveCodingConfig:
     weight_clip: float = 10.0
     gradient_clip: float = 1.0
     cross_modal_enabled: bool = False
+    dtype: str = "float64"
 
     def __post_init__(self) -> None:
+        if self.dtype not in ("float32", "float64"):
+            raise ValueError("dtype must be float32 or float64")
         if not isinstance(self.cross_modal_enabled, bool):
             raise ValueError("cross_modal_enabled must be a boolean")
         for name in ("hidden_channels", "inference_steps"):
@@ -66,25 +71,26 @@ class PredictiveCodingRGBReadout:
         self.canvas_shape = tuple(canvas_shape)
         self.config = PredictiveCodingConfig() if config is None else config
         xp = backend
+        dtype = xp.dtype(self.config.dtype)
         self.hidden = xp.zeros(
             (*self.canvas_shape[:2], self.config.hidden_channels),
-            dtype=xp.float64,
+            dtype=dtype,
         )
         rng = np.random.default_rng(0)
         self.canvas_weights = xp.asarray(rng.normal(
             scale=0.1, size=(self.config.hidden_channels, 3)
-        ))
+        ), dtype=dtype)
         self.visual_weights = xp.asarray(rng.normal(
             scale=0.1, size=(3, self.config.hidden_channels)
-        ))
+        ), dtype=dtype)
         for channel in range(min(3, self.config.hidden_channels)):
             self.canvas_weights[channel, channel] = 1.0
             self.visual_weights[channel, channel] = 1.0
-        self.stream_state_weights = xp.asarray(rng.normal(scale=.1, size=(1, self.config.hidden_channels)))
-        self.stream_state_bias = xp.zeros(1)
+        self.stream_state_weights = xp.asarray(rng.normal(scale=.1, size=(1, self.config.hidden_channels)), dtype=dtype)
+        self.stream_state_bias = xp.zeros(1, dtype=dtype)
         self.stream_state_prediction: float | None = None
         self.hidden_error = xp.zeros_like(self.hidden)
-        self.visual_error = xp.zeros(self.canvas_shape, dtype=xp.float64)
+        self.visual_error = xp.zeros(self.canvas_shape, dtype=dtype)
         self.diagnostics_enabled = False
         self.diagnostics: PredictiveCodingDiagnostics | None = None
         self.spatial_preview_enabled = False
@@ -111,6 +117,8 @@ class PredictiveCodingRGBReadout:
         next_config = replace(self.config, **changes)
         if next_config.hidden_channels != self.config.hidden_channels:
             raise ValueError("hidden_channels cannot change without rebuilding the readout")
+        if next_config.dtype != self.config.dtype:
+            raise ValueError("dtype cannot change without rebuilding the readout")
         self.config = next_config
 
     def reset(self) -> None:
@@ -125,7 +133,7 @@ class PredictiveCodingRGBReadout:
     def predict(self, prior: np.ndarray) -> np.ndarray:
         xp = self.backend
         canvas = self._coerce(prior, name="canvas prior")
-        predicted_hidden = xp.tanh(canvas) @ self.canvas_weights.T
+        predicted_hidden = project_channels(xp.tanh(canvas), self.canvas_weights.T)
         # Advance memory from the wave prior before any new sensory evidence.
         self.hidden += self.config.inference_rate * (predicted_hidden - self.hidden)
         return self._capture_prediction()
@@ -158,7 +166,7 @@ class PredictiveCodingRGBReadout:
     def _stream_state_logit(self, hidden_activity: np.ndarray | None = None):
         xp = self.backend
         activity = xp.tanh(self.hidden) if hidden_activity is None else hidden_activity
-        return (activity.mean(axis=(0, 1)) @ self.stream_state_weights.T + self.stream_state_bias)[0]
+        return (spatial_mean(activity) @ self.stream_state_weights.T + self.stream_state_bias)[0]
 
     def _stream_state_terms(
         self, observed: bool, hidden_activity: np.ndarray | None = None,
@@ -177,7 +185,7 @@ class PredictiveCodingRGBReadout:
     ) -> None:
         xp = self.backend
         self.hidden_error = (
-            self.hidden - xp.tanh(canvas) @ self.canvas_weights.T
+            self.hidden - project_channels(xp.tanh(canvas), self.canvas_weights.T)
             if hidden_error is None else hidden_error
         )
         self.visual_error = (
@@ -198,7 +206,7 @@ class PredictiveCodingRGBReadout:
                 direction = stream_terms[2]
                 self._update_weights(
                     self.stream_state_weights,
-                    direction * xp.tanh(self.hidden).mean(axis=(0, 1))[None, :],
+                    direction * spatial_mean(xp.tanh(self.hidden))[None, :],
                 )
                 self._update_weights(self.stream_state_bias, xp.asarray(direction).reshape(1))
         if weights_before is not None:
@@ -211,8 +219,8 @@ class PredictiveCodingRGBReadout:
                     )
                 ),
                 inference_energy=tuple(inference_energy),
-                canvas_means=tuple(float(value) for value in to_numpy(canvas.mean(axis=(0, 1)))),
-                hidden_means=tuple(float(value) for value in to_numpy(self.hidden.mean(axis=(0, 1)))),
+                canvas_means=tuple(float(value) for value in to_numpy(spatial_mean(canvas))),
+                hidden_means=tuple(float(value) for value in to_numpy(spatial_mean(self.hidden))),
                 observation_means=tuple(
                     float(value)
                     for value in to_numpy((
@@ -265,7 +273,7 @@ class PredictiveCodingRGBReadout:
     ) -> tuple[np.ndarray, np.ndarray]:
         xp = self.backend
         return (
-            self.hidden - xp.tanh(canvas) @ self.canvas_weights.T,
+            self.hidden - project_channels(xp.tanh(canvas), self.canvas_weights.T),
             observation - self._predict_observation(xp.tanh(self.hidden)),
         )
 
@@ -297,7 +305,7 @@ class PredictiveCodingRGBReadout:
         ) / pixel_count
 
     def _predict_observation(self, hidden_activity: np.ndarray) -> np.ndarray:
-        return hidden_activity @ self.visual_weights.T
+        return project_channels(hidden_activity, self.visual_weights.T)
 
     def _coerce_observation(self, observation: np.ndarray) -> np.ndarray:
         return self._coerce(observation, name="camera observation")
@@ -307,7 +315,7 @@ class PredictiveCodingRGBReadout:
 
     def _coerce(self, values: np.ndarray, *, name: str) -> np.ndarray:
         xp = self.backend
-        array = xp.asarray(values, dtype=xp.float64)
+        array = xp.asarray(values, dtype=self.hidden.dtype)
         if array.shape != self.canvas_shape:
             raise ValueError(f"{name} must match the readout canvas shape")
         if not bool(xp.all(xp.isfinite(array))):
@@ -335,9 +343,13 @@ class PredictiveCodingHiddenCoupling:
             raise ValueError("Hidden coupling requires distinct branches on the same canvas.")
         if camera.backend is not audio.backend:
             raise ValueError("Hidden coupling requires branches on the same backend.")
+        if camera.hidden.dtype != audio.hidden.dtype:
+            raise ValueError("Hidden coupling requires branches with the same dtype.")
         self.branches = (camera, audio)
         self.weights = {
-            target: self.backend.zeros((target.hidden.shape[-1], parent.hidden.shape[-1]))
+            target: self.backend.zeros(
+                (target.hidden.shape[-1], parent.hidden.shape[-1]), dtype=target.hidden.dtype,
+            )
             for target, parent in ((camera, audio), (audio, camera))
         }
 
@@ -356,8 +368,8 @@ class PredictiveCodingHiddenCoupling:
         xp = self.backend
         activity = xp.tanh(canvas)
         return {
-            branch: branch.hidden - activity @ branch.canvas_weights.T
-            - xp.tanh(self.parent(branch).hidden) @ self.weights[branch].T
+            branch: branch.hidden - project_channels(activity, branch.canvas_weights.T)
+            - project_channels(xp.tanh(self.parent(branch).hidden), self.weights[branch].T)
             for branch in self.branches
         }
 
@@ -366,7 +378,7 @@ class PredictiveCodingHiddenCoupling:
         errors: dict[PredictiveCodingRGBReadout, np.ndarray],
     ) -> np.ndarray:
         child = self.parent(branch)
-        return errors[child] @ self.weights[child]
+        return project_channels(errors[child], self.weights[child])
 
     def predict(self, prior: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         canvas = self.branches[0]._coerce(prior, name="canvas prior")
@@ -411,6 +423,8 @@ def infer_joint(
     for branch, observed in branches:
         if branch.backend is not xp:
             raise ValueError("Joint branches must share an array backend.")
+        if branch.hidden.dtype != first.hidden.dtype:
+            raise ValueError("Joint branches must share a dtype.")
         if branch.canvas_shape != first.canvas_shape or branch.config.inference_steps != steps:
             raise ValueError("Joint branches must share canvas shape and inference step count.")
         if observed is None and coupling is None and branch not in states:
@@ -424,7 +438,7 @@ def infer_joint(
         hidden_updates = []
         energy = 0.0
         errors = coupling.hidden_errors(canvas) if coupling is not None else {
-            branch: branch.hidden - canvas_activity @ branch.canvas_weights.T
+            branch: branch.hidden - project_channels(canvas_activity, branch.canvas_weights.T)
             for branch, _ in observations
         }
         for branch, observed in observations:
@@ -434,10 +448,11 @@ def infer_joint(
                 xp.zeros_like(branch.visual_error) if observed is None
                 else observed - branch._predict_observation(hidden_activity)
             )
-            correction += branch.config.canvas_rate * (
-                (1.0 - canvas_activity**2) * (hidden_error @ branch.canvas_weights)
+            correction += canvas_direction(
+                branch.config.canvas_rate, canvas_activity,
+                project_channels(hidden_error, branch.canvas_weights),
             )
-            feedback = sensory_error @ branch.visual_weights
+            feedback = project_channels(sensory_error, branch.visual_weights)
             if branch in states:
                 _, state_error, state_direction = branch._stream_state_terms(states[branch], hidden_activity)
                 feedback = feedback + state_direction * branch.stream_state_weights[0]
@@ -446,8 +461,7 @@ def infer_joint(
             if coupling is not None:
                 feedback = feedback + coupling.feedback(branch, errors)
             hidden_updates.append(
-                branch.config.inference_rate
-                * (-hidden_error + (1.0 - hidden_activity**2) * feedback)
+                hidden_direction(branch.config.inference_rate, hidden_error, hidden_activity, feedback)
             )
             if collect:
                 energy += mean_energy(hidden_error, sensory_error)
@@ -463,7 +477,7 @@ def infer_joint(
         *(branch._stream_state_logit() for branch in states),
     )
     final_errors = coupling.hidden_errors(canvas) if coupling is not None else {
-        branch: branch.hidden - xp.tanh(canvas) @ branch.canvas_weights.T
+        branch: branch.hidden - project_channels(xp.tanh(canvas), branch.canvas_weights.T)
         for branch, _ in observations
     }
     if collect:
@@ -491,7 +505,7 @@ def infer_joint(
             canvas, observed, trajectory, hidden_error=final_errors[branch], learn=learn,
             cross_weights=coupling.weights[branch] if coupling is not None else None,
             cross_parent_means=(
-                tuple(float(value) for value in to_numpy(coupling.parent(branch).hidden.mean(axis=(0, 1))))
+                tuple(float(value) for value in to_numpy(spatial_mean(coupling.parent(branch).hidden)))
                 if coupling is not None and branch.diagnostics_enabled else ()
             ),
             cross_update_norm=cross_updates.get(branch, 0.0),

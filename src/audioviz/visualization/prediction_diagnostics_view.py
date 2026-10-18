@@ -59,7 +59,7 @@ class PredictionDiagnosticsView(QtWidgets.QWidget):
         self.graph_toggle = QtWidgets.QCheckBox("2D weights and hidden states")
         self.graph_toggle.toggled.connect(self._toggle_graph)
         catalogue.addWidget(self.graph_toggle)
-        scene_button = QtWidgets.QPushButton("Open multimodal 3D scene")
+        scene_button = QtWidgets.QPushButton("Open predictions / 3D scene")
         scene_button.clicked.connect(self.open_scene_requested)
         catalogue.addWidget(scene_button)
         layout.addLayout(catalogue)

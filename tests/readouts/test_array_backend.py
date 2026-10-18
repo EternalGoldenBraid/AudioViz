@@ -19,6 +19,7 @@ from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
 from audioviz.utils.source_preview import SourceSceneMapping
 from audioviz.utils.spatial_preview import spatial_preview
+from audioviz.utils.array_backend import project_channels
 
 
 def test_numpy_inference_does_not_require_cupy(monkeypatch):
@@ -45,37 +46,38 @@ def test_numpy_inference_does_not_require_cupy(monkeypatch):
     assert source.visual_readout.diagnostics is not None
 
 
-def _assert_snapshot_equal(expected, actual):
+def _assert_snapshot_equal(expected, actual, *, rtol=1e-9, atol=1e-10):
     if is_dataclass(expected):
         assert type(actual) is type(expected)
         for field in fields(expected):
-            _assert_snapshot_equal(getattr(expected, field.name), getattr(actual, field.name))
+            _assert_snapshot_equal(getattr(expected, field.name), getattr(actual, field.name), rtol=rtol, atol=atol)
     elif isinstance(expected, tuple):
         assert isinstance(actual, tuple)
         assert len(actual) == len(expected)
         for left, right in zip(expected, actual):
-            _assert_snapshot_equal(left, right)
+            _assert_snapshot_equal(left, right, rtol=rtol, atol=atol)
     elif isinstance(expected, np.ndarray):
         assert isinstance(actual, np.ndarray)
         assert not actual.flags.writeable
-        np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-10, equal_nan=True)
+        np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol, equal_nan=True)
     elif expected is None:
         assert actual is None
     else:
-        np.testing.assert_allclose(actual, expected, rtol=1e-9, atol=1e-10, equal_nan=True)
+        np.testing.assert_allclose(actual, expected, rtol=rtol, atol=atol, equal_nan=True)
 
 
 @pytest.mark.parametrize("coupled", (False, True))
 @pytest.mark.parametrize("learning", (False, True))
 @pytest.mark.parametrize("diagnostics", (False, True))
 @pytest.mark.parametrize("evidence", ("both", "camera", "audio", "neither"))
+@pytest.mark.parametrize("dtype", ("float32", "float64"))
 def test_gpu_matches_cpu_prediction_inference_learning_and_snapshots(
-    cupy_backend, coupled, learning, diagnostics, evidence
+    cupy_backend, coupled, learning, diagnostics, evidence, dtype,
 ):
     cp = cupy_backend
     config = PredictiveCodingConfig(
         inference_steps=3, learning_enabled=learning,
-        learning_rate=.1, weight_decay=.002, cross_modal_enabled=coupled,
+        learning_rate=.1, weight_decay=.002, cross_modal_enabled=coupled, dtype=dtype,
     )
     shape = (5, 7, 3)
     pairs = []
@@ -94,6 +96,7 @@ def test_gpu_matches_cpu_prediction_inference_learning_and_snapshots(
                 )
         pairs.append((camera, audio, coupling))
     rng = np.random.default_rng(7)
+    rtol, atol = (2e-5, 2e-7) if dtype == "float32" else (1e-9, 1e-10)
     for frame in range(3):
         prior = rng.normal(scale=.1, size=shape).astype(np.float32)
         image = rng.random(shape).astype(np.float32) if evidence in ("both", "camera") else None
@@ -113,10 +116,10 @@ def test_gpu_matches_cpu_prediction_inference_learning_and_snapshots(
         for expected, actual in zip(predictions[0], predictions[1]):
             assert isinstance(actual, cp.ndarray)
             assert actual.dtype == cp.float32
-            np.testing.assert_allclose(cp.asnumpy(actual), expected, rtol=1e-6, atol=1e-8)
+            np.testing.assert_allclose(cp.asnumpy(actual), expected, rtol=max(rtol, 1e-6), atol=max(atol, 1e-8))
         assert isinstance(corrections[1], cp.ndarray)
         assert corrections[1].dtype == cp.float32
-        np.testing.assert_allclose(cp.asnumpy(corrections[1]), corrections[0], rtol=1e-6, atol=1e-8)
+        np.testing.assert_allclose(cp.asnumpy(corrections[1]), corrections[0], rtol=max(rtol, 1e-6), atol=max(atol, 1e-8))
         for expected, actual in zip(pairs[0][:2], pairs[1][:2]):
             assert actual.backend is cp
             for name in (
@@ -125,15 +128,15 @@ def test_gpu_matches_cpu_prediction_inference_learning_and_snapshots(
             ):
                 array = getattr(actual, name)
                 assert isinstance(array, cp.ndarray)
-                assert array.dtype == cp.float64
-                np.testing.assert_allclose(cp.asnumpy(array), getattr(expected, name), rtol=1e-9, atol=1e-10)
-            _assert_snapshot_equal(expected.diagnostics, actual.diagnostics)
-            np.testing.assert_allclose(actual.stream_state_prediction, expected.stream_state_prediction)
+                assert array.dtype == cp.dtype(dtype)
+                np.testing.assert_allclose(cp.asnumpy(array), getattr(expected, name), rtol=rtol, atol=atol)
+            _assert_snapshot_equal(expected.diagnostics, actual.diagnostics, rtol=rtol, atol=atol)
+            np.testing.assert_allclose(actual.stream_state_prediction, expected.stream_state_prediction, rtol=rtol, atol=atol)
         if coupled:
             for expected_branch, actual_branch in zip(pairs[0][:2], pairs[1][:2]):
                 np.testing.assert_allclose(
                     cp.asnumpy(pairs[1][2].weights[actual_branch]),
-                    pairs[0][2].weights[expected_branch], rtol=1e-9, atol=1e-10,
+                    pairs[0][2].weights[expected_branch], rtol=rtol, atol=atol,
                 )
 
 
@@ -201,6 +204,20 @@ def test_mixed_backends_are_rejected_explicitly(cupy_backend):
         )
 
 
+def test_joint_inference_rejects_mixed_precision():
+    camera = PredictiveCodingRGBReadout(
+        canvas_shape=(2, 3, 3), config=PredictiveCodingConfig(dtype="float32"),
+    )
+    audio = PredictiveCodingAudioReadout(canvas_shape=camera.canvas_shape)
+    with pytest.raises(ValueError, match="same dtype"):
+        PredictiveCodingHiddenCoupling(camera, audio)
+    with pytest.raises(ValueError, match="share a dtype"):
+        infer_joint(
+            np.zeros(camera.canvas_shape), ((camera, None), (audio, None)),
+            stream_states={camera: True, audio: True},
+        )
+
+
 def test_gpu_validation_rejects_bad_inputs_and_divergence_before_learning(cupy_backend):
     cp = cupy_backend
     readout = PredictiveCodingRGBReadout(
@@ -250,3 +267,48 @@ def test_gpu_previews_download_only_bounded_samples(cupy_backend, monkeypatch):
     saved = preview.copy()
     field.fill(0)
     np.testing.assert_array_equal(preview, saved)
+
+
+@pytest.mark.parametrize("inputs,outputs", ((3, 6), (6, 3), (6, 6), (33, 3), (3, 33)))
+@pytest.mark.parametrize("dtype", ("float32", "float64"))
+def test_gpu_channel_projection_handles_strided_inputs_and_large_channel_fallback(
+    cupy_backend, inputs, outputs, dtype,
+):
+    cp = cupy_backend
+    rng = np.random.default_rng(18)
+    base = rng.normal(size=(4, 7, inputs)).astype(dtype)
+    activity = base[:, ::-1]
+    weights = rng.normal(size=(outputs, inputs)).astype(dtype).T
+    actual = project_channels(cp.asarray(base)[:, ::-1], cp.asarray(weights))
+    np.testing.assert_allclose(
+        cp.asnumpy(actual), activity @ weights,
+        rtol=1e-5 if dtype == "float32" else 1e-12,
+        atol=1e-6 if dtype == "float32" else 1e-12,
+    )
+
+
+def test_float32_learning_stays_close_to_float64_over_repeated_frames(cupy_backend):
+    cp = cupy_backend
+    pairs = []
+    for xp, dtype in ((np, "float64"), (cp, "float32")):
+        config = PredictiveCodingConfig(
+            dtype=dtype, inference_steps=3, learning_enabled=True, cross_modal_enabled=True,
+        )
+        camera = PredictiveCodingRGBReadout(canvas_shape=(3, 5, 3), backend=xp, config=config)
+        audio = PredictiveCodingAudioReadout(canvas_shape=camera.canvas_shape, backend=xp, config=config)
+        pairs.append((camera, audio, PredictiveCodingHiddenCoupling(camera, audio)))
+    rng = np.random.default_rng(9)
+    for _ in range(60):
+        prior = rng.normal(scale=.2, size=(3, 5, 3)).astype(np.float32)
+        image = rng.random(prior.shape).astype(np.float32)
+        spectrum = rng.random(AUDIO_SPECTRAL_BANDS).astype(np.float32)
+        for camera, audio, coupling in pairs:
+            canvas = camera.backend.asarray(prior)
+            coupling.predict(canvas)
+            infer_joint(
+                canvas, ((camera, image), (audio, spectrum)), coupling=coupling,
+                stream_states={camera: True, audio: True},
+            )
+    for reference, actual in zip(pairs[0][:2], pairs[1][:2]):
+        for name in ("hidden", "canvas_weights", "visual_weights", "stream_state_weights", "stream_state_bias"):
+            np.testing.assert_allclose(cp.asnumpy(getattr(actual, name)), getattr(reference, name), rtol=1e-4, atol=1e-5)

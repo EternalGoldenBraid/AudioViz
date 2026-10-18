@@ -21,6 +21,7 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     config["sources"]["camera_frame"]["camera_index"] = 2
     config["transforms"]["prediction_error"]["enabled"] = True
     config["transforms"]["prediction_error"]["inference"]["hidden_channels"] = 4
+    config["transforms"]["prediction_error"]["inference"]["dtype"] = "float32"
     config["transforms"]["prediction_error"]["inference"]["steps"] = 12
     config["transforms"]["prediction_error"]["inference"]["hidden_rate"] = 0.2
     config["transforms"]["prediction_error"]["inference"]["canvas_rate"] = 0.03
@@ -40,6 +41,7 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     assert orchestrator_config.prediction_error.enabled is True
     assert orchestrator_config.prediction_error.inputs == ("camera_frame",)
     assert orchestrator_config.visual_pathway.hidden_channels == 4
+    assert orchestrator_config.visual_pathway.dtype == "float32"
     assert orchestrator_config.visual_pathway.inference_steps == 12
     assert orchestrator_config.visual_pathway.inference_rate == 0.2
     assert orchestrator_config.visual_pathway.canvas_rate == 0.03

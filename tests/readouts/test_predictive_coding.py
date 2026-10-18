@@ -187,6 +187,8 @@ def test_local_learning_improves_pre_observation_prediction_over_frozen_weights(
         {"gradient_clip": 0.0},
         {"weight_clip": np.inf},
         {"cross_modal_enabled": 1},
+        {"dtype": "float16"},
+        {"dtype": None},
     ],
 )
 def test_config_rejects_invalid_values(changes):
@@ -201,6 +203,8 @@ def test_invalid_config_update_does_not_replace_previous_config():
         readout.update_config(inference_steps=0)
     with pytest.raises(ValueError, match="rebuilding"):
         readout.update_config(hidden_channels=4)
+    with pytest.raises(ValueError, match="rebuilding"):
+        readout.update_config(dtype="float32")
     assert readout.config is config_before
 
 
@@ -210,3 +214,17 @@ def test_readout_rejects_wrong_shape_and_nonfinite_observations():
         readout.predict(np.zeros((1, 1)))
     with pytest.raises(ValueError, match="finite"):
         readout.infer(np.zeros((1, 1, 3)), np.full((1, 1, 3), np.nan))
+
+
+def test_float32_is_explicit_and_preserves_all_numerical_state_dtypes():
+    readout = PredictiveCodingRGBReadout(
+        canvas_shape=(2, 3, 3), config=PredictiveCodingConfig(dtype="float32", learning_enabled=True),
+    )
+    prior = np.ones(readout.canvas_shape, dtype=np.float64)
+    readout.predict(prior)
+    correction = readout.infer(prior, prior, stream_state=True)
+    for array in (
+        readout.hidden, readout.hidden_error, readout.visual_error, readout.canvas_weights,
+        readout.visual_weights, readout.stream_state_weights, readout.stream_state_bias, correction,
+    ):
+        assert array.dtype == np.float32

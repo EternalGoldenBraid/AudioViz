@@ -77,3 +77,25 @@ def test_camera_frame_source_accepts_explicit_device_path():
         source.ensure_open()
 
     assert fake_cv2.requested_device == "/dev/video0"
+
+
+@pytest.mark.parametrize("kind", ("rgb", "rgba", "gray", "float"))
+def test_gpu_camera_preprocessing_matches_cpu(cupy_backend, kind):
+    cp = cupy_backend
+    rng = np.random.default_rng(5)
+    frame = rng.integers(0, 256, (9, 13, 4), dtype=np.uint8)
+    if kind == "rgb":
+        frame = frame[..., :3]
+    elif kind == "gray":
+        frame = frame[..., 0]
+    elif kind == "float":
+        frame = frame.astype(np.float32)
+        frame[0, 0] = [np.nan, np.inf, -np.inf, 0]
+    expected = CameraFrameSource.frame_to_excitation_grid(frame, resolution=(17, 25), gain=.7)
+    actual = CameraFrameSource.frame_to_excitation_grid(
+        frame, resolution=(17, 25), gain=.7, backend=cp,
+    )
+    assert isinstance(actual, cp.ndarray)
+    assert actual.dtype == cp.float32
+    assert actual.flags.c_contiguous
+    np.testing.assert_allclose(cp.asnumpy(actual), expected, atol=1e-7)

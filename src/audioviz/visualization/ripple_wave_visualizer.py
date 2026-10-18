@@ -262,7 +262,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self.diagnostics_button.setEnabled(not self.use_shader)
         self.diagnostics_button.toggled.connect(self.set_prediction_diagnostics_visible)
         layout.addWidget(self.diagnostics_button)
-        self.scene_button = QtWidgets.QPushButton("Show Multimodal 3D Scene")
+        self.scene_button = QtWidgets.QPushButton("Show Predictions / 3D Scene")
         self.scene_button.setCheckable(True)
         self.scene_button.setEnabled(not self.use_shader)
         self.scene_button.toggled.connect(self.set_prediction_scene_visible)
@@ -369,7 +369,9 @@ class RippleWaveVisualizer(VisualizerBase):
     def _set_diagnostics_collection(self, _enabled: bool) -> None:
         plots_visible = self.prediction_diagnostics is not None and self.prediction_diagnostics.isVisible()
         scene_active = self.prediction_scene is not None and self.prediction_scene.preview_active()
-        self.source_orchestrator.set_diagnostics_enabled(plots_visible or scene_active)
+        self.source_orchestrator.set_diagnostics_enabled(
+            plots_visible or (scene_active and self.prediction_scene.needs_hidden_preview)
+        )
         with QtCore.QSignalBlocker(self.diagnostics_button):
             self.diagnostics_button.setChecked(plots_visible)
         with QtCore.QSignalBlocker(self.scene_button):
@@ -551,6 +553,10 @@ class RippleWaveVisualizer(VisualizerBase):
     def _advance_canvas(self, drive_grid: np.ndarray | None) -> None:
         readout = self.source_orchestrator.visual_readout
         scene_requested = self.prediction_scene is not None and self.prediction_scene.take_spatial_preview_request()
+        plots_visible = self.prediction_diagnostics is not None and self.prediction_diagnostics.isVisible()
+        self.source_orchestrator.set_diagnostics_enabled(
+            plots_visible or (scene_requested and self.prediction_scene.needs_hidden_preview)
+        )
         audio_view = (
             self.prediction_diagnostics.audio_view
             if self.prediction_diagnostics is not None else None
@@ -565,8 +571,13 @@ class RippleWaveVisualizer(VisualizerBase):
             if not self.audio_source.has_recent_observation():
                 self.prediction_scene.invalidate_evidence("audio")
             if scene_requested:
+                canvas_preview = (
+                    self.engine.get_field_preview()
+                    if self.prediction_scene.needs_hidden_preview
+                    else self.engine.get_field_preview(max_side=self.prediction_scene.preview_max_side)
+                )
                 self.prediction_scene.record(
-                    self.engine.get_field_preview(), self._capture_scene_sources(drive_grid)
+                    canvas_preview, self._capture_scene_sources(drive_grid)
                 )
         if (
             self.prediction_diagnostics is not None
@@ -588,6 +599,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _capture_scene_sources(self, drive_grid: np.ndarray | None) -> tuple[SourceScenePreview, ...]:
         orchestrator = self.source_orchestrator
+        max_side = self.prediction_scene.preview_max_side
         sources = []
         for source, readout, prediction, observation, enabled in (
             (self.camera_source, orchestrator.visual_readout, self.visual_prediction,
@@ -599,9 +611,12 @@ class RippleWaveVisualizer(VisualizerBase):
             mapping = source.scene_mapping
             sources.append(SourceScenePreview(
                 mapping=mapping, enabled=enabled,
-                observation=mapping.sample(observation) if observation is not None else None,
-                prediction=mapping.sample(prediction) if prediction is not None else None,
-                hidden=spatial_preview(readout.hidden) if readout is not None else None,
+                observation=mapping.sample(observation, max_side=max_side) if observation is not None else None,
+                prediction=mapping.sample(prediction, max_side=max_side) if prediction is not None else None,
+                hidden=(
+                    spatial_preview(readout.hidden)
+                    if readout is not None and self.prediction_scene.needs_hidden_preview else None
+                ),
                 hidden_energies=(
                     readout.diagnostics.hidden.channel_means
                     if readout is not None and readout.diagnostics is not None else ()
@@ -704,7 +719,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.use_shader:
             self.renderer.render(self.engine)
             return
-        self.renderer.render(self.engine.get_field_numpy())
+        self.renderer.render(self.engine.get_field())
 
     def closeEvent(self, event):
         if self.prediction_scene is not None:

@@ -6,6 +6,8 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5 import QtGui, QtWidgets
 
+from audioviz.utils.array_backend import array_module, to_numpy
+
 
 FIELD_VERTEX_SHADER_SOURCE = """
 #version 330 core
@@ -156,13 +158,14 @@ class NumpyImageRenderer:
         self.histogram.setLevels(0.0, 0.0)
 
     def render(self, canvas: np.ndarray) -> None:
-        field = np.asarray(canvas, dtype=np.float32)
+        xp = array_module(canvas)
+        field = xp.asarray(canvas, dtype=xp.float32)
         if field.ndim != 3 or field.shape[2] != 3:
             raise ValueError("canvas state must have shape (rows, cols, 3)")
         display_field = (
             field
             if self._rgb_canvas_enabled
-            else np.mean(field, axis=2)
+            else xp.mean(field, axis=2)
         )
         if self._auto_percentile_levels:
             active_limit = _percentile_abs_limit(
@@ -176,27 +179,29 @@ class NumpyImageRenderer:
             )
             if limit is not None:
                 self._display_limit = limit
-                self.histogram.setLevels(-limit, limit)
+                if not self._rgb_canvas_enabled:
+                    self.histogram.setLevels(-limit, limit)
             self._auto_levels_pending = False
         elif self._auto_levels_pending:
-            max_abs = np.max(np.abs(display_field))
+            max_abs = float(xp.max(xp.abs(display_field)))
             if max_abs > 0:
                 self._display_limit = float(max_abs)
-                self.histogram.setLevels(-max_abs, max_abs)
+                if not self._rgb_canvas_enabled:
+                    self.histogram.setLevels(-max_abs, max_abs)
             self._auto_levels_pending = False
         if self._rgb_canvas_enabled:
             rgb_frame = _canvas_to_rgb(
                 field,
                 limit=self._display_limit,
             )
+            self.histogram.setLevels(0, 255)
             self.image_item.setImage(
                 rgb_frame,
                 autoLevels=False,
                 levels=(0, 255),
             )
-            self.histogram.setLevels(0, 255)
         else:
-            self.image_item.setImage(display_field, autoLevels=False)
+            self.image_item.setImage(to_numpy(display_field), autoLevels=False)
 
     def render_rgb_frame(self, rgb_frame: np.ndarray) -> None:
         self.image_item.setImage(
@@ -279,16 +284,17 @@ def _prediction_overlay_rgba(
 def _canvas_to_rgb(canvas: np.ndarray, *, limit: float) -> np.ndarray:
     if limit <= 0.0:
         raise ValueError("limit must be positive")
-    values = np.nan_to_num(
-        np.asarray(canvas, dtype=np.float32),
+    xp = array_module(canvas)
+    values = xp.nan_to_num(
+        xp.asarray(canvas, dtype=xp.float32),
         nan=0.0,
         posinf=limit,
         neginf=0.0,
     )
     if values.ndim != 3 or values.shape[2] != 3:
         raise ValueError("canvas must have shape (rows, cols, 3)")
-    normalized = np.clip(values / limit, 0.0, 1.0)
-    return np.ascontiguousarray(np.rint(normalized * 255.0).astype(np.uint8))
+    normalized = xp.clip(values / limit, 0.0, 1.0)
+    return np.ascontiguousarray(to_numpy(xp.rint(normalized * 255.0).astype(xp.uint8)))
 
 
 def _draw_overlay_segment(
@@ -454,12 +460,13 @@ def _percentile_abs_limit(
     *,
     percentile: float,
 ) -> float | None:
-    values = np.abs(np.asarray(field, dtype=np.float32))
-    finite = values[np.isfinite(values)]
+    xp = array_module(field)
+    values = xp.abs(xp.asarray(field, dtype=xp.float32))
+    finite = values[xp.isfinite(values)]
     active = finite[finite > 0.0]
     if active.size == 0:
         return None
-    limit = float(np.percentile(active, percentile))
+    limit = float(xp.percentile(active, percentile))
     return max(limit, 1e-9)
 
 
