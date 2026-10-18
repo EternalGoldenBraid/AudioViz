@@ -225,7 +225,7 @@ class RippleWaveVisualizer(VisualizerBase):
         )
         self.source_orchestrator.set_base_amplitude(self.base_amplitude)
         self.visual_prediction = self.source_orchestrator.visual_readout.predict(
-            self.engine.get_field_numpy()
+            self.engine.get_field()
         )
 
         self.renderer = (
@@ -329,7 +329,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if callable(reset_view):
             reset_view()
         self.visual_prediction = self.source_orchestrator.visual_readout.predict(
-            self.engine.get_field_numpy()
+            self.engine.get_field()
         )
         if self.renderer.prepare_frame():
             self._render_canvas()

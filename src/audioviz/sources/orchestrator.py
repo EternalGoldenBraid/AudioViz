@@ -62,13 +62,17 @@ class RippleSourceOrchestrator:
             PredictiveCodingRGBReadout(
                 canvas_shape=self.canvas_shape,
                 config=config.visual_pathway,
+                backend=engine.backend,
             )
             if visual_readout is None
             else visual_readout
         )
+        if self.visual_readout.backend is not engine.backend:
+            raise ValueError("Visual readout must use the engine's array backend.")
         self.audio_readout = (
             PredictiveCodingAudioReadout(
-                canvas_shape=self.canvas_shape, config=config.visual_pathway
+                canvas_shape=self.canvas_shape, config=config.visual_pathway,
+                backend=engine.backend,
             )
             if processor is not None else None
         )
@@ -151,7 +155,7 @@ class RippleSourceOrchestrator:
         return None if grid is None else self._to_canvas_grid(grid)
 
     def predict_visual(self) -> np.ndarray:
-        prior = self.engine.get_prior_numpy()
+        prior = self.engine.get_prior()
         if self.visual_readout.config.cross_modal_enabled:
             if self.hidden_coupling is None:
                 raise RuntimeError("Cross-modal prediction requires both predictive readouts.")
@@ -169,7 +173,7 @@ class RippleSourceOrchestrator:
         )
         self.visual_observation = observation
         return self.visual_readout.infer(
-            self.engine.get_prior_numpy(),
+            self.engine.get_prior(),
             observation,
             stream_state=self.camera_source.enabled,
         )
@@ -190,7 +194,7 @@ class RippleSourceOrchestrator:
             if not isinstance(self.visual_readout, PredictiveCodingRGBReadout):
                 raise TypeError("Stream-state inference requires a predictive-coding readout.")
             correction = infer_joint(
-                self.engine.get_prior_numpy(),
+                self.engine.get_prior(),
                 ((self.visual_readout, image), (self.audio_readout, audio)),
                 coupling=self.hidden_coupling if self.visual_readout.config.cross_modal_enabled else None,
                 stream_states={

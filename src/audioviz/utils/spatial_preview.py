@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from audioviz.utils.array_backend import to_numpy
+
 
 PREVIEW_MAX_SIDE = 64
 
@@ -19,6 +21,6 @@ def preview_indices(shape: tuple[int, ...]) -> tuple[np.ndarray, np.ndarray]:
 def spatial_preview(field: np.ndarray) -> np.ndarray:
     rows, columns = preview_indices(field.shape)
     sampled = field[rows[:, None], columns[None, :]]
-    snapshot = np.asarray(sampled, dtype=np.float32)
+    snapshot = np.asarray(to_numpy(sampled), dtype=np.float32)
     snapshot.setflags(write=False)
     return snapshot

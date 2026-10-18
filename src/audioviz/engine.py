@@ -254,6 +254,12 @@ class RippleEngine:
             return self.backend.asnumpy(self.Z)
         return self.Z
 
+    def get_field(self):
+        """Return the native array field; shader fields still require readback."""
+        if self.use_shader:
+            return self.propagator.get_state()
+        return self.Z
+
     def get_field_preview(self) -> np.ndarray:
         """Sample the corrected field before transferring GPU data to the host."""
         if self.use_shader:
@@ -266,12 +272,17 @@ class RippleEngine:
         snapshot.setflags(write=False)
         return snapshot
 
-    def get_prior_numpy(self) -> np.ndarray:
+    def get_prior(self):
+        """Return the wave prior on its native backend without a host transfer."""
         if not self._has_prior:
             raise RuntimeError("propagate must be called before reading the prior")
-        if self.use_gpu:
-            return self.backend.asnumpy(self.prior_Z)
         return self.prior_Z
+
+    def get_prior_numpy(self) -> np.ndarray:
+        prior = self.get_prior()
+        if self.use_gpu:
+            return self.backend.asnumpy(prior)
+        return prior
 
     def get_opengl_field_texture_id(self) -> int:
         if not self.use_shader:

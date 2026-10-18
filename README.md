@@ -20,7 +20,7 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 - Real-time wave propagation visualized on a 2D surface
 - Flexible audio input: default is microphone via `sounddevice`, but any input device can be configured
 - Optional synthetic tone generator for testing
-- Optional GPU acceleration (via CuPy); CPU wave propagation is the default
+- Optional GPU wave propagation and predictive inference (via CuPy); NumPy is the default
 - Adjustable wave physics: damping, decay, speed, amplitude
 - Three-channel wave surface with independent persistent visual/audio hidden belief states
 - Local nonlinear predictive coding: sensory surprise revises hidden states and the canvas
@@ -188,10 +188,35 @@ of the camera residual.
 Disabling **Pathway Learning** freezes weights, not state inference. Start with
 hidden rate `0.1`, canvas rate `0.01`, eight inference steps, and weight-learning
 rate `0.01`; a weight rate near `1` is an experiment, not a stability guarantee.
-The pathways run in NumPy for CPU/GPU wave backends; OpenGL sensory correction
-remains unsupported and is explicitly rejected. Inference cost scales with
-image size and step count; reduce inference steps or resolution when exploring
-the live loop at high resolutions.
+The pathways use the wave engine's array backend: NumPy when the renderer's
+`backend` is `"numpy"`, and CuPy when it is `"gpu"`. Selecting `"gpu"` keeps the canvas, hidden states,
+errors, predictive weights, optional cross-modal coupling, inference, and learning
+on the GPU. Float64 inference and float32 wave states/predictions are preserved
+across backends. OpenGL sensory correction remains unsupported and is explicitly
+rejected; pose-medium coupling still requires the CPU backend.
+
+Numerical graph state stays on its selected backend. Host/device transfers belong
+only at sensor and presentation boundaries: OpenCV camera capture/preprocessing
+and audio analysis currently run on the CPU, evidence is uploaded for inference,
+and the corrected surface is downloaded for PyQtGraph rendering. Diagnostics
+export host snapshots; spatial previews are sampled to at most 64 pixels per
+side before downloading. Diagnostics add reductions and readbacks, so keep their
+windows closed when measuring compute throughput. Finite-state validation runs
+at settling boundaries rather than synchronizing the GPU on every inference
+step, and still raises explicitly on divergence before weight learning.
+
+Benchmark the numerical path without live camera/audio devices or a GUI:
+
+```bash
+uv run python scripts/benchmark_predictive_inference.py --backend both
+uv run python scripts/benchmark_predictive_inference.py --backend gpu --resolution 300 400 --inference-steps 8 --learning --cross-modal
+```
+
+The benchmark uses deterministic camera/audio evidence, warmup frames, and
+explicit GPU synchronization for stage timings. It includes camera preprocessing
+and the final field download, but excludes camera capture, audio analysis, and
+GUI rendering; its throughput is not live application FPS. Inference cost scales
+with image size and step count; reduce either when exploring high resolutions.
 
 Hover a source/inference control or its label for its update semantics,
 zero-value behavior, and stability caveats. **Canvas Correction Rate** is the
