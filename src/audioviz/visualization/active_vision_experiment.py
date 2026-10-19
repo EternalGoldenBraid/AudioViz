@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import numpy as np
 import pyqtgraph as pg
+from loguru import logger
 from PyQt5 import QtCore, QtWidgets
 
 from audioviz.readouts import GaussianSpatialPrecision, PredictiveCodingConfig
@@ -58,8 +59,14 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         self.observe = QtWidgets.QCheckBox("Observe")
         self.observe.setChecked(precision.sample)
         controls.addWidget(self.observe)
+        self.restart_button = QtWidgets.QPushButton("Restart")
+        self.restart_button.setToolTip("Replay the same seeded stimulus and reset beliefs; keep the selected gaze mode.")
+        self.restart_button.setEnabled(False)
+        self.restart_button.clicked.connect(self._restart)
+        controls.addWidget(self.restart_button)
         controls.addStretch()
         self.progress = QtWidgets.QLabel("Waiting for first frame")
+        self.progress.setWordWrap(True)
         controls.addWidget(self.progress)
         layout.addLayout(controls)
         modes = QtWidgets.QHBoxLayout()
@@ -254,7 +261,10 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         ):
             item.setVisible(visible)
         if scores is None:
-            self.information_status.setText("Waiting for uncertainty estimate")
+            self.information_status.setText(
+                "Finished - click Restart to run this gaze mode"
+                if self.stimulus.exhausted else "Waiting for uncertainty estimate"
+            )
             return
         if not available:
             self.information_status.setText("No expected gain with the configured observation precision")
@@ -315,12 +325,15 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
                 self.gaze_y.setValue(self.precision.gaze[1])
         sample = self.stimulus.latest
         if sample is not None:
-            self.progress.setText(f"Stimulus time: {sample.time:.2f} s")
+            self.restart_button.setEnabled(True)
+            self.progress.setText(
+                f"Stimulus time: {sample.time:.2f} / {self.stimulus.config.duration:g} s",
+            )
             if self.stimulus.exhausted:
                 self.visualizer.timer.stop()
                 self.refresh_previews()
                 self.preview_timer.stop()
-                self.progress.setText(f"Finished: {self.stimulus.frame_count} frames")
+                self.progress.setText(f"Finished: {self.stimulus.frame_count} frames - Restart to continue")
 
     def refresh_previews(self):
         sample = self.stimulus.latest
@@ -350,6 +363,27 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
                 levels=(float(scores.min()), max(float(scores.max()), float(scores.min()) + 1e-6)),
             )
         self._update_advisory_marker()
+
+    def _restart(self):
+        if not self.visualizer.renderer.prepare_frame():
+            logger.warning("Cannot restart active vision before the canvas renderer is ready")
+            return
+        self.visualizer.timer.stop()
+        self.preview_timer.stop()
+        self.visualizer.engine.reset()
+        self.visualizer._sync_after_reset()
+        self.visualizer.camera_source.close()
+        self.stimulus = CircularDotSource(self.stimulus.config)
+        self.visualizer.camera_source.capture = CircularDotCapture(self.stimulus)
+        self.visualizer.visual_prediction = None
+        for image in (self.truth_image, self.precision_background, self.prediction_image, self.information_image):
+            image.clear()
+        self.information_scores = None
+        self._update_precision()
+        self.progress.setText("Restarting stimulus")
+        self.restart_button.setEnabled(False)
+        self.visualizer.timer.start()
+        self.preview_timer.start()
 
     def closeEvent(self, event):
         self.preview_timer.stop()

@@ -130,7 +130,7 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
             widget.visualizer.update_visualization()
             widget._after_frame()
         assert widget.stimulus.exhausted
-        assert widget.progress.text() == "Finished: 3 frames"
+        assert widget.progress.text() == "Finished: 3 frames - Restart to continue"
         assert not widget.visualizer.timer.isActive() and not widget.preview_timer.isActive()
         np.testing.assert_allclose(
             spatial_preview(widget.uncertainty.variance, max_side=32),
@@ -153,6 +153,62 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
         widget.visualizer.source_orchestrator.reset_readouts()
         widget.uncertainty._ensure_initialized()
         np.testing.assert_array_equal(spatial_preview(widget.uncertainty.variance, max_side=32), 1)
+    finally:
+        widget.close()
+        qapp.processEvents()
+        widget.deleteLater()
+        qapp.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+
+
+@pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
+def test_finished_run_can_restart_with_autonomous_gaze_and_reproducible_stimulus(qapp, request, backend):
+    if backend == "cupy":
+        request.getfixturevalue("cupy_backend")
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("QOpenGLWidget requires a window-system context")
+    widget = ActiveVisionExperiment(
+        stimulus=CircularDotConfig(
+            resolution=(24, 32), radius=6, frame_rate=10, duration=0.2,
+            seed=7, brownian_scale=2,
+        ),
+        precision=GaussianSpatialPrecision(), backend=backend, inference_steps=2,
+    )
+    widget.visualizer.timer.stop()
+    widget.preview_timer.stop()
+    try:
+        widget.show()
+        qapp.processEvents()
+        for index in range(2):
+            widget.visualizer.update_visualization()
+            widget._after_frame()
+            if index == 0:
+                first_frame = widget.stimulus.latest.frame.copy()
+        assert widget.stimulus.exhausted and widget.restart_button.isEnabled()
+        old_capture = widget.visualizer.camera_source.capture
+        point = widget.truth_image.mapToScene(QtCore.QPointF(.5+.75*31, .5+.25*23))
+        widget.previews.scene().sigMouseMoved.emit(point)
+        assert widget.precision.gaze == (.75, .25)
+        widget.autonomous_gaze.click()
+        assert not widget.visualizer.timer.isActive()
+        assert "click Restart" in widget.information_status.text()
+        widget.restart_button.click()
+        assert widget.visualizer.timer.isActive() and widget.preview_timer.isActive()
+        widget.visualizer.timer.stop()
+        widget.preview_timer.stop()
+        assert old_capture.read() == (False, None)
+        assert widget.stimulus.latest is None and not widget.stimulus.exhausted
+        assert widget.visualizer.engine.time == 0
+        np.testing.assert_array_equal(widget.visualizer.engine.get_field_numpy(), 0)
+        widget.uncertainty._ensure_initialized()
+        np.testing.assert_array_equal(spatial_preview(widget.uncertainty.variance, max_side=32), 1)
+        widget.visualizer.update_visualization()
+        widget._after_frame()
+        widget.refresh_previews()
+        assert widget.stimulus.latest.time == 0
+        np.testing.assert_array_equal(widget.stimulus.latest.frame, first_frame)
+        assert widget.autonomous_gaze.isChecked() and widget.precision.sample
+        assert widget.precision.gaze != (.75, .25)
+        assert widget.restart_button.isEnabled()
     finally:
         widget.close()
         qapp.processEvents()
