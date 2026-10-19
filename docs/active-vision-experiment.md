@@ -19,7 +19,12 @@ The top panels show evaluator ground truth, the Gaussian precision field over
 that frame with a gaze cross, and the model's prediction **before the current
 frame was incorporated**. The lower canvas is the existing corrected wave
 surface. The model weights remain fixed by default. Controls change gaze
-location and whether to observe; Gaussian width and baseline/peak precision
+location and whether to observe. **Follow mouse** is enabled by default:
+hover over any of the three preview images to move gaze directly. Image
+coordinates account for scaling and the inverted image Y axis; moving into
+the surrounding margins leaves gaze unchanged. Turn the toggle off to
+freeze gaze, or position it with the numeric controls.
+Gaussian width and baseline/peak precision
 remain fixed for the run. The stimulus stops after its configured duration.
 Previews update at most 10 Hz and have a maximum side of 256 pixels.
 

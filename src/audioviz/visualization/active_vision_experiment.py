@@ -47,6 +47,10 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         controls.addWidget(self.gaze_x)
         controls.addWidget(QtWidgets.QLabel("Gaze Y"))
         controls.addWidget(self.gaze_y)
+        self.follow_mouse = QtWidgets.QCheckBox("Follow mouse")
+        self.follow_mouse.setChecked(True)
+        self.follow_mouse.setToolTip("Move over any preview image to position gaze. Turn off to freeze it.")
+        controls.addWidget(self.follow_mouse)
         self.observe = QtWidgets.QCheckBox("Observe")
         self.observe.setChecked(precision.sample)
         controls.addWidget(self.observe)
@@ -97,6 +101,9 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         self.gaze_y.valueChanged.connect(self._update_precision)
         self.observe.toggled.connect(self._update_precision)
         self._update_precision()
+        self.previews.setMouseTracking(True)
+        self.previews.viewport().setMouseTracking(True)
+        self.previews.scene().sigMouseMoved.connect(self._move_gaze_from_mouse)
 
     @staticmethod
     def _gaze_control(value):
@@ -134,6 +141,23 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
             [0.5 + self.precision.gaze[0] * (field.shape[1] - 1)],
             [0.5 + self.precision.gaze[1] * (field.shape[0] - 1)],
         )
+
+    def _move_gaze_from_mouse(self, scene_position):
+        if not self.follow_mouse.isChecked():
+            return
+        for image in (self.truth_image, self.precision_image, self.prediction_image):
+            position = image.mapFromScene(scene_position)
+            bounds = image.boundingRect()
+            if not bounds.contains(position):
+                continue
+            x = float(np.clip((position.x() - 0.5) / max(bounds.width() - 1, 1), 0, 1))
+            y = float(np.clip((position.y() - 0.5) / max(bounds.height() - 1, 1), 0, 1))
+            with QtCore.QSignalBlocker(self.gaze_x), QtCore.QSignalBlocker(self.gaze_y):
+                self.gaze_x.setValue(x)
+                self.gaze_y.setValue(y)
+            if (self.gaze_x.value(), self.gaze_y.value()) != self.precision.gaze:
+                self._update_precision()
+            return
 
     def _after_frame(self):
         sample = self.stimulus.latest

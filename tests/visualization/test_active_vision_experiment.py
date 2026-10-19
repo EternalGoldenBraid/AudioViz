@@ -39,8 +39,25 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
         assert np.isfinite(widget.prediction_image.image).all()
         assert widget.visualizer.source_orchestrator.visual_readout.config.learning_enabled is False
 
+        qapp.processEvents()
+        assert widget.follow_mouse.isChecked()
+        for image, gaze in (
+            (widget.truth_image, (0.75, 0.25)),
+            (widget.precision_image, (0.25, 0.75)),
+            (widget.prediction_image, (0, 1)),
+        ):
+            point = QtCore.QPointF(0.5 + gaze[0] * 31, 0.5 + gaze[1] * 23)
+            widget.previews.scene().sigMouseMoved.emit(image.mapToScene(point))
+            assert widget.precision.gaze == gaze
+            assert widget.visualizer.source_orchestrator.visual_readout.config.spatial_precision.gaze == gaze
+        widget.previews.scene().sigMouseMoved.emit(QtCore.QPointF(-1000, -1000))
+        assert widget.precision.gaze == (0, 1)
+        widget.follow_mouse.setChecked(False)
+        widget.previews.scene().sigMouseMoved.emit(widget.truth_image.mapToScene(QtCore.QPointF(16, 12)))
+        assert widget.precision.gaze == (0, 1)
+
         widget.gaze_x.setValue(0.9)
-        assert widget.visualizer.source_orchestrator.visual_readout.config.spatial_precision.gaze == (0.9, 0.5)
+        assert widget.visualizer.source_orchestrator.visual_readout.config.spatial_precision.gaze == (0.9, 1)
         widget.observe.setChecked(False)
         assert not widget.precision_image.image.any()
         assert widget.visualizer.source_orchestrator.visual_readout.config.spatial_precision.sample is False
