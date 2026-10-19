@@ -14,8 +14,10 @@ from audioviz.readouts.audio import PredictiveCodingAudioReadout
 from audioviz.readouts.predictive_coding import PredictiveCodingHiddenCoupling, infer_joint
 from audioviz.readouts.gaussian_audio_uncertainty import GaussianAudioUncertainty
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
+from audioviz.readouts.shared_sensory_graph import SharedSensoryGraph
+from audioviz.readouts.shared_sensory_io import SharedSensoryBranch, SharedSensoryIO
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
-from audioviz.sources.gaze import GazePolicy
+from audioviz.sources.gaze import ActiveVisionConfig, GazePolicy
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 from audioviz.transforms.prediction_error import PredictionErrorTransform
@@ -55,6 +57,7 @@ class RippleSourceOrchestrator:
         n_sources: int,
         camera_capture=None,
         visual_readout: VisualReadout | None = None,
+        shared_sensory_graph: ActiveVisionConfig | None = None,
     ) -> None:
         self.config = config
         self.engine = engine
@@ -63,6 +66,11 @@ class RippleSourceOrchestrator:
         self.n_sources = int(n_sources)
         self.base_amplitude = 1.0
         self.shader_model = None
+        if shared_sensory_graph is not None:
+            if not shared_sensory_graph.shared_sensory_graph:
+                raise ValueError("Shared sensory graph configuration must explicitly opt in")
+            if config.visual_pathway.cross_modal_enabled or visual_readout is not None:
+                raise ValueError("Shared sensory graph cannot use legacy cross-modal coupling or a separate readout")
         if engine.use_shader:
             if visual_readout is not None:
                 raise ValueError("OpenGL requires its native predictive readouts")
@@ -71,7 +79,23 @@ class RippleSourceOrchestrator:
             self.shader_model = OpenGLPredictiveModel(
                 engine, config.visual_pathway, audio_enabled=processor is not None,
             )
+        self.sensory_graph = None
+        self.graph_io = None
+        if shared_sensory_graph is not None:
+            visual_shape = tuple(min(4, side) for side in resolution)
+            self.sensory_graph = SharedSensoryGraph(
+                visual_shape=visual_shape, backend=engine.backend,
+                initial_variance=shared_sensory_graph.initial_variance,
+                process_variance=shared_sensory_graph.process_variance,
+                memory_time_constant=shared_sensory_graph.memory_time_constant,
+            )
+            self.graph_io = SharedSensoryIO(
+                self.canvas_shape, visual_shape, backend=engine.backend,
+                device=self.shader_model.device if self.shader_model is not None else None,
+            )
         self.visual_readout = (
+            SharedSensoryBranch(self.sensory_graph, config.visual_pathway, self.canvas_shape, engine.backend)
+            if self.sensory_graph is not None else
             self.shader_model.camera if self.shader_model is not None else
             PredictiveCodingRGBReadout(
                 canvas_shape=self.canvas_shape,
@@ -84,6 +108,8 @@ class RippleSourceOrchestrator:
         if self.shader_model is None and self.visual_readout.backend is not engine.backend:
             raise ValueError("Visual readout must use the engine's array backend.")
         self.audio_readout = (
+            SharedSensoryBranch(self.sensory_graph, config.visual_pathway, self.canvas_shape, engine.backend)
+            if self.sensory_graph is not None else
             self.shader_model.audio if self.shader_model is not None else
             PredictiveCodingAudioReadout(
                 canvas_shape=self.canvas_shape, config=config.visual_pathway,
@@ -175,12 +201,15 @@ class RippleSourceOrchestrator:
         return None if grid is None else self._to_canvas_grid(grid)
 
     def predict_visual(self, *, dt: float | None = None) -> np.ndarray:
-        if self.visual_uncertainty is not None and dt is not None:
+        if self.has_temporal_beliefs and dt is not None:
             if not np.isfinite(dt) or dt <= 0:
                 raise ValueError("visual uncertainty requires a finite, positive timestep")
             self._uncertainty_dt = float(dt)
         if self.gaze_policy is not None:
             self._select_visual_gaze(self.gaze_policy)
+        if self.sensory_graph is not None:
+            visual, self.audio_prediction = self.sensory_graph.forecast(self._uncertainty_dt)
+            return self.graph_io.render(visual)
         if self.visual_uncertainty is not None:
             prior = self.engine.get_prior()
             prediction = self.visual_uncertainty.predict(prior, dt=self._uncertainty_dt)
@@ -192,7 +221,7 @@ class RippleSourceOrchestrator:
         return self._predict_visual_mean()
 
     def _select_visual_gaze(self, policy: GazePolicy) -> None:
-        if self.visual_uncertainty is None:
+        if not self.has_temporal_beliefs:
             raise RuntimeError("Gaze policy requires visual uncertainty to be enabled")
         precision = self.visual_readout.config.spatial_precision
         if precision is None:
@@ -200,12 +229,34 @@ class RippleSourceOrchestrator:
         self.gaze_scores = None
         if not precision.sample:
             return
-        self.gaze_scores = self.visual_uncertainty.expected_information_gain(
-            precision, prior=self.engine.get_prior(), dt=self._uncertainty_dt,
-        )
+        self.gaze_scores = self.visual_information_gain(precision)
         gaze = policy.select(self.gaze_scores, precision.gaze)
         if gaze != precision.gaze:
             self.update_pathway_config(spatial_precision=replace(precision, gaze=gaze))
+
+    @property
+    def has_temporal_beliefs(self) -> bool:
+        return self.visual_uncertainty is not None or self.sensory_graph is not None
+
+    def visual_information_gain(self, precision):
+        if self.sensory_graph is None:
+            if self.visual_uncertainty is None:
+                raise RuntimeError("Information gain requires a Gaussian belief model")
+            return self.visual_uncertainty.expected_information_gain(
+                precision, prior=self.engine.get_prior(), dt=self._uncertainty_dt,
+            )
+        scores = np.empty((9, 13), dtype=np.float64)
+        cache = {}
+        for row, y in enumerate(np.linspace(0, 1, scores.shape[0])):
+            for col, x in enumerate(np.linspace(0, 1, scores.shape[1])):
+                mask = self.graph_io.visual_mask(replace(precision, gaze=(float(x), float(y))))
+                indices = tuple(np.flatnonzero(np.repeat(mask.ravel(), 3)))
+                if indices not in cache:
+                    cache[indices] = self.sensory_graph.information_gain(
+                        indices, dt=self._uncertainty_dt,
+                    )
+                scores[row, col] = cache[indices]
+        return scores
 
     def enable_visual_uncertainty(
         self, *, dt, initial_variance=1.0, process_variance=0.01, memory_time_constant=1/3,
@@ -267,6 +318,28 @@ class RippleSourceOrchestrator:
         )
 
     def correct_from_observations(self) -> np.ndarray:
+        if self.sensory_graph is not None:
+            self.visual_observation = (
+                self.camera_source.excitation()
+                if self.prediction_error_transform.applies_to("camera_frame") else None
+            )
+            visual = (
+                self.graph_io.sample(self.visual_observation)
+                if self.visual_observation is not None else None
+            )
+            precision = self.visual_readout.config.spatial_precision
+            if precision is None:
+                precision = GaussianSpatialPrecision(baseline=1, peak=0)
+            innovation = self.sensory_graph.condition(
+                visual, self.audio_source.observation(),
+                visual_mask=self.graph_io.visual_mask(precision),
+            )
+            correction = self.graph_io.render(
+                innovation[self.sensory_graph.visual_slice]*self.visual_readout.config.canvas_rate,
+                correction=True,
+            )
+            self.engine.apply_observation_correction(correction)
+            return correction
         if self.visual_uncertainty is not None:
             self.visual_observation = (
                 self.camera_source.excitation()
@@ -347,6 +420,8 @@ class RippleSourceOrchestrator:
         return correction
 
     def update_pathway_config(self, **changes) -> None:
+        if self.sensory_graph is not None and changes.get("cross_modal_enabled", False):
+            raise ValueError("The shared graph already has joint connectivity; legacy coupling is not used")
         if self.visual_uncertainty is not None:
             self.visual_uncertainty.validate_config(replace(self.visual_readout.config, **changes))
         if self.audio_uncertainty is not None:
@@ -354,7 +429,7 @@ class RippleSourceOrchestrator:
         if "cross_modal_enabled" in changes:
             self._validate_cross_modal(changes["cross_modal_enabled"])
         self.visual_readout.update_config(**changes)
-        if self.shader_model is None and self.audio_readout is not None:
+        if (self.shader_model is None or self.sensory_graph is not None) and self.audio_readout is not None:
             self.audio_readout.update_config(**changes)
 
     def _validate_cross_modal(self, enabled: bool) -> None:
@@ -371,6 +446,10 @@ class RippleSourceOrchestrator:
             self.audio_readout.set_diagnostics_enabled(enabled)
 
     def reset_readouts(self) -> None:
+        if self.sensory_graph is not None:
+            self.sensory_graph.reset()
+            self.audio_prediction = self.visual_observation = self.gaze_scores = None
+            return
         self.visual_readout.set_spatial_preview_enabled(False)
         if self.visual_uncertainty is None:
             self.visual_readout.reset()

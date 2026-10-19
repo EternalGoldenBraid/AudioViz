@@ -15,10 +15,15 @@ class ActiveVisionConfig:
     process_variance: float = .01
     memory_time_constant: float = 1/3
     audio_precision: float | None = None
+    shared_sensory_graph: bool = False
 
     def __post_init__(self):
         if self.mode not in ("mouse", "autonomous", "full"):
             raise ValueError("gaze mode must be mouse, autonomous or full")
+        if not isinstance(self.shared_sensory_graph, bool):
+            raise ValueError("shared_sensory_graph must be a boolean")
+        if self.shared_sensory_graph and self.audio_precision not in (None, 1.0):
+            raise ValueError("Shared graph uses hard clamps; control audio availability with the Audio source toggle")
         if self.audio_precision is not None:
             if (
                 isinstance(self.audio_precision, bool)
