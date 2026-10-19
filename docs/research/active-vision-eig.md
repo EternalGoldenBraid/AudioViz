@@ -111,16 +111,30 @@ Attention should change **what evidence the model receives**, not just add a blu
 
 ## Information gain formulation (candidate, not yet committed)
 
-For the first experiment, let `X_{t+1}` denote the uncertain future sensory state (dot position or full frame), `D_t` the observations so far, and `Y_a` the future attention-conditioned observation under candidate gaze action `a`. A candidate epistemic-only objective is
+For the first experiment, define:
+
+- `X_{t+1}`: the uncertain **future sensory state** (initially dot position, optionally the full image).
+- `D_t`: the history of attention-conditioned observations available to the agent, including past gaze actions.
+- `a`: a candidate future gaze action, including location and whether to sample.
+- `Y_a`: the observation that would be obtained if action `a` were taken.
+
+The epistemic-only objective is the **expected information gain about the future sensory state**, evaluated before observing `Y_a`:
 
 ```math
-IG(a) = E_{y_{t+1} \sim p(y|a,b_t)}
-        [ D_KL( p(z|y_{t+1},a,b_t) || b_t(z) ) ].
+IG(a) = I(X_{t+1};Y_a\mid D_t,a)
+      = \mathbb{E}_{Y_a\sim p(\cdot\mid D_t,a)}
+        \left[D_{KL}\left(
+          p(X_{t+1}\mid Y_a,D_t,a)
+          \;\|\;
+          p(X_{t+1}\mid D_t,a)
+        \right)\right].
 ```
 
-Choose an action that maximizes expected information gain, subject to an attention budget and possibly action/switching costs.
+The prior and posterior are distributions over the **same** random variable `X_{t+1}`. The predictive prior conditions on the candidate action for generality; if gaze affects only the measurement and not the underlying dot dynamics, then `p(X_{t+1}|D_t,a)=p(X_{t+1}|D_t)`.
 
-Open issue: AudioViz's current predictive coding state may be point-estimate rather than a calibrated distribution. If so, a KL-based objective requires an explicit approximate belief model or a justified proxy. **Do not silently equate prediction-error magnitude with EIG.**
+The existing model may use an internal hidden state `z_t` to compute these sensory predictions, but `z_t` is **not the EIG target** in this initial experiment. Do not silently substitute information gain over hidden activations.
+
+Choose gaze actions that maximize EIG subject to an explicit observation budget or sampling cost; without such a constraint, always sampling can be optimal. Open issue: if the current predictive-coding model only provides point estimates, a calibrated predictive distribution or a clearly identified and validated proxy is needed. **Do not equate realized prediction error with EIG.**
 
 ## Visualization and instrumentation
 
