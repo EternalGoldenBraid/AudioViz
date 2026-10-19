@@ -14,7 +14,9 @@ from audioviz.readouts.audio import PredictiveCodingAudioReadout
 from audioviz.readouts.predictive_coding import PredictiveCodingHiddenCoupling, infer_joint
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
+from audioviz.sources.gaze import GazePolicy
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
+from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 from audioviz.transforms.prediction_error import PredictionErrorTransform
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 
@@ -98,6 +100,8 @@ class RippleSourceOrchestrator:
         self.visual_observation: np.ndarray | None = None
         self.visual_uncertainty: GaussianSensoryUncertainty | None = None
         self._uncertainty_dt = 0.0
+        self.gaze_policy: GazePolicy | None = None
+        self.gaze_scores: np.ndarray | None = None
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
             n_sources=self.n_sources,
@@ -169,10 +173,28 @@ class RippleSourceOrchestrator:
         return None if grid is None else self._to_canvas_grid(grid)
 
     def predict_visual(self) -> np.ndarray:
+        if self.gaze_policy is not None:
+            self._select_visual_gaze(self.gaze_policy)
         prediction = self._predict_visual_mean()
         if self.visual_uncertainty is not None:
             self.visual_uncertainty.predict(dt=self._uncertainty_dt)
         return prediction
+
+    def _select_visual_gaze(self, policy: GazePolicy) -> None:
+        if self.visual_uncertainty is None:
+            raise RuntimeError("Gaze policy requires visual uncertainty to be enabled")
+        precision = self.visual_readout.config.spatial_precision
+        if precision is None:
+            precision = GaussianSpatialPrecision(baseline=1.0, peak=0.0)
+        self.gaze_scores = None
+        if not precision.sample:
+            return
+        self.gaze_scores = self.visual_uncertainty.expected_information_gain(
+            precision, prior=self.engine.get_prior(), dt=self._uncertainty_dt,
+        )
+        gaze = policy.select(self.gaze_scores, precision.gaze)
+        if gaze != precision.gaze:
+            self.update_pathway_config(spatial_precision=replace(precision, gaze=gaze))
 
     def enable_visual_uncertainty(self, *, dt, initial_variance=1.0, process_variance=0.01):
         """Opt into conditional visual covariance alongside the existing mean inference."""
@@ -295,6 +317,7 @@ class RippleSourceOrchestrator:
         self.visual_observation = None
         if self.visual_uncertainty is not None:
             self.visual_uncertainty.reset()
+        self.gaze_scores = None
 
     def _to_canvas_grid(self, grid: np.ndarray) -> np.ndarray:
         values = np.asarray(grid, dtype=np.float32)
