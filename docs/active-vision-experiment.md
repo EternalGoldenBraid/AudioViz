@@ -80,6 +80,8 @@ Pi(r) = baseline + peak * exp(-0.5 * ||(r - g) / sigma_pixels||^2)
 The field is shared across RGB channels. `spatial_precision=None` preserves
 the existing unit-precision behavior exactly. Audio observations retain unit
 precision and are not spatially gated.
+Integral parameter values such as `peak=1` or `gaze=(0, 1)` are valid; the
+shader adapter uploads all continuous precision parameters as GLSL floats.
 
 - Sensory feedback and sensory decoder learning use `Pi * (observation - prediction)`.
 - Sensory energy is `0.5 * Pi * error^2`, not `0.5 * (Pi * error)^2`.

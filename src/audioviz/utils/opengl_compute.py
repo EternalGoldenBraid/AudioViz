@@ -116,6 +116,7 @@ class GLCompute:
         self.gl = self.propagator._gl
 
     def run(self, body, arrays, work_items, *, groups_y=1, **uniforms):
+        """Upload scalar uniforms with Python types matching their GLSL declarations."""
         self.ensure()
         gl = self.gl
         if body not in self.programs:

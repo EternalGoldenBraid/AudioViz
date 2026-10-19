@@ -192,6 +192,28 @@ def test_shader_precision_stays_native_without_full_field_downloads(shader_engin
         model.infer(shader_engine.get_prior(), image, None, states=(True, False))
 
 
+@pytest.mark.parametrize("precision", (
+    GaussianSpatialPrecision(peak=1),
+    GaussianSpatialPrecision(gaze=(0, 1), sigma=1, baseline=0, peak=1),
+    GaussianSpatialPrecision(
+        gaze=(np.int32(0), np.int32(1)), sigma=np.int32(1),
+        baseline=np.int32(0), peak=np.int32(1),
+    ),
+))
+def test_shader_float_precision_uniforms_accept_integral_parameters(shader_engine, precision):
+    config = PredictiveCodingConfig(dtype="float32", inference_steps=2, spatial_precision=precision)
+    model = OpenGLPredictiveModel(shader_engine, config, audio_enabled=False)
+    reference = PredictiveCodingRGBReadout(canvas_shape=shader_engine.canvas_shape, config=config)
+    shader_engine.propagate()
+    prior = shader_engine.get_prior()
+    prediction, _ = model.predict(prior)
+    np.testing.assert_allclose(prediction.download(), reference.predict(prior.download()), atol=2e-6)
+    observation = np.full(shader_engine.canvas_shape, 0.3, dtype=np.float32)
+    correction = model.infer(prior, observation, None, states=(True, False))
+    expected = infer_joint(prior.download(), ((reference, observation),), stream_states={reference: True})
+    np.testing.assert_allclose(correction.download(), expected, atol=3e-6)
+
+
 @pytest.mark.parametrize("kind", ("rgb", "rgba", "gray", "float"))
 def test_shader_camera_preprocessing_and_exact_levels(shader_engine, kind):
     from audioviz.sources.camera import CameraFrameSource

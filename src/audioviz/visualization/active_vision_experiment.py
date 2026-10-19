@@ -176,7 +176,7 @@ def main():
     parser.add_argument("--gaze", type=float, nargs=2, metavar=("X", "Y"), default=(0.5, 0.5))
     parser.add_argument("--sigma", type=float, default=0.15)
     parser.add_argument("--baseline", type=float, default=0.01)
-    parser.add_argument("--peak", type=float, default=1)
+    parser.add_argument("--peak", type=float, default=1.0)
     args = parser.parse_args()
     stimulus = CircularDotConfig(
         resolution=tuple(args.resolution), radius=0.3 * min(args.resolution),

@@ -220,8 +220,8 @@ class OpenGLPredictiveModel:
         return dict(
             spatial_precision_enabled=1,
             spatial_sample=int(precision.sample),
-            gaze_x=x, gaze_y=y, foveal_width=width,
-            peripheral_precision=precision.baseline, peak_precision=precision.peak,
+            gaze_x=float(x), gaze_y=float(y), foveal_width=float(width),
+            peripheral_precision=float(precision.baseline), peak_precision=float(precision.peak),
         )
 
     def _arrays(self):
