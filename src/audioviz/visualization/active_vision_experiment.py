@@ -15,6 +15,7 @@ from audioviz.sources import (
 )
 from audioviz.sources.gaze import GazePolicy, has_gaze_preference, information_gaze
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
+from audioviz.ui.gaze_controls import GazeControls
 from audioviz.utils.spatial_preview import preview_indices, spatial_preview
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
@@ -50,45 +51,23 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         )
         description.setWordWrap(True)
         layout.addWidget(description)
-        controls = QtWidgets.QHBoxLayout()
-        self.gaze_x = self._gaze_control(precision.gaze[0])
-        self.gaze_y = self._gaze_control(precision.gaze[1])
-        controls.addWidget(QtWidgets.QLabel("Gaze X"))
-        controls.addWidget(self.gaze_x)
-        controls.addWidget(QtWidgets.QLabel("Gaze Y"))
-        controls.addWidget(self.gaze_y)
-        self.observe = QtWidgets.QCheckBox("Observe")
-        self.observe.setChecked(precision.sample)
-        controls.addWidget(self.observe)
+        self.gaze_controls = GazeControls(precision, mode=gaze_mode)
+        self.gaze_x, self.gaze_y = self.gaze_controls.gaze_x, self.gaze_controls.gaze_y
+        self.observe = self.gaze_controls.observe
+        self.gaze_modes = self.gaze_controls.gaze_modes
+        self.autonomous_gaze = self.gaze_controls.autonomous_gaze
+        self.follow_mouse = self.gaze_controls.follow_mouse
+        self.full_canvas = self.gaze_controls.full_canvas
+        controls = self.gaze_controls.coordinates
         self.restart_button = QtWidgets.QPushButton("Restart")
         self.restart_button.setToolTip("Replay the same seeded stimulus and reset beliefs; keep the selected gaze mode.")
         self.restart_button.setEnabled(False)
         self.restart_button.clicked.connect(self._restart)
-        controls.addWidget(self.restart_button)
-        controls.addStretch()
+        controls.insertWidget(controls.count()-1, self.restart_button)
         self.progress = QtWidgets.QLabel("Waiting for first frame")
         self.progress.setWordWrap(True)
         controls.addWidget(self.progress)
-        layout.addLayout(controls)
-        modes = QtWidgets.QHBoxLayout()
-        modes.addWidget(QtWidgets.QLabel("Gaze control"))
-        self.gaze_modes = QtWidgets.QButtonGroup(self)
-        self.autonomous_gaze = QtWidgets.QRadioButton("Autonomous gaze")
-        self.follow_mouse = QtWidgets.QRadioButton("Mouse gaze")
-        self.full_canvas = QtWidgets.QRadioButton("Full canvas (gaze disabled)")
-        for button in (self.autonomous_gaze, self.follow_mouse, self.full_canvas):
-            self.gaze_modes.addButton(button)
-            modes.addWidget(button)
-        {
-            "mouse": self.follow_mouse, "autonomous": self.autonomous_gaze, "full": self.full_canvas,
-        }[gaze_mode].setChecked(True)
-        self.follow_mouse.setToolTip("Move over any preview image, or enter gaze coordinates.")
-        self.autonomous_gaze.setToolTip(
-            "Select the highest information-gain candidate before each observation. Paused when Observe is off."
-        )
-        self.full_canvas.setToolTip("Observe every pixel with unit precision. This does not stop observations.")
-        modes.addStretch()
-        layout.addLayout(modes)
+        layout.addWidget(self.gaze_controls)
         advice = QtWidgets.QHBoxLayout()
         self.information_toggle = QtWidgets.QCheckBox("Information gain")
         self.information_toggle.setChecked(True)
@@ -164,26 +143,13 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         self.preview_timer.setInterval(100)
         self.preview_timer.timeout.connect(self.refresh_previews)
         self.preview_timer.start()
-        self.gaze_x.valueChanged.connect(self._update_precision)
-        self.gaze_y.valueChanged.connect(self._update_precision)
-        self.observe.toggled.connect(self._update_precision)
+        self.gaze_controls.precision_changed.connect(self._update_precision)
         self.information_toggle.toggled.connect(self._update_advisory_marker)
-        self.gaze_modes.buttonToggled.connect(
-            lambda _button, checked: self._change_gaze_mode() if checked else None,
-        )
+        self.gaze_controls.mode_changed.connect(self._change_gaze_mode)
         self._change_gaze_mode()
         self.previews.setMouseTracking(True)
         self.previews.viewport().setMouseTracking(True)
         self.previews.scene().sigMouseMoved.connect(self._move_gaze_from_mouse)
-
-    @staticmethod
-    def _gaze_control(value):
-        control = QtWidgets.QDoubleSpinBox()
-        control.setRange(0, 1)
-        control.setDecimals(6)
-        control.setSingleStep(0.05)
-        control.setValue(value)
-        return control
 
     def _image_panel(self, title, column):
         plot = self.previews.addPlot(row=0, col=column, title=title)
@@ -219,18 +185,8 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         self._update_precision()
 
     def _update_precision(self):
-        self._gaze_precision = replace(
-            self._gaze_precision,
-            gaze=(
-                (self.gaze_x.value(), self.gaze_y.value())
-                if self.follow_mouse.isChecked() else self._gaze_precision.gaze
-            ),
-            sample=self.observe.isChecked(),
-        )
-        self.precision = (
-            replace(self._gaze_precision, baseline=1.0, peak=0.0)
-            if self.full_canvas.isChecked() else self._gaze_precision
-        )
+        self._gaze_precision = self.gaze_controls.gaze_precision(self._gaze_precision)
+        self.precision = self.gaze_controls.observation_precision(self._gaze_precision)
         self.visualizer.source_orchestrator.update_pathway_config(spatial_precision=self.precision)
         self._score_dirty = True
         self._refresh_precision_preview()
