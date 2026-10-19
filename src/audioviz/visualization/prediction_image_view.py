@@ -6,6 +6,7 @@ from PyQt5 import QtWidgets
 
 from audioviz.utils.source_preview import SourceScenePreview
 from audioviz.visualization.ripple_renderers import _canvas_to_rgb
+from audioviz.visualization.attention_overlay import AttentionOverlay
 
 
 class PredictionImageView(QtWidgets.QWidget):
@@ -16,6 +17,10 @@ class PredictionImageView(QtWidgets.QWidget):
         self.grid = QtWidgets.QGridLayout(self)
         self.panels = {}
         self.images = {}
+        self.attention_overlays = {}
+        self._attention_precision = None
+        self._attention_scores = None
+        self._attention_available = False
         for key in ("canvas", "prediction", "observation"):
             plot = pg.PlotWidget()
             plot.setAspectLocked(True)
@@ -26,6 +31,7 @@ class PredictionImageView(QtWidgets.QWidget):
             plot.addItem(image)
             self.panels[key] = plot
             self.images[key] = image
+            self.attention_overlays[key] = AttentionOverlay.on_image(plot, image, (2, 2))
         audio = pg.PlotWidget(title="Audio: prediction / evidence")
         audio.addLegend()
         audio.setLabel("bottom", "Spectral band")
@@ -64,6 +70,7 @@ class PredictionImageView(QtWidgets.QWidget):
             "observation", camera.observation if camera is not None else None,
             "Camera evidence" if camera is not None and camera.enabled else "Camera evidence (disabled)",
         )
+        self._refresh_attention()
         audio = next((source for source in sources if source.mapping.key == "audio"), None)
         self._has_audio = audio is not None and audio.prediction is not None
         self.panels["audio"].setVisible(self._layout == "comparison" and self._has_audio)
@@ -81,7 +88,21 @@ class PredictionImageView(QtWidgets.QWidget):
         if values is None:
             self.images[key].clear()
         else:
+            self.attention_overlays[key].shape = values.shape[:2]
             self.images[key].setImage(_canvas_to_rgb(values, limit=1.0), autoLevels=False, levels=(0, 255))
+
+    def set_attention(self, precision, scores, *, available=False):
+        self._attention_precision = precision
+        self._attention_scores = scores
+        self._attention_available = available
+        self._refresh_attention()
+
+    def _refresh_attention(self):
+        for key, overlay in self.attention_overlays.items():
+            overlay.set_attention(
+                self._attention_precision if self.images[key].image is not None else None,
+                self._attention_scores, available=self._attention_available,
+            )
 
     def clear_preview(self) -> None:
         for key in self.images:
@@ -90,6 +111,7 @@ class PredictionImageView(QtWidgets.QWidget):
                 "prediction": "Camera prediction (pre-evidence)",
                 "observation": "Camera evidence",
             }[key])
+        self._refresh_attention()
         self.audio_prediction.clear()
         self.audio_observation.clear()
         self._has_audio = False
