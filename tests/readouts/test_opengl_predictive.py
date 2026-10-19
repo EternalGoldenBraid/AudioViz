@@ -9,6 +9,7 @@ from audioviz.readouts.opengl_predictive import OpenGLPredictiveModel
 from audioviz.readouts.predictive_coding import (
     PredictiveCodingConfig, PredictiveCodingHiddenCoupling, PredictiveCodingRGBReadout, infer_joint,
 )
+from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 
 
 @pytest.fixture
@@ -30,24 +31,36 @@ def shader_engine(qapp):
 
 
 @pytest.mark.parametrize("coupled,learning", [(False, False), (False, True), (True, True)])
-def test_shader_joint_frames_match_numpy_with_missing_evidence_and_learning(shader_engine, coupled, learning):
+@pytest.mark.parametrize("precision", (
+    None, GaussianSpatialPrecision(gaze=(0.2, 0.7), sigma=0.18),
+    GaussianSpatialPrecision(sample=False),
+))
+def test_shader_joint_frames_match_numpy_with_missing_evidence_and_learning(shader_engine, coupled, learning, precision):
     engine = shader_engine
     config = PredictiveCodingConfig(
         dtype="float32", inference_steps=3, cross_modal_enabled=coupled,
         learning_enabled=learning, learning_rate=.07, weight_decay=.01,
         gradient_clip=.08, weight_clip=.95,
+        spatial_precision=precision,
     )
     model = OpenGLPredictiveModel(engine, config, audio_enabled=True)
     camera = PredictiveCodingRGBReadout(canvas_shape=engine.canvas_shape, config=config)
     audio = PredictiveCodingAudioReadout(canvas_shape=engine.canvas_shape, config=config)
     coupling = PredictiveCodingHiddenCoupling(camera, audio) if coupled else None
+    if precision is not None:
+        for branch in (model.camera, model.audio, camera, audio):
+            branch.set_diagnostics_enabled(True)
     rng = np.random.default_rng(42)
-    for image_present, audio_present, states in (
+    for frame_index, (image_present, audio_present, states) in enumerate((
         (True, True, (True, True)),
         (False, True, (True, True)),
         (True, False, (True, False)),
         (False, False, (False, False)),
-    ):
+    )):
+        if precision is not None:
+            moved = replace(precision, gaze=(0.2 + 0.15 * frame_index, 0.7 - 0.1 * frame_index))
+            for branch in (model.camera, camera, audio):
+                branch.update_config(spatial_precision=moved)
         engine.propagate(rng.normal(0, .1, engine.canvas_shape).astype(np.float32))
         prior = engine.get_prior()
         host_prior = prior.download()
@@ -68,6 +81,18 @@ def test_shader_joint_frames_match_numpy_with_missing_evidence_and_learning(shad
         )
         np.testing.assert_allclose(delta.download(), expected_delta, atol=3e-6, rtol=4e-4)
         for branch, reference in ((model.camera, camera), (model.audio, audio)):
+            if precision is not None:
+                np.testing.assert_allclose(
+                    branch.diagnostics.inference_energy, reference.diagnostics.inference_energy,
+                    atol=2e-6, rtol=2e-5,
+                )
+                if reference.diagnostics.observation_present:
+                    assert branch.diagnostics.visual.mean == pytest.approx(
+                        reference.diagnostics.visual.mean, abs=2e-6,
+                    )
+                    assert branch.diagnostics.visual.variance == pytest.approx(
+                        reference.diagnostics.visual.variance, abs=2e-6,
+                    )
             np.testing.assert_allclose(branch.hidden.download(), reference.hidden, atol=3e-6, rtol=3e-5)
             np.testing.assert_allclose(branch.hidden_error.download(), reference.hidden_error, atol=3e-6)
             for actual, expected in zip(branch.weights()[:4], (
@@ -142,6 +167,29 @@ def test_shader_diagnostics_and_divergence(shader_engine):
         model.predict(prior)
     with pytest.raises(ValueError, match="float32"):
         OpenGLPredictiveModel(shader_engine, replace(config, dtype="float64"), audio_enabled=False)
+
+
+def test_shader_precision_stays_native_without_full_field_downloads(shader_engine, monkeypatch):
+    from audioviz.utils.opengl_compute import GLArray
+
+    model = OpenGLPredictiveModel(
+        shader_engine, PredictiveCodingConfig(
+            dtype="float32", spatial_precision=GaussianSpatialPrecision(),
+            learning_enabled=True, inference_steps=2,
+        ), audio_enabled=False,
+    )
+    shader_engine.propagate()
+    image = model.preprocess_camera(np.ones((19, 23, 3), dtype=np.uint8) * 200)
+    download = GLArray.download
+
+    def bounded_download(array):
+        assert array.size <= 32, "Inference must not download images, hidden fields or precision maps"
+        return download(array)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(GLArray, "download", bounded_download)
+        model.predict(shader_engine.get_prior())
+        model.infer(shader_engine.get_prior(), image, None, states=(True, False))
 
 
 @pytest.mark.parametrize("kind", ("rgb", "rgba", "gray", "float"))

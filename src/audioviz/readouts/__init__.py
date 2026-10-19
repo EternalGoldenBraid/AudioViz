@@ -6,6 +6,7 @@ from audioviz.readouts.predictive_coding import (
     PredictiveCodingRGBReadout,
 )
 from audioviz.readouts.audio import PredictiveCodingAudioReadout
+from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 
 __all__ = [
     "IdentityRGBReadout",
@@ -13,4 +14,5 @@ __all__ = [
     "PredictiveCodingConfig",
     "PredictiveCodingRGBReadout",
     "PredictiveCodingAudioReadout",
+    "GaussianSpatialPrecision",
 ]

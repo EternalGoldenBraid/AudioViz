@@ -153,7 +153,7 @@ class OpenGLPredictiveModel:
 
     def _make_source(self):
         h, n, bands = self.config.hidden_channels, self.pixels, AUDIO_SPECTRAL_BANDS
-        return f"""
+        return self._precision_source() + f"""
         const int H={h},N={n},B={bands};
         layout(std430,binding=0) readonly buffer Canvas {{float canvas[];}};
         layout(std430,binding=1) readonly buffer Hidden {{float hidden[];}};
@@ -199,6 +199,31 @@ class OpenGLPredictiveModel:
         }}
         """
 
+    def _precision_source(self):
+        return f"""
+        uniform int spatial_precision_enabled,spatial_sample;
+        uniform float gaze_x,gaze_y,foveal_width,peripheral_precision,peak_precision;
+        float camera_precision(int p){{
+            if(spatial_precision_enabled==0)return 1.0;
+            if(spatial_sample==0)return 0.0;
+            vec2 r=vec2(float(p%{self.shape[1]}),float(p/{self.shape[1]}));
+            vec2 delta=(r-vec2(gaze_x,gaze_y))/foveal_width;
+            return peripheral_precision+peak_precision*exp(-0.5*dot(delta,delta));
+        }}
+        """
+
+    def _precision_uniforms(self):
+        precision = self.config.spatial_precision
+        if precision is None:
+            return dict(spatial_precision_enabled=0)
+        x, y, width = precision.pixel_parameters(self.shape[:2])
+        return dict(
+            spatial_precision_enabled=1,
+            spatial_sample=int(precision.sample),
+            gaze_x=x, gaze_y=y, foveal_width=width,
+            peripheral_precision=precision.baseline, peak_precision=precision.peak,
+        )
+
     def _arrays(self):
         return [
             self.canvas, self.hidden, self.weights, self._pooled,
@@ -212,6 +237,7 @@ class OpenGLPredictiveModel:
             audio_present=int(self.spectrum is not None), state0=int(self.states[0]),
             state1=int(self.states[1]), predicting=int(predicting),
             hidden_rate=self.config.inference_rate, canvas_rate=self.config.canvas_rate,
+            **self._precision_uniforms(),
         )
 
     def _pool(self):
@@ -258,7 +284,8 @@ class OpenGLPredictiveModel:
                 if(predicting==0){
                     for(int o=0;o<outputs(b);++o)
                         feedback+=weights[decoder(b)+o*H+k]*
-                            errors[2*N*H+(b==0?p*3+o:3*N+o)];
+                            errors[2*N*H+(b==0?p*3+o:3*N+o)]*
+                            (b==0?camera_precision(p):1.0);
                     feedback+=state_direction(b)*weights[state_weights(b)+k];
                 }
                 if(coupled==1)for(int j=0;j<H;++j)
@@ -451,7 +478,7 @@ class OpenGLPredictiveModel:
                 if((b==0?camera_present:audio_present)==0)return 0.0;
                 int o=i/H,k=i%H;
                 return errors[2*N*H+(b==0?p*3+o:3*N+o)]*
-                    (b==0?activity(b,p,k):mean_activity(b,k));
+                    (b==0?camera_precision(p)*activity(b,p,k):mean_activity(b,k));
             }
             i-=outputs(b)*H;
             if(i<H)return state_direction(b)*mean_activity(b,i);
@@ -487,7 +514,7 @@ class OpenGLPredictiveModel:
         self.device.release(gradient)
         self._validate(self.weights)
 
-    def _means(self, array, *, activity=False, energy=False, fourth=False):
+    def _means(self, array, *, activity=False, energy=False, fourth=False, precision=False):
         channels = array.shape[-1]
         count = array.size // channels
         value = "values[offset+p*channels+c]"
@@ -495,19 +522,23 @@ class OpenGLPredictiveModel:
             value = f"tanh({value})"
         if energy or fourth:
             value = f"0.5*({value})*({value})"
+            if precision:
+                value = f"camera_precision(p)*({value})"
         if fourth:
             value = f"({value})*({value})"
         result = self.device.reduce(
+            (self._precision_source() if precision else "") +
             "layout(std430,binding=0) readonly buffer Input {float values[];};uniform int offset;",
             value, [array], count, channels, offset=array.offset,
+            **(self._precision_uniforms() if precision else {}),
         )
         host = result.download().reshape(-1) / count
         self.device.release(result)
         return host
 
-    def _statistics(self, array):
-        means = self._means(array, energy=True)
-        second = self._means(array, fourth=True)
+    def _statistics(self, array, *, precision=False):
+        means = self._means(array, energy=True, precision=precision)
+        second = self._means(array, fourth=True, precision=precision)
         return EnergyStatistics(
             float(means.mean()), max(0.0, float(second.mean() - means.mean()**2)),
             tuple(float(x) for x in means),
@@ -518,7 +549,7 @@ class OpenGLPredictiveModel:
         predictions = self._state_predictions()
         for branch in self.branches:
             total += self._means(branch.hidden_error, energy=True).sum()
-            total += self._means(branch.visual_error, energy=True).sum()
+            total += self._means(branch.visual_error, energy=True, precision=branch.index == 0).sum()
             total += .5 * (float(self.states[branch.index]) - predictions[branch.index])**2
         return float(total)
 
@@ -540,7 +571,7 @@ class OpenGLPredictiveModel:
             ) if present else self._final_sensory_means(b)
             branch.diagnostics = PredictiveCodingDiagnostics(
                 hidden=self._statistics(branch.hidden_error),
-                visual=self._statistics(branch.visual_error) if present else EnergyStatistics(
+                visual=self._statistics(branch.visual_error, precision=b == 0) if present else EnergyStatistics(
                     np.nan, np.nan, (np.nan,) * vw.shape[0]
                 ),
                 inference_energy=tuple(self._trajectory),

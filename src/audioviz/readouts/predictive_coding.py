@@ -15,6 +15,7 @@ from audioviz.readouts.diagnostics import (
     mean_energy,
 )
 from audioviz.utils.spatial_preview import spatial_preview
+from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 from audioviz.utils.array_backend import (
     array_module, canvas_direction, hidden_direction, project_channels, spatial_mean, to_numpy,
 )
@@ -32,8 +33,11 @@ class PredictiveCodingConfig:
     gradient_clip: float = 1.0
     cross_modal_enabled: bool = False
     dtype: str = "float64"
+    spatial_precision: GaussianSpatialPrecision | None = None
 
     def __post_init__(self) -> None:
+        if self.spatial_precision is not None and not isinstance(self.spatial_precision, GaussianSpatialPrecision):
+            raise ValueError("spatial_precision must be a GaussianSpatialPrecision or None")
         if self.dtype not in ("float32", "float64"):
             raise ValueError("dtype must be float32 or float64")
         if not isinstance(self.cross_modal_enabled, bool):
@@ -95,6 +99,8 @@ class PredictiveCodingRGBReadout:
         self.diagnostics: PredictiveCodingDiagnostics | None = None
         self.spatial_preview_enabled = False
         self._preview_prediction: np.ndarray | None = None
+        self._precision_config = None
+        self._precision_field = None
 
     @property
     def backend(self) -> ModuleType:
@@ -213,7 +219,7 @@ class PredictiveCodingRGBReadout:
             self.diagnostics = PredictiveCodingDiagnostics(
                 hidden=EnergyStatistics.from_error(self.hidden_error),
                 visual=(
-                    EnergyStatistics.from_error(self.visual_error) if observed is not None
+                    EnergyStatistics.from_error(self._energy_visual_error(self.visual_error)) if observed is not None
                     else EnergyStatistics(
                         np.nan, np.nan, (np.nan,) * self.visual_weights.shape[0]
                     )
@@ -266,7 +272,26 @@ class PredictiveCodingRGBReadout:
             self._coerce(canvas, name="canvas state"),
             self._coerce_observation(observation),
         )
-        return mean_energy(hidden_error, visual_error)
+        return mean_energy(hidden_error, self._energy_visual_error(visual_error))
+
+    def _visual_precision(self, error):
+        config = self.config.spatial_precision
+        if config is None or error.ndim != 3:
+            return None
+        if self._precision_config != config:
+            self._precision_field = config.field(
+                self.canvas_shape[:2], backend=self.backend, dtype=self.hidden.dtype,
+            )[..., None]
+            self._precision_config = config
+        return self._precision_field
+
+    def _weighted_visual_error(self, error):
+        precision = self._visual_precision(error)
+        return error if precision is None else precision * error
+
+    def _energy_visual_error(self, error):
+        precision = self._visual_precision(error)
+        return error if precision is None else self.backend.sqrt(precision) * error
 
     def _errors(
         self, canvas: np.ndarray, observation: np.ndarray
@@ -300,7 +325,7 @@ class PredictiveCodingRGBReadout:
     def _observation_gradient(self) -> np.ndarray:
         pixel_count = self.canvas_shape[0] * self.canvas_shape[1]
         return (
-            self.visual_error.reshape(-1, 3).T
+            self._weighted_visual_error(self.visual_error).reshape(-1, 3).T
             @ self.backend.tanh(self.hidden).reshape(-1, self.config.hidden_channels)
         ) / pixel_count
 
@@ -452,7 +477,7 @@ def infer_joint(
                 branch.config.canvas_rate, canvas_activity,
                 project_channels(hidden_error, branch.canvas_weights),
             )
-            feedback = project_channels(sensory_error, branch.visual_weights)
+            feedback = project_channels(branch._weighted_visual_error(sensory_error), branch.visual_weights)
             if branch in states:
                 _, state_error, state_direction = branch._stream_state_terms(states[branch], hidden_activity)
                 feedback = feedback + state_direction * branch.stream_state_weights[0]
@@ -464,7 +489,7 @@ def infer_joint(
                 hidden_direction(branch.config.inference_rate, hidden_error, hidden_activity, feedback)
             )
             if collect:
-                energy += mean_energy(hidden_error, sensory_error)
+                energy += mean_energy(hidden_error, branch._energy_visual_error(sensory_error))
         if collect:
             trajectory.append(float(energy))
         # Every direction is computed before any branch or the shared canvas moves.
@@ -482,8 +507,9 @@ def infer_joint(
     }
     if collect:
         trajectory.append(float(sum(
-            mean_energy(final_errors[branch], xp.zeros_like(branch.visual_error) if observed is None
-                        else observed - branch._predict_observation(xp.tanh(branch.hidden)))
+            mean_energy(final_errors[branch], branch._energy_visual_error(
+                xp.zeros_like(branch.visual_error) if observed is None
+                else observed - branch._predict_observation(xp.tanh(branch.hidden))))
             for branch, observed in observations
         ) + sum(.5 * branch._stream_state_terms(state)[1]**2 for branch, state in states.items())))
     learn = bool(states) or any(observed is not None for _, observed in observations)
