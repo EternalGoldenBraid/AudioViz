@@ -330,8 +330,9 @@ class RippleWaveVisualizer(VisualizerBase):
         reset_view = getattr(self.renderer, "reset_view", None)
         if callable(reset_view):
             reset_view()
-        self.visual_prediction = None if self.use_shader else self.source_orchestrator.visual_readout.predict(
-            self.engine.get_field()
+        self.visual_prediction = (
+            None if self.use_shader or self.source_orchestrator.visual_uncertainty is not None
+            else self.source_orchestrator.visual_readout.predict(self.engine.get_field())
         )
         if self.renderer.prepare_frame():
             self._render_canvas()

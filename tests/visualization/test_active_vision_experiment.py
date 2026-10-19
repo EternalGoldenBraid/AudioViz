@@ -167,7 +167,9 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
 
 
 @pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
-def test_finished_run_can_restart_with_autonomous_gaze_and_reproducible_stimulus(qapp, request, backend):
+def test_finished_run_can_restart_with_autonomous_gaze_and_reproducible_stimulus(
+    qapp, request, monkeypatch, backend,
+):
     if backend == "cupy":
         request.getfixturevalue("cupy_backend")
     if backend == "opengl" and qapp.platformName() == "offscreen":
@@ -181,6 +183,10 @@ def test_finished_run_can_restart_with_autonomous_gaze_and_reproducible_stimulus
     )
     widget.visualizer.timer.stop()
     widget.preview_timer.stop()
+    if backend != "opengl":
+        def ordinary_pc(*args, **kwargs):
+            pytest.fail("reset must leave the Gaussian mean untouched until its physical-time forecast")
+        monkeypatch.setattr(widget.visualizer.source_orchestrator.visual_readout, "predict", ordinary_pc)
     try:
         widget.show()
         qapp.processEvents()
