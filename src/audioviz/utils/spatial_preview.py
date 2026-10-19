@@ -23,6 +23,10 @@ def preview_indices(
 
 
 def spatial_preview(field: np.ndarray, *, max_side: int = PREVIEW_MAX_SIDE) -> np.ndarray:
+    from audioviz.utils.opengl_compute import GLArray
+
+    if isinstance(field, GLArray):
+        return field.preview(max_side=max_side)
     rows, columns = preview_indices(field.shape, max_side=max_side)
     sampled = field[rows[:, None], columns[None, :]]
     snapshot = np.asarray(to_numpy(sampled), dtype=np.float32)

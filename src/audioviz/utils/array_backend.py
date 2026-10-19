@@ -88,6 +88,10 @@ def spatial_mean(values):
 
 def to_numpy(values) -> np.ndarray:
     """Transfer device arrays only at an explicit host-facing boundary."""
+    from audioviz.utils.opengl_compute import GLArray
+
+    if isinstance(values, GLArray):
+        return values.download()
     if hasattr(values, "__cuda_array_interface__"):
         import cupy as cp
 
