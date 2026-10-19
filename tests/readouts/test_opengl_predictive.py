@@ -245,21 +245,22 @@ def test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_g
         native.condition(precision, observed=observed)
         reference.condition(precision, observed=observed)
         np.testing.assert_allclose(native.variance.download(), reference.variance, atol=2e-7)
-        expected = reference.expected_information_gain(
-            precision, prior=host_prior, dt=.1, grid_shape=(5, 7), max_side=11,
-        )
         download = GLArray.download
 
         def only_grid(array):
             assert array.size == 35, "Advisory scoring must only download the candidate grid"
             return download(array)
 
-        with monkeypatch.context() as patch:
-            patch.setattr(GLArray, "download", only_grid)
-            actual = native.expected_information_gain(
-                precision, prior=prior, dt=.1, grid_shape=(5, 7), max_side=11,
+        for max_side in (11, 1, 64, 11):
+            expected = reference.expected_information_gain(
+                precision, prior=host_prior, dt=.1, grid_shape=(5, 7), max_side=max_side,
             )
-        np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-5)
+            with monkeypatch.context() as patch:
+                patch.setattr(GLArray, "download", only_grid)
+                actual = native.expected_information_gain(
+                    precision, prior=prior, dt=.1, grid_shape=(5, 7), max_side=max_side,
+                )
+            np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-5)
 
     tiny_precision = GaussianSpatialPrecision(baseline=1e-8, peak=0)
     np.testing.assert_allclose(

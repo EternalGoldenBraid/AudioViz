@@ -6,6 +6,7 @@ import pytest
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.readouts.predictive_coding import PredictiveCodingConfig, PredictiveCodingRGBReadout
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
+from audioviz.sources.gaze import information_gaze
 from audioviz.utils.array_backend import to_numpy
 
 
@@ -115,14 +116,17 @@ def test_unrepresented_model_uncertainty_is_rejected(changes):
         GaussianSensoryUncertainty(readout)
 
 
-def test_bounded_quadrature_preserves_total_gain_for_constant_precision():
-    readout = identity_readout((1080, 1920))
+@pytest.mark.parametrize("shape,max_side", [
+    ((1080, 1920), 16), ((1, 31), 1), ((31, 1), 2), ((3, 11), 4), ((3, 11), 32),
+])
+def test_bounded_quadrature_preserves_total_gain_for_constant_precision(shape, max_side):
+    readout = identity_readout(shape)
     model = GaussianSensoryUncertainty(readout, initial_variance=.25)
     scores = model.expected_information_gain(
         GaussianSpatialPrecision(baseline=1, peak=0),
-        prior=np.zeros(readout.canvas_shape, dtype=np.float32), dt=0, max_side=16,
+        prior=np.zeros(readout.canvas_shape, dtype=np.float32), dt=0, max_side=max_side,
     )
-    np.testing.assert_allclose(scores, 1.5*1080*1920*np.log1p(.25), rtol=2e-6)
+    np.testing.assert_allclose(scores, 1.5*np.prod(shape)*np.log1p(.25), rtol=2e-6)
 
 
 def test_forecast_conditioning_boundary_and_invalid_planning_inputs():
@@ -144,3 +148,37 @@ def test_forecast_conditioning_boundary_and_invalid_planning_inputs():
         model.expected_information_gain(measurement, prior=prior, dt=.1)
     model.condition(measurement, observed=False)
     assert np.isfinite(model.expected_information_gain(measurement, prior=prior, dt=.1)).all()
+
+
+@pytest.mark.parametrize("backend_name", ("numpy", "cupy"))
+def test_bounded_gain_preserves_full_grid_action_ranking_after_repeated_center_observations(
+    request, backend_name,
+):
+    xp = np if backend_name == "numpy" else request.getfixturevalue("cupy_backend")
+    shape, dt, rate = (120, 160), 1/30, .1
+    readout = identity_readout(shape, backend=xp, rate=rate)
+    model = GaussianSensoryUncertainty(readout, backend=xp)
+    precision = GaussianSpatialPrecision()
+    pi = precision.field(shape, dtype=np.float64)
+    factor, increment = (1-rate)**2, model.process_variance*dt
+    # Positive Riccati fixed point for repeatedly observing this footprint.
+    b = 1-factor+pi*increment
+    posterior = 2*increment/(b+np.sqrt(b*b+4*pi*factor*increment))
+    model.variance[:] = xp.asarray(posterior[..., None], dtype=xp.float32)
+    forecast = factor*posterior+increment
+    expected = np.array([
+        [1.5*np.log1p(replace(precision, gaze=(float(x), float(y))).field(
+            shape, dtype=np.float64,
+        )*forecast).sum() for x in np.linspace(0, 1, 13)]
+        for y in np.linspace(0, 1, 9)
+    ])
+    prior = xp.zeros(readout.canvas_shape, dtype=xp.float32)
+    bounded = model.expected_information_gain(precision, prior=prior, dt=dt)
+    full = model.expected_information_gain(precision, prior=prior, dt=dt, max_side=160)
+    np.testing.assert_allclose(full, expected, rtol=2e-6)
+    np.testing.assert_allclose(bounded, expected, rtol=1e-3)
+    margin = expected[4, 5]-expected[4, 6]
+    assert abs((bounded[4, 5]-bounded[4, 6])-margin) < .1*margin
+    assert bounded[4, 5] > bounded[4, 6]
+    assert information_gaze(bounded, precision.gaze) == information_gaze(full, precision.gaze)
+    assert information_gaze(bounded, precision.gaze) == (5/12, .5)

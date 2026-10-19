@@ -183,6 +183,7 @@ class GaussianSensoryUncertainty:
 
         Full local RGB covariance is retained for scoring. Only spatial
         quadrature and the diagonal hidden-state approximation discard terms.
+        Spatial samples are weighted by their represented pixel area.
         """
         self.validate_config(self.readout.config)
         if self._pending:
@@ -196,12 +197,15 @@ class GaussianSensoryUncertainty:
         increment = self._process_increment(dt)
         self._ensure_initialized()
         rows, cols = preview_indices(self.shape, max_side=max_side)
+        row_weights = _pixel_area_weights(rows, self.shape[0])
+        col_weights = _pixel_area_weights(cols, self.shape[1])
         rate = float(self.readout.config.inference_rate)
         factor = float((1 - rate)**2)
-        scale = 0.5 * np.prod(self.shape) / (len(rows)*len(cols))
+        scale = 0.5
         if self.device is None:
             xp = self.backend
             r, c = xp.asarray(rows), xp.asarray(cols)
+            area = xp.asarray(row_weights)[:, None]*xp.asarray(col_weights)[None, :]
             hidden = self.readout.hidden[r[:, None], c[None, :]]
             canvas = prior[r[:, None], c[None, :]]
             forecast = (1-rate)*hidden + rate*xp.einsum(
@@ -218,7 +222,9 @@ class GaussianSensoryUncertainty:
                     pi = replace(precision, gaze=(float(x), float(y))).field(
                         self.shape, backend=xp, indices=(r, c),
                     )
-                    scores[iy, ix] = scale*xp.log1p(pi*(trace+pi*(minor+pi*determinant))).sum()
+                    scores[iy, ix] = scale*(area*xp.log1p(
+                        pi*(trace+pi*(minor+pi*determinant)),
+                    )).sum()
             scores = to_numpy(scores)
         else:
             if not isinstance(prior, GLArray) or prior.device is not self.device:
@@ -228,7 +234,8 @@ class GaussianSensoryUncertainty:
                 if self._indices is not None:
                     self.device.release(self._indices, self._moments)
                 self._indices = GLArray(
-                    self.device, (len(rows)+len(cols),), np.concatenate((rows, cols)).astype(np.float32),
+                    self.device, (2*(len(rows)+len(cols)),),
+                    np.concatenate((rows, cols, row_weights, col_weights)).astype(np.float32),
                 )
                 self._moments = GLArray(self.device, (len(rows)*len(cols), 3))
                 self._index_shape = index_shape
@@ -270,7 +277,8 @@ class GaussianSensoryUncertainty:
                     float pi=gaussian_precision(r-gaze,width,baseline,peak);
                     float z=pi*(moments[p*3]+pi*(moments[p*3+1]+pi*moments[p*3+2]));
                     float u=1.0+z;
-                    return u==1.0?z:log(u)*(z/(u-1.0));
+                    float area=indices[nr+nc+p/nc]*indices[nr+nc+nr+p%nc];
+                    return area*(u==1.0?z:log(u)*(z/(u-1.0)));
                 }}""", "gain(p,c)", [self._moments, self._indices], len(rows)*len(cols),
                 grid_shape[0]*grid_shape[1], nr=len(rows), nc=len(cols), sampling=int(precision.sample),
                 width=float(width), baseline=float(precision.baseline), peak=float(precision.peak),
@@ -280,3 +288,11 @@ class GaussianSensoryUncertainty:
         if not np.all(np.isfinite(scores)) or np.any(scores < 0):
             raise FloatingPointError("Gaussian uncertainty diverged; reduce variance settings or timestep")
         return scores
+
+
+def _pixel_area_weights(indices, size):
+    """Pixel-cell widths, with outer image boundaries half a pixel past the endpoints."""
+    edges = np.empty(len(indices)+1, dtype=np.float64)
+    edges[0], edges[-1] = -.5, size-.5
+    edges[1:-1] = .5*(indices[:-1]+indices[1:])
+    return np.diff(edges).astype(np.float32)
