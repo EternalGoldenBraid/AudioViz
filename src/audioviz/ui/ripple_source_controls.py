@@ -91,7 +91,11 @@ class RippleSourceControlBinding:
         if uncertainty_active:
             learning_controls = tuple(
                 replace(
-                    control, kind="text", default="Fixed for Gaussian uncertainty",
+                    control, kind="text", default="Unused: one Gaussian update per frame",
+                    tooltip="Temporal memory is set independently by --memory-time-constant.",
+                ) if control.key in ("inference_steps", "inference_rate") else
+                replace(
+                    control, kind="text", default="Fixed for temporal Gaussian inference",
                     tooltip="Parameter uncertainty is not propagated in this experiment.",
                 ) if control.key == "learning_enabled" else control
                 for control in learning_controls

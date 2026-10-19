@@ -25,7 +25,7 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
         stimulus=CircularDotConfig(
             resolution=(24, 32), radius=6, frame_rate=10, duration=0.3,
         ),
-        precision=GaussianSpatialPrecision(), backend=backend, inference_steps=2,
+        precision=GaussianSpatialPrecision(), backend=backend, inference_steps=2, memory_time_constant=.7,
     )
     widget.visualizer.timer.stop()
     widget.preview_timer.stop()
@@ -56,11 +56,14 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
         assert widget.prediction_image.image.shape == (24, 32, 3)
         assert np.isfinite(widget.prediction_image.image).all()
         assert widget.visualizer.source_orchestrator.visual_readout.config.learning_enabled is False
+        assert widget.uncertainty.memory_time_constant == .7 and "memory 0.7 s" in widget.assumptions.text()
         learning = next(
             section for section in widget.visualizer.source_control_binding.build_sections()
             if section.key == "learning-dynamics"
         )
         assert next(control for control in learning.controls if control.key == "learning_enabled").kind == "text"
+        assert all(next(control for control in learning.controls if control.key == key).kind == "text"
+                   for key in ("inference_steps", "inference_rate"))
         assert not any(control.key == "cross_modal_enabled" for control in learning.controls)
         assert widget.information_scores.shape == (9, 13)
         assert np.isfinite(widget.information_scores).all() and widget.information_scores.max() > 0
@@ -117,8 +120,11 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
         widget._after_frame()
         widget.refresh_previews()
         assert widget.stimulus.latest.time == 0
+        factor = np.exp(-.2/widget.uncertainty.memory_time_constant)
+        increment = widget.uncertainty.process_variance*widget.uncertainty.memory_time_constant/2*(1-factor)
         np.testing.assert_allclose(
-            spatial_preview(widget.uncertainty.variance, max_side=32), .81*variance+.001, atol=1e-7,
+            spatial_preview(widget.uncertainty.variance, max_side=32),
+            factor*variance+increment, rtol=2e-6, atol=1e-7,
         )
         assert not np.array_equal(widget.information_scores, scores_before_missing_frame)
         variance = spatial_preview(widget.uncertainty.variance, max_side=32).copy()
@@ -134,7 +140,7 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
         assert not widget.visualizer.timer.isActive() and not widget.preview_timer.isActive()
         np.testing.assert_allclose(
             spatial_preview(widget.uncertainty.variance, max_side=32),
-            .81**2*variance + .001*(1+.81), atol=1e-7,
+            factor**2*variance + increment*(1+factor), rtol=2e-6, atol=1e-7,
         )
         assert widget.information_scores.max() > 0
         assert "sampling paused" in widget.information_status.text()
@@ -259,8 +265,11 @@ def test_autonomous_gaze_acts_on_model_steps_not_preview_or_mouse_events(qapp, r
         widget.visualizer.update_visualization()
         widget._after_frame()
         assert len(calls) == 1 and widget.precision.gaze == (.75, .25)
+        factor = np.exp(-.2/widget.uncertainty.memory_time_constant)
+        increment = widget.uncertainty.process_variance*widget.uncertainty.memory_time_constant/2*(1-factor)
         np.testing.assert_allclose(
-            spatial_preview(widget.uncertainty.variance, max_side=32), .81*variance+.001, atol=1e-7,
+            spatial_preview(widget.uncertainty.variance, max_side=32),
+            factor*variance+increment, rtol=2e-6, atol=1e-7,
         )
         widget.observe.setChecked(True)
         widget.information_toggle.setChecked(False)

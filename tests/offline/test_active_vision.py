@@ -77,10 +77,14 @@ def test_precision_budget_accounts_for_clipping_and_cli_preserves_assumptions(mo
     monkeypatch.setattr(sys, "argv", [
         "active_vision", "--resolution", "12", "16", "--fps", "10", "--duration", ".1",
         "--inference-steps", "2", "--seed", "7", "--policy-seed", "29",
+        "--memory-time-constant", ".7",
     ])
     assert main() == 0
     report = json.loads(capsys.readouterr().out)
     assert report["stimulus"]["seed"] == 7 and report["policy_seed"] == 29
+    assert report["memory_time_constant"] == .7
+    assert "PC settling unused" in report["inference_model"]
+    assert "no inferred wave covariance" in report["canvas_feedback"]
     assert "not sampled or calibrated" in report["measurement_model"]
     assert "clipping" in report["budget"]
     assert len(report["runs"]) == 3

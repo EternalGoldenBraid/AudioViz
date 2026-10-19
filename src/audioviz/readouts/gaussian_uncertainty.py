@@ -5,25 +5,35 @@ from dataclasses import replace
 import numpy as np
 
 from audioviz.readouts.spatial_precision import GAUSSIAN_PRECISION_GLSL, GaussianSpatialPrecision
-from audioviz.utils.array_backend import to_numpy
+from audioviz.readouts.diagnostics import mean_energy
+from audioviz.utils.array_backend import canvas_direction, project_channels, to_numpy
 from audioviz.utils.opengl_compute import GLArray
 from audioviz.utils.spatial_preview import preview_indices
 
 
 class GaussianSensoryUncertainty:
-    """Local Gaussian covariance filter for an uncoupled, fixed-weight RGB predictor.
+    """Temporal Gaussian mean/covariance filter for a fixed-weight RGB predictor.
 
     Hidden covariance is projected onto its diagonal after conditioning. The
     wave canvas is a known input; its uncertainty and parameter uncertainty
     are outside this conditional approximation.
     """
 
-    def __init__(self, readout, *, initial_variance=1.0, process_variance=0.01, backend=np, device=None):
+    def __init__(
+        self, readout, *, initial_variance=1.0, process_variance=0.01,
+        memory_time_constant=1/3, backend=np, device=None,
+    ):
         for name, value in (("initial_variance", initial_variance), ("process_variance", process_variance)):
             if not np.isfinite(value) or value < 0 or value > np.finfo(np.float32).max:
                 raise ValueError(f"{name} must be finite, non-negative and representable as float32")
         if np.float32(initial_variance) == 0:
             raise ValueError("initial_variance must be positive in float32")
+        if (
+            not np.isfinite(memory_time_constant) or memory_time_constant <= 0
+            or memory_time_constant > np.finfo(np.float32).max
+            or np.float32(memory_time_constant) == 0
+        ):
+            raise ValueError("memory_time_constant must be positive and representable as float32")
         self.readout = readout
         self.shape = readout.canvas_shape[:2]
         self.channels = readout.config.hidden_channels
@@ -31,13 +41,16 @@ class GaussianSensoryUncertainty:
         self.device = device
         self.initial_variance = float(initial_variance)
         self.process_variance = float(process_variance)
+        self.memory_time_constant = float(memory_time_constant)
+        self.prediction = None
+        self._prior = None
         shape = (*self.shape, self.channels)
         self.variance = (
             GLArray(device, shape) if device is not None
             else backend.full(shape, initial_variance, dtype=backend.float32)
         )
         self._frozen_hidden = (
-            GLArray(device, shape) if device is not None else backend.zeros(shape, dtype=backend.float32)
+            GLArray(device, shape) if device is not None else backend.zeros(shape, dtype=readout.hidden.dtype)
         )
         self._initialized = device is None
         self._pending = False
@@ -50,20 +63,26 @@ class GaussianSensoryUncertainty:
         if config.cross_modal_enabled or config.learning_enabled:
             raise ValueError("Gaussian visual uncertainty currently requires uncoupled, fixed-weight inference")
 
-    def _process_increment(self, dt):
+    def _transition(self, dt):
         if not np.isfinite(dt) or dt < 0:
             raise ValueError("uncertainty timestep must be finite and non-negative")
-        increment = self.process_variance * float(dt)
+        elapsed = float(dt)/self.memory_time_constant
+        retention = float(np.exp(-elapsed))
+        blend = float(-np.expm1(-elapsed))
+        factor = float(np.exp(-2*elapsed))
+        increment = self.process_variance*(.5*self.memory_time_constant)*float(-np.expm1(-2*elapsed))
         if not np.isfinite(increment) or increment > np.finfo(np.float32).max:
             raise ValueError("process variance increment must be representable as float32")
-        return float(increment)
+        return retention, blend, factor, float(increment)
 
     def reset(self):
+        self.readout.reset()
         if self.device is None:
             self.variance.fill(self.initial_variance)
         else:
             self._initialized = False
         self._pending = False
+        self._prior = self.prediction = None
 
     def _ensure_initialized(self):
         if not self._initialized:
@@ -75,32 +94,53 @@ class GaussianSensoryUncertainty:
             )
             self._initialized = True
 
-    def predict(self, *, dt):
-        """Called immediately after the mean predictor, before any new evidence."""
+    def predict(self, prior, *, dt):
+        """Advance and freeze one shared mean/covariance prior before new evidence."""
         self.validate_config(self.readout.config)
         if self._pending:
             raise RuntimeError("Condition the previous Gaussian forecast before predicting again")
-        increment = self._process_increment(dt)
+        retention, blend, factor, increment = self._transition(dt)
         self._ensure_initialized()
-        factor = float((1 - self.readout.config.inference_rate) ** 2)
         if self.device is None:
+            xp = self.backend
+            self._prior = self.readout._coerce(prior, name="canvas prior").copy()
+            drive = project_channels(xp.tanh(self._prior), self.readout.canvas_weights.T)
+            self.readout.hidden[:] = retention*self.readout.hidden + blend*drive
             self.variance[:] = factor * self.variance + increment
             self._frozen_hidden[:] = self.readout.hidden
+            self.prediction = self.readout._capture_prediction()
+            self.readout.stream_state_prediction = None
         else:
+            model = self.readout.model
+            model._copy_prior(prior)
+            self._prior = model.canvas
+            self.prediction = model.camera_prediction
             self.device.run(
                 self._native_source() + """
-                uniform float factor,increment;
+                layout(std430,binding=4) readonly buffer Prior {float prior[];};
+                layout(std430,binding=5) writeonly buffer Prediction {float prediction[];};
+                uniform float retention,blend,factor,increment;
                 void main(){int p=int(gl_GlobalInvocationID.x);if(p>=N)return;
                     for(int k=0;k<H;++k){int i=p*H+k;
+                        float drive=0.0;
+                        for(int c=0;c<3;++c)drive+=weights[WC+k*3+c]*tanh(prior[p*3+c]);
+                        hidden[i]=retention*hidden[i]+blend*drive;
                         variance[i]=factor*variance[i]+increment;frozen[i]=hidden[i];
                     }
-                }""", self._native_arrays(), int(np.prod(self.shape)), factor=factor, increment=increment,
+                    vec3 y=decoded(p);
+                    for(int c=0;c<3;++c)prediction[p*3+c]=y[c];
+                }""", [*self._native_arrays(), self._prior, self.prediction], int(np.prod(self.shape)),
+                retention=retention, blend=blend, factor=factor, increment=increment,
             )
+            model._validate(model.hidden, self.prediction)
+            self.readout.diagnostics = None
+            self.readout.stream_state_prediction = None
         self._pending = True
+        return self.prediction
 
     def _jacobian(self, hidden):
         xp = self.backend
-        weights = xp.asarray(self.readout.visual_weights, dtype=xp.float32)
+        weights = xp.asarray(self.readout.visual_weights)
         return weights * (1 - xp.tanh(hidden)**2)[..., None, :]
 
     @staticmethod
@@ -108,55 +148,141 @@ class GaussianSensoryUncertainty:
         return tuple((j[..., a, :] * variance * j[..., b, :]).sum(axis=-1)
                      for a, b in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2)))
 
-    def condition(self, precision: GaussianSpatialPrecision | None, *, observed):
-        """Condition once, using the frozen pre-evidence decoder linearization."""
+    def condition(self, observation, precision: GaussianSpatialPrecision | None = None):
+        """Apply one frozen-affine posterior and return deterministic canvas feedback."""
+        self.validate_config(self.readout.config)
         if not self._pending:
             raise RuntimeError("Gaussian conditioning requires a pre-evidence forecast")
-        if not isinstance(observed, bool):
-            raise ValueError("observed must be a boolean")
+        precision = self.readout.config.spatial_precision if precision is None else precision
         precision = GaussianSpatialPrecision(baseline=1, peak=0) if precision is None else precision
-        if observed and precision.sample:
-            if self.device is None:
-                xp = self.backend
+        if precision != self.readout.config.spatial_precision:
+            self.readout.update_config(spatial_precision=precision)
+        if self.device is not None:
+            correction = self._condition_native(observation, precision)
+        else:
+            xp = self.backend
+            observed = observation is not None and precision.sample
+            observation = self.readout._coerce_observation(observation) if observation is not None else None
+            delta = xp.zeros_like(self.readout.hidden)
+            residual = xp.zeros_like(self.prediction)
+            normalized = xp.zeros_like(delta)
+            energy = []
+            if observed:
                 pi = precision.field(self.shape, backend=xp)
+                residual = observation-self.prediction
                 j = self._jacobian(self._frozen_hidden)
                 a, b, c, d, e, f = self._components(j, self.variance)
-                a, b, c, d, e, f = 1 + pi*a, 1 + pi*b, 1 + pi*c, pi*d, pi*e, pi*f
+                a, b, c, d, e, f = 1+pi*a, 1+pi*b, 1+pi*c, pi*d, pi*e, pi*f
                 aa, bb, cc = b*c-f*f, a*c-e*e, a*b-d*d
                 dd, ee, ff = e*f-d*c, d*f-b*e, d*e-a*f
-                determinant = a*aa + d*dd + e*ee
+                determinant = a*aa+d*dd+e*ee
                 x, y, z = j[..., 0, :], j[..., 1, :], j[..., 2, :]
+                u, v, w = (residual[..., k] for k in range(3))
+                dx = (aa*u+dd*v+ee*w)/determinant
+                dy = (dd*u+bb*v+ff*w)/determinant
+                dz = (ee*u+ff*v+cc*w)/determinant
+                delta = pi[..., None]*self.variance*(
+                    x*dx[..., None]+y*dy[..., None]+z*dz[..., None]
+                )
+                normalized = delta/xp.sqrt(xp.where(self.variance > 0, self.variance, 1))
                 quadratic = (
-                    aa[..., None]*x*x + bb[..., None]*y*y + cc[..., None]*z*z
-                    + 2*(dd[..., None]*x*y + ee[..., None]*x*z + ff[..., None]*y*z)
-                ) / determinant[..., None]
+                    aa[..., None]*x*x+bb[..., None]*y*y+cc[..., None]*z*z
+                    +2*(dd[..., None]*x*y+ee[..., None]*x*z+ff[..., None]*y*z)
+                )/determinant[..., None]
                 self.variance[:] = xp.maximum(
-                    self.variance - pi[..., None]*self.variance**2*quadratic, 0,
+                    self.variance-pi[..., None]*self.variance**2*quadratic, 0,
                 )
-            else:
-                x, y, width = precision.pixel_parameters(self.shape)
-                self.device.run(
-                    self._native_source() + GAUSSIAN_PRECISION_GLSL + f"""
-                    uniform float gaze_x,gaze_y,width,baseline,peak;
-                    void main(){{int p=int(gl_GlobalInvocationID.x);if(p>=N)return;
-                        float pi=gaussian_precision(vec2(float(p%{self.shape[1]}),float(p/{self.shape[1]}))
-                            -vec2(gaze_x,gaze_y),width,baseline,peak);
-                        mat3 cov=mat3(0.0);
-                        for(int k=0;k<H;++k){{
-                            vec3 j=decoder_column(k)*(1.0-pow(tanh(frozen[p*H+k]),2.0));
-                            cov+=variance[p*H+k]*outerProduct(j,j);
-                        }}
-                        mat3 inv=inverse(mat3(1.0)+pi*cov);
-                        for(int k=0;k<H;++k){{
-                            vec3 j=decoder_column(k)*(1.0-pow(tanh(frozen[p*H+k]),2.0));
-                            float v=variance[p*H+k];
-                            variance[p*H+k]=max(v-pi*v*v*dot(j,inv*j),0.0);
-                        }}
-                    }}""", self._native_arrays(), int(np.prod(self.shape)),
-                    gaze_x=float(x), gaze_y=float(y), width=float(width),
-                    baseline=float(precision.baseline), peak=float(precision.peak),
-                )
+                if self.readout.diagnostics_enabled:
+                    energy.append(mean_energy(xp.zeros_like(delta), xp.sqrt(pi[..., None])*residual))
+                residual = residual-xp.einsum("...ck,...k->...c", j, delta)
+                if self.readout.diagnostics_enabled:
+                    energy.append(mean_energy(normalized, xp.sqrt(pi[..., None])*residual))
+            self.readout.hidden[:] = self._frozen_hidden+delta
+            correction = canvas_direction(
+                self.readout.config.canvas_rate, xp.tanh(self._prior),
+                project_channels(delta, self.readout.canvas_weights),
+            )
+            self.readout._require_finite(self.readout.hidden, self.variance, correction)
+            self.readout._finish_inference(
+                self._prior+correction, observation if observed else None, energy,
+                hidden_error=normalized, visual_error=residual, learn=False,
+            )
         self._pending = False
+        return correction
+
+    def _condition_native(self, observation, precision):
+        model = self.readout.model
+        observed = observation is not None and precision.sample
+        evidence = model._upload_evidence(observation, model.shape, 0) if observation is not None else model.evidence
+        model.observation = evidence if observed else None
+        x, y, width = precision.pixel_parameters(self.shape)
+        source = self._native_source() + GAUSSIAN_PRECISION_GLSL + f"""
+            layout(std430,binding=4) buffer Canvas {{float canvas[];}};
+            layout(std430,binding=5) readonly buffer Observation {{float observation[];}};
+            layout(std430,binding=6) writeonly buffer Correction {{float correction[];}};
+            layout(std430,binding=7) buffer Errors {{float errors[];}};
+            uniform int observed;
+            uniform float gaze_x,gaze_y,width,baseline,peak,canvas_rate;
+            const int VISUAL=2*N*H;
+        """
+        arrays = [*self._native_arrays(), model.canvas, evidence, model.correction, model.errors]
+        uniforms = dict(
+            observed=int(observed), gaze_x=float(x), gaze_y=float(y), width=float(width),
+            baseline=float(precision.baseline), peak=float(precision.peak),
+            canvas_rate=float(self.readout.config.canvas_rate),
+        )
+        collect = self.readout.diagnostics_enabled
+        model._trajectory = []
+        if collect and observed:
+            self.device.run(source + """
+                void main(){int p=int(gl_GlobalInvocationID.x);if(p>=N)return;
+                    vec3 expected=decoded(p);
+                    for(int c=0;c<3;++c)errors[VISUAL+p*3+c]=observation[p*3+c]-expected[c];
+                }""", arrays, int(np.prod(self.shape)), **uniforms,
+            )
+            model._trajectory.append(float(model._means(model.camera.visual_error, energy=True, precision=True).sum()))
+        self.device.run(source + f"""
+            void main(){{int p=int(gl_GlobalInvocationID.x);if(p>=N)return;
+                vec3 residual=vec3(0.0);
+                if(observed==1)for(int c=0;c<3;++c)residual[c]=observation[p*3+c];
+                if(observed==1)residual-=decoded(p);
+                float pi=observed==1?gaussian_precision(
+                    vec2(float(p%{self.shape[1]}),float(p/{self.shape[1]}))-vec2(gaze_x,gaze_y),
+                    width,baseline,peak):0.0;
+                mat3 cov=mat3(0.0);
+                for(int k=0;k<H;++k){{
+                    vec3 j=decoder_column(k)*(1.0-pow(tanh(frozen[p*H+k]),2.0));
+                    cov+=variance[p*H+k]*outerProduct(j,j);
+                }}
+                mat3 inv=inverse(mat3(1.0)+pi*cov);
+                vec3 u=inv*residual,feedback=vec3(0.0),decoded_delta=vec3(0.0);
+                for(int k=0;k<H;++k){{
+                    int i=p*H+k;
+                    vec3 j=decoder_column(k)*(1.0-pow(tanh(frozen[i]),2.0));
+                    float v=variance[i],delta=pi*v*dot(j,u);
+                    hidden[i]=frozen[i]+delta;
+                    errors[i]=v>0.0?delta/sqrt(v):0.0;
+                    variance[i]=max(v-pi*v*v*dot(j,inv*j),0.0);
+                    decoded_delta+=j*delta;
+                    for(int c=0;c<3;++c)feedback[c]+=weights[WC+k*3+c]*delta;
+                }}
+                for(int c=0;c<3;++c){{
+                    float value=canvas[p*3+c],a=tanh(value);
+                    float change=canvas_rate*(1.0-a*a)*feedback[c];
+                    correction[p*3+c]=change;canvas[p*3+c]=value+change;
+                    errors[VISUAL+p*3+c]=residual[c]-decoded_delta[c];
+                }}
+            }}""", arrays, int(np.prod(self.shape)), **uniforms,
+        )
+        model._validate(model.hidden, self.variance, model.correction)
+        if collect:
+            if observed:
+                model._trajectory.append(float(
+                    model._means(model.camera.hidden_error, energy=True).sum()
+                    +model._means(model.camera.visual_error, energy=True, precision=True).sum()
+                ))
+            model._diagnostics(None, None)
+        return model.correction
 
     def _native_arrays(self):
         model = self.readout.model
@@ -168,11 +294,16 @@ class GaussianSensoryUncertainty:
         return f"""
         const int H={h},N={int(np.prod(self.shape))},WC={offset},WD={offset+h*3};
         layout(std430,binding=0) buffer Variance {{float variance[];}};
-        layout(std430,binding=1) readonly buffer Hidden {{float hidden[];}};
+        layout(std430,binding=1) buffer Hidden {{float hidden[];}};
         layout(std430,binding=2) readonly buffer Weights {{float weights[];}};
         layout(std430,binding=3) buffer Frozen {{float frozen[];}};
         vec3 decoder_column(int k){{
             return vec3(weights[WD+k],weights[WD+H+k],weights[WD+2*H+k]);
+        }}
+        vec3 decoded(int p){{
+            vec3 result=vec3(0.0);
+            for(int k=0;k<H;++k)result+=decoder_column(k)*tanh(frozen[p*H+k]);
+            return result;
         }}
         """
 
@@ -194,13 +325,11 @@ class GaussianSensoryUncertainty:
             raise ValueError("candidate grid must contain two integers of at least two")
         if prior.shape != (*self.shape, 3):
             raise ValueError("uncertainty planning prior must match the RGB canvas")
-        increment = self._process_increment(dt)
+        retention, rate, factor, increment = self._transition(dt)
         self._ensure_initialized()
         rows, cols = preview_indices(self.shape, max_side=max_side)
         row_weights = _pixel_area_weights(rows, self.shape[0])
         col_weights = _pixel_area_weights(cols, self.shape[1])
-        rate = float(self.readout.config.inference_rate)
-        factor = float((1 - rate)**2)
         scale = 0.5
         if self.device is None:
             xp = self.backend
@@ -208,7 +337,7 @@ class GaussianSensoryUncertainty:
             area = xp.asarray(row_weights)[:, None]*xp.asarray(col_weights)[None, :]
             hidden = self.readout.hidden[r[:, None], c[None, :]]
             canvas = prior[r[:, None], c[None, :]]
-            forecast = (1-rate)*hidden + rate*xp.einsum(
+            forecast = retention*hidden + rate*xp.einsum(
                 "...c,kc->...k", xp.tanh(canvas), self.readout.canvas_weights,
             )
             v = factor*self.variance[r[:, None], c[None, :]] + increment
@@ -244,14 +373,14 @@ class GaussianSensoryUncertainty:
                 layout(std430,binding=4) readonly buffer Prior {{float prior[];}};
                 layout(std430,binding=5) readonly buffer Indices {{float indices[];}};
                 layout(std430,binding=6) writeonly buffer Moments {{float moments[];}};
-                uniform int nr,nc;uniform float rate,factor,increment;
+                uniform int nr,nc;uniform float retention,rate,factor,increment;
                 void main(){{int i=int(gl_GlobalInvocationID.x);if(i>=nr*nc)return;
                     int y=int(indices[i/nc]),x=int(indices[nr+i%nc]),p=y*{self.shape[1]}+x;
                     mat3 cov=mat3(0.0);
                     for(int k=0;k<H;++k){{
                         float drive=0.0;
                         for(int c=0;c<3;++c)drive+=weights[WC+k*3+c]*tanh(prior[p*3+c]);
-                        float h=(1.0-rate)*hidden[p*H+k]+rate*drive;
+                        float h=retention*hidden[p*H+k]+rate*drive;
                         vec3 j=decoder_column(k)*(1.0-pow(tanh(h),2.0));
                         cov+=(factor*variance[p*H+k]+increment)*outerProduct(j,j);
                     }}
@@ -261,7 +390,8 @@ class GaussianSensoryUncertainty:
                     moments[i*3+1]=max(a*b+a*c+b*c-d*d-e*e-f*f,0.0);
                     moments[i*3+2]=max(determinant(cov),0.0);
                 }}""", [*self._native_arrays(), prior, self._indices, self._moments],
-                len(rows)*len(cols), nr=len(rows), nc=len(cols), rate=rate, factor=factor, increment=increment,
+                len(rows)*len(cols), nr=len(rows), nc=len(cols), retention=retention,
+                rate=rate, factor=factor, increment=increment,
             )
             _, _, width = precision.pixel_parameters(self.shape)
             result = self.device.reduce(

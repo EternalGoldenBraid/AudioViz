@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from audioviz.engine import RippleEngine
 from audioviz.readouts import PredictiveCodingConfig, PredictiveCodingRGBReadout
@@ -96,6 +97,8 @@ def test_ripple_source_orchestrator_respects_explicit_audio_source_enabled_state
     assert resolved.audio_frequencies is None
     assert resolved.drive_grid is None
     assert resolved.amplitude == 1.0
+    with pytest.raises(ValueError, match="visual-only"):
+        orchestrator.enable_visual_uncertainty(dt=.1)
 
 
 def test_ripple_source_orchestrator_uses_configured_audio_frequency_mapping():

@@ -175,10 +175,9 @@ class RippleSourceOrchestrator:
     def predict_visual(self) -> np.ndarray:
         if self.gaze_policy is not None:
             self._select_visual_gaze(self.gaze_policy)
-        prediction = self._predict_visual_mean()
         if self.visual_uncertainty is not None:
-            self.visual_uncertainty.predict(dt=self._uncertainty_dt)
-        return prediction
+            return self.visual_uncertainty.predict(self.engine.get_prior(), dt=self._uncertainty_dt)
+        return self._predict_visual_mean()
 
     def _select_visual_gaze(self, policy: GazePolicy) -> None:
         if self.visual_uncertainty is None:
@@ -196,16 +195,21 @@ class RippleSourceOrchestrator:
         if gaze != precision.gaze:
             self.update_pathway_config(spatial_precision=replace(precision, gaze=gaze))
 
-    def enable_visual_uncertainty(self, *, dt, initial_variance=1.0, process_variance=0.01):
-        """Opt into conditional visual covariance alongside the existing mean inference."""
+    def enable_visual_uncertainty(
+        self, *, dt, initial_variance=1.0, process_variance=0.01, memory_time_constant=1/3,
+    ):
+        """Opt into shared temporal Gaussian inference for the visual-only experiment."""
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError("visual uncertainty requires a finite, positive timestep")
         if self.shader_model is None and not isinstance(self.visual_readout, PredictiveCodingRGBReadout):
             raise ValueError("visual uncertainty requires the predictive RGB readout")
         if self.visual_uncertainty is not None:
             raise RuntimeError("Visual uncertainty is already enabled")
+        if self.audio_readout is not None:
+            raise ValueError("Temporal Gaussian visual inference requires a visual-only experiment")
         self.visual_uncertainty = GaussianSensoryUncertainty(
             self.visual_readout, initial_variance=initial_variance, process_variance=process_variance,
+            memory_time_constant=memory_time_constant,
             backend=self.engine.backend,
             device=self.shader_model.device if self.shader_model is not None else None,
         )
@@ -240,12 +244,17 @@ class RippleSourceOrchestrator:
         )
 
     def correct_from_observations(self) -> np.ndarray:
-        correction = self._correct_from_observations_mean()
         if self.visual_uncertainty is not None:
-            self.visual_uncertainty.condition(
-                self.visual_readout.config.spatial_precision, observed=self.visual_observation is not None,
+            self.visual_observation = (
+                self.camera_source.excitation()
+                if self.prediction_error_transform.applies_to("camera_frame") else None
             )
-        return correction
+            correction = self.visual_uncertainty.condition(
+                self.visual_observation, self.visual_readout.config.spatial_precision,
+            )
+            self.engine.apply_observation_correction(correction)
+            return correction
+        return self._correct_from_observations_mean()
 
     def _correct_from_observations_mean(self) -> np.ndarray:
         self.visual_observation = None
@@ -308,7 +317,8 @@ class RippleSourceOrchestrator:
 
     def reset_readouts(self) -> None:
         self.visual_readout.set_spatial_preview_enabled(False)
-        self.visual_readout.reset()
+        if self.visual_uncertainty is None:
+            self.visual_readout.reset()
         if self.audio_readout is not None:
             self.audio_readout.set_spatial_preview_enabled(False)
             if self.shader_model is None:

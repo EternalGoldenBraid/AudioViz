@@ -20,7 +20,7 @@ from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
 
 class ActiveVisionExperiment(QtWidgets.QWidget):
-    """Mouse, autonomous, or full-canvas observation with conditional Gaussian advice."""
+    """Mouse, autonomous, or full-canvas observation with temporal Gaussian inference."""
 
     PREVIEW_MAX_SIDE = 256
 
@@ -28,6 +28,7 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         self, *, stimulus: CircularDotConfig, precision: GaussianSpatialPrecision,
         backend: str = "opengl", inference_steps: int = 8,
         initial_variance: float = 1.0, process_variance: float = 0.01,
+        memory_time_constant: float = 1/3,
         gaze_mode: str = "mouse",
     ):
         super().__init__()
@@ -101,8 +102,8 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         advice.addStretch()
         layout.addLayout(advice)
         self.assumptions = QtWidgets.QLabel(
-            f"Conditional Gaussian: initial hidden variance {initial_variance:g}; "
-            f"process variance {process_variance:g}/s. "
+            f"Temporal Gaussian: memory {memory_time_constant:g} s; initial hidden variance {initial_variance:g}; "
+            f"process diffusion {process_variance:g}/s. One shared mean/covariance update per frame. "
             "Assumed R = I / precision where precision > 0 (full canvas: R = I). "
             "Stimulus pixels are deterministic; no measurement noise is sampled. "
             "Diagonal hidden covariance; known wave canvas and fixed weights. Not calibrated confidence."
@@ -156,6 +157,7 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         self.uncertainty = self.visualizer.source_orchestrator.enable_visual_uncertainty(
             dt=1 / stimulus.frame_rate,
             initial_variance=initial_variance, process_variance=process_variance,
+            memory_time_constant=memory_time_constant,
         )
         self.visualizer.timer.timeout.connect(self._after_frame)
         self.preview_timer = QtCore.QTimer(self)
@@ -352,7 +354,7 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
             # Advice evaluates a future observation even while actual sampling is paused.
             self.information_scores = self.uncertainty.expected_information_gain(
                 replace(self.precision, sample=True), dt=1 / self.stimulus.config.frame_rate,
-                prior=self.visualizer.engine.get_prior(),
+                prior=self.visualizer.engine.get_field(),
             )
             self._score_dirty = False
             scores = self.information_scores
@@ -406,7 +408,11 @@ def main():
     parser.add_argument("--baseline", type=float, default=0.01)
     parser.add_argument("--peak", type=float, default=1.0)
     parser.add_argument("--initial-variance", type=float, default=1.0)
-    parser.add_argument("--process-variance", type=float, default=0.01)
+    parser.add_argument(
+        "--process-variance", type=float, default=0.01,
+        help="Hidden-state diffusion intensity (variance per stimulus second).",
+    )
+    parser.add_argument("--memory-time-constant", type=float, default=1/3, help="Hidden-state memory in stimulus seconds.")
     args = parser.parse_args()
     stimulus = CircularDotConfig(
         resolution=tuple(args.resolution), radius=0.3 * min(args.resolution),
@@ -420,6 +426,7 @@ def main():
     window = ActiveVisionExperiment(
         stimulus=stimulus, precision=precision, backend=args.backend,
         initial_variance=args.initial_variance, process_variance=args.process_variance,
+        memory_time_constant=args.memory_time_constant,
         gaze_mode=args.gaze_mode,
     )
     window.show()

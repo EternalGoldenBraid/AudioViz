@@ -76,6 +76,12 @@ def _orchestrator(seed, *, sample=True):
 
 def test_policy_runs_before_current_camera_frame_and_freezes_when_observations_pause(monkeypatch):
     orchestrator, stimulus, capture = _orchestrator(7)
+
+    def ordinary_pc(*args, **kwargs):
+        pytest.fail("temporal Gaussian frames must not run ordinary PC prediction or inference")
+
+    monkeypatch.setattr(orchestrator.visual_readout, "predict", ordinary_pc)
+    monkeypatch.setattr(orchestrator.visual_readout, "infer", ordinary_pc)
     scores = np.zeros((3, 5), dtype=np.float32)
     scores[1, 3] = 2
     calls = []
@@ -102,7 +108,12 @@ def test_policy_runs_before_current_camera_frame_and_freezes_when_observations_p
         orchestrator.correct_from_observations()
         assert len(calls) == 1 and orchestrator.gaze_scores is None
         assert orchestrator.visual_readout.config.spatial_precision.gaze == (0.75, 0.5)
-        np.testing.assert_allclose(orchestrator.visual_uncertainty.variance, 0.81*previous+0.001)
+        model = orchestrator.visual_uncertainty
+        factor = np.exp(-.2/model.memory_time_constant)
+        np.testing.assert_allclose(
+            model.variance, factor*previous+model.process_variance*model.memory_time_constant/2*(1-factor),
+            rtol=2e-6,
+        )
     finally:
         capture.release()
 

@@ -215,36 +215,47 @@ def test_shader_float_precision_uniforms_accept_integral_parameters(shader_engin
     np.testing.assert_allclose(correction.download(), expected, atol=3e-6)
 
 
-def test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_grid(shader_engine, monkeypatch):
+@pytest.mark.parametrize("inference_rate,inference_steps", ((.05, 1), (.8, 32)))
+def test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_grid(
+    shader_engine, monkeypatch, inference_rate, inference_steps,
+):
     from audioviz.utils.opengl_compute import GLArray
 
     shape = shader_engine.resolution
-    config = PredictiveCodingConfig(dtype="float32", inference_steps=2)
+    config = PredictiveCodingConfig(
+        dtype="float32", inference_steps=inference_steps, inference_rate=inference_rate,
+    )
     shader = OpenGLPredictiveModel(shader_engine, config, audio_enabled=False)
     readout = PredictiveCodingRGBReadout(canvas_shape=(*shape, 3), config=config)
     native = GaussianSensoryUncertainty(shader.camera, device=shader_engine.propagator.compute)
     reference = GaussianSensoryUncertainty(readout)
+    for branch in (shader.camera, readout):
+        branch.set_diagnostics_enabled(True)
+        branch.set_spatial_preview_enabled(True)
     rng = np.random.default_rng(74)
     shader_engine.propagate(rng.normal(0, .1, (*shape, 3)).astype(np.float32))
     prior = shader_engine.get_prior()
     host_prior = prior.download()
-    for observed, sampling, gaze in (
+    for step, (observed, sampling, gaze) in enumerate((
         (True, True, (0.2, 0.7)), (False, True, (0.5, 0.5)),
         (True, False, (0, 1)), (True, True, (0.8, 0.3)),
-    ):
+    )):
         precision = GaussianSpatialPrecision(gaze=gaze, sample=sampling, baseline=0, peak=1)
-        shader.camera.update_config(spatial_precision=precision)
-        readout.update_config(spatial_precision=precision)
-        shader.predict(prior)
-        readout.predict(host_prior)
-        native.predict(dt=.1)
-        reference.predict(dt=.1)
+        native.predict(prior, dt=.1)
+        reference.predict(host_prior, dt=.1)
+        if step == 0:
+            reference.variance[..., 0] = 0
+            native.variance.upload(reference.variance)
         image = rng.random((*shape, 3), dtype=np.float32) if observed else None
-        shader.infer(prior, image, None, states=(True, False))
-        readout.infer(host_prior, image, stream_state=True)
-        native.condition(precision, observed=observed)
-        reference.condition(precision, observed=observed)
+        actual_correction = native.condition(image, precision)
+        expected_correction = reference.condition(image, precision)
+        np.testing.assert_allclose(shader.camera.hidden.download(), readout.hidden, atol=2e-7)
+        np.testing.assert_allclose(actual_correction.download(), expected_correction, atol=2e-7)
         np.testing.assert_allclose(native.variance.download(), reference.variance, atol=2e-7)
+        assert shader.camera.diagnostics.stream_state is None
+        np.testing.assert_allclose(
+            shader.camera.diagnostics.inference_energy, readout.diagnostics.inference_energy, atol=2e-7,
+        )
         download = GLArray.download
 
         def only_grid(array):
@@ -268,6 +279,17 @@ def test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_g
         reference.expected_information_gain(tiny_precision, prior=host_prior, dt=.1, grid_shape=(3, 3)),
         rtol=1e-5, atol=1e-12,
     )
+    shader.camera.set_diagnostics_enabled(False)
+    readout.set_diagnostics_enabled(False)
+    native.reset()
+    reference.reset()
+    for _ in range(30):
+        native.predict(prior, dt=.04)
+        native.condition(None)
+    reference.predict(host_prior, dt=1.2)
+    reference.condition(None)
+    np.testing.assert_allclose(shader.camera.hidden.download(), readout.hidden, rtol=2e-6, atol=2e-7)
+    np.testing.assert_allclose(native.variance.download(), reference.variance, rtol=2e-6, atol=2e-7)
 
 
 @pytest.mark.parametrize("kind", ("rgb", "rgba", "gray", "float"))

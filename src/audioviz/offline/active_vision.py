@@ -82,6 +82,7 @@ def run_gaze_comparison(
     peak: float = 1.0,
     initial_variance: float = 1.0,
     process_variance: float = 0.01,
+    memory_time_constant: float = 1/3,
     policy_seed: int = 0,
 ) -> tuple[GazeRunResult, ...]:
     """Compare policies on deterministic frames; assigned likelihood noise is not sampled.
@@ -124,6 +125,7 @@ def run_gaze_comparison(
             uncertainty = orchestrator.enable_visual_uncertainty(
                 dt=1/stimulus.frame_rate,
                 initial_variance=initial_variance, process_variance=process_variance,
+                memory_time_constant=memory_time_constant,
             )
             orchestrator.gaze_policy = policy
             frames = []
@@ -171,12 +173,19 @@ def main():
     parser.add_argument("--brownian-scale", type=float, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--policy-seed", type=int, default=0)
-    parser.add_argument("--inference-steps", type=int, default=8)
+    parser.add_argument(
+        "--inference-steps", type=int, default=8,
+        help="Legacy PC setting; unused by the single temporal Gaussian update.",
+    )
     parser.add_argument("--sigma", type=float, default=0.15)
     parser.add_argument("--baseline", type=float, default=0.01)
     parser.add_argument("--peak", type=float, default=1.0)
     parser.add_argument("--initial-variance", type=float, default=1.0)
-    parser.add_argument("--process-variance", type=float, default=0.01)
+    parser.add_argument(
+        "--process-variance", type=float, default=0.01,
+        help="Hidden-state diffusion intensity (variance per stimulus second).",
+    )
+    parser.add_argument("--memory-time-constant", type=float, default=1/3, help="Hidden-state memory in stimulus seconds.")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     stimulus = CircularDotConfig(
@@ -188,6 +197,7 @@ def main():
         stimulus=stimulus, backend=args.backend, inference_steps=args.inference_steps,
         sigma=args.sigma, baseline=args.baseline, peak=args.peak,
         initial_variance=args.initial_variance, process_variance=args.process_variance,
+        memory_time_constant=args.memory_time_constant,
         policy_seed=args.policy_seed,
     )
     report = {
@@ -197,6 +207,9 @@ def main():
         "inference_steps": args.inference_steps,
         "sigma": args.sigma, "baseline": args.baseline, "peak": args.peak,
         "initial_variance": args.initial_variance, "process_variance": args.process_variance,
+        "memory_time_constant": args.memory_time_constant,
+        "inference_model": "Exact OU forecast and one frozen-affine Gaussian mean/covariance update; PC settling unused.",
+        "canvas_feedback": "Deterministic hidden-innovation feedback for the next known input; no inferred wave covariance.",
         "measurement_model": (
             "Deterministic frames; R = I / positive precision, zero precision is unobserved. "
             "Noise is assumed, not sampled or calibrated."
