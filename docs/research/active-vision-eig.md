@@ -11,16 +11,80 @@ The biological inspiration is foveated vision: a limited sharp region of sensory
 
 ## Research question
 
-Can a predictive-coding model learn to allocate spatial sensory precision to observations that are expected to reduce uncertainty about its latent state and/or future observations?
+Can a predictive-coding model actively choose **where and when to sample** to reduce uncertainty about **future sensory observations**? For the first experiment, the observable is a dot moving around a circle, optionally perturbed by Brownian offsets.
 
 A core distinction to test: **large current prediction error is not equivalent to high expected information gain**. A surprising but irreducibly noisy region can have large error without being informative.
+
+## Decisions from our discussion
+
+**Settled for experiment 1**
+
+- Optimize **epistemic value only** (expected information gain), without an instrumental task reward.
+- Predict **future sensory states** (initially dot position / image observations), not a new semantic latent-state model.
+- Attention controls **where and when to look**; continuously following the dot is *not* the objective.
+- A predictable circular trajectory should allow the model to look ahead and verify its hypothesis intermittently.
+- Prediction-error magnitude alone is **not** expected information gain. Prefer observations that distinguish competing predictions or reduce accumulated uncertainty.
+- Start with a reproducible circular-dot stimulus, optional Brownian perturbations, and tests before integrating more complex camera scenes.
+
+**Still open implementation/research choices**
+
+- The probabilistic belief representation over future sensory states and how to calculate/approximate EIG with the existing predictive-coding architecture.
+- The observation model: sharp fovea with blurred periphery, missing observations, or precision-weighted measurements; exact spatial/temporal sampling budget.
+- Which existing modules can be reused, and the staged learning/frozen-weights schedule.
+- How to quantify uncertainty calibration and separate reducible uncertainty from irreducible perturbation noise.
+
+## Visual intuition
+
+These are **schematic diagrams, not empirical results**. The agent must not receive the full-frame ground truth shown to evaluators.
+
+### 1. Look ahead, not chase
+
+```text
+                    predicted next dot  ×  <- fovea samples here
+                 .------------------.
+              .-'                    '-.
+             /                          \
+            |       circular path        |
+            |                            |
+             \        o current dot     /
+              '-.                    .-'
+                 '------------------'
+
+       Motion hypothesis -> predict future position -> sample -> update
+```
+
+### 2. A sparse observation schedule
+
+```text
+Time  -------------------------------------------------------------->
+Dot     o     o     o     o     o     o     o     o     o     o
+Gaze    ^     ^     ^                 ^                       ^
+        learn frequently              verify                 verify
+
+If uncertainty rises (e.g., changed dynamics): increase sampling again.
+```
+
+### 3. Experimental visualization mock-up
+
+```text
++--------------------+  +--------------------+  +--------------------+
+| FULL GROUND TRUTH  |  | ATTENDED INPUT     |  | MODEL PREDICTION   |
+|   .--trajectory--. |  |   dim periphery    |  |   .--trajectory--. |
+|  |   o dot        |  |   [sharp fovea]     |  |  |   x predicted    | |
+|   '--------------' |  |   rest uncertain   |  |   '--------------' | |
++--------------------+  +--------------------+  +--------------------+
+         evaluator             agent sees this        model output
+
+Below: gaze location and observation events over time; prediction error;
+       uncertainty estimate; EIG estimate; optional Brownian offset.
+```
 
 ## Proposed computational graph (conceptual)
 
 - Full camera frame `x_t` (available for experiment/evaluation).
 - Attention/action parameters `a_t` (initially location and spatial extent; later anisotropic or multi-focus).
 - Observation operator `S(x_t, a_t)`: sharp near focus, progressively lower resolution or precision in the periphery. This must be differentiable with respect to attention parameters if optimized by gradients.
-- Predictive model with latent state `z_t`, producing a full-frame prediction `x_hat_t`.
+- Predictive model (which may internally use existing hidden state) produces a future sensory prediction `x_hat_{t+1}`; **no new semantic latent model is required** for the first experiment.
 - Inference updates to `z_t` from the *attended observation*, with a spatially varying observation precision or equivalent weighting.
 - Attention policy chooses `a_t` based on predicted usefulness of the next observation.
 
@@ -28,7 +92,7 @@ Attention should change **what evidence the model receives**, not just add a blu
 
 ## Information gain formulation (candidate, not yet committed)
 
-Let `b_t(z)` represent a belief over latent states before a candidate observation, and let `y_{t+1}` be the observation resulting from attention action `a`. One candidate objective is
+For the first experiment, let `X_{t+1}` denote the uncertain future sensory state (dot position or full frame), `D_t` the observations so far, and `Y_a` the future attention-conditioned observation under candidate gaze action `a`. A candidate epistemic-only objective is
 
 ```math
 IG(a) = E_{y_{t+1} \sim p(y|a,b_t)}
@@ -73,14 +137,16 @@ Investigate attention-model co-adaptation, temporal predictive memory, movement 
 
 Each workstream should be a separate issue or implementation branch, with tests and a small PR. No coding agent should interpret this research document as permission to implement all stages.
 
-## Decisions needed in future conversations
+## Outstanding questions (not already decided)
 
-- What exactly is the latent random variable whose uncertainty we want to reduce?
-- What is the belief family, if any, maintained by the current predictive-coding implementation?
-- Is attention modeled as bandwidth/resolution, measurement precision, missingness, or a combination?
-- What is the sensing budget and action timescale?
-- How do we distinguish epistemic value from reconstruction improvement and curiosity for noise?
-- What should be learned jointly versus held fixed for controlled experiments?
+- Which belief family can express uncertainty about **future sensory observations** with the existing model?
+- What tractable estimator approximates sensory-space EIG, and how will it be validated against a controlled probabilistic toy model?
+- Which observation operator and fixed sensing budget should the first implementation use?
+- How should observation timing be represented (including the option **not to sample**), and what cost/budget prevents always observing?
+- What should be held fixed versus learned at each stage?
+- How do we distinguish reducible uncertainty from unpredictable Brownian perturbations?
+
+The *objective* (epistemic value), *initial uncertainty target* (future sensory state), and *behavioral goal* (predictive, intermittent verification) are already decided. Do not reopen them without new evidence.
 
 ## Engineering principles
 
