@@ -7,6 +7,7 @@ from audioviz.source_controls import (
     ControlValue,
     PredictionLearningControls,
     PredictionOverlayControls,
+    SourceControl,
 )
 from audioviz.ui.ripple_control_panel import (
     ControlPanelSection,
@@ -29,6 +30,21 @@ class RippleSourceControlBinding:
         visualizer = self.visualizer
         sections: list[ControlPanelSection] = []
         controls = visualizer.audio_source.controls()
+        audio_model = visualizer.source_orchestrator.audio_uncertainty
+        if audio_model is not None:
+            controls = (*controls, SourceControl(
+                key="audio_geometry", label="Observation Support", kind="text",
+                default="One global spectrum; common-mode uncertainty. No sound direction.",
+                tooltip="The microphone spectrum constrains a shared auditory perturbation, not independent image pixels or a located sound source.",
+            ), SourceControl(
+                key="audio_precision", label="Assigned Audio Precision",
+                default=audio_model.precision, minimum=0, maximum=max(1000, audio_model.precision), step=.05,
+                tooltip=(
+                    "Assigned inverse measurement variance: R = I / precision. "
+                    "Zero disables audio conditioning; it is not silent evidence or an input gain. "
+                    "This is a model assumption, not calibrated microphone confidence."
+                ),
+            ))
         sections.append(
             ControlPanelSection(
                 key="audio-source",
@@ -36,6 +52,9 @@ class RippleSourceControlBinding:
                 controls=controls,
                 toggle_key="audio",
                 empty_message=(
+                    "Camera-only startup does not open audio hardware. "
+                    "Restart with --active-vision MODE --active-audio to enable sound."
+                    if visualizer.active_vision_config is not None else
                     "Audio source controls are unavailable without an audio processor."
                 ),
             )
@@ -44,9 +63,15 @@ class RippleSourceControlBinding:
             ControlPanelSection(
                 key="camera-source",
                 title="Camera Source",
-                controls=CameraFrameSourceControls(
+                controls=(SourceControl(
+                    key="camera_status",
+                    label="Camera Status",
+                    kind="text",
+                    default=visualizer.camera_source.status,
+                    tooltip="Failed capture handles are released. Toggle Camera Frame off/on to reopen the configured device.",
+                ), *CameraFrameSourceControls(
                     gain=visualizer.camera_source.gain,
-                ).get_controls(),
+                ).get_controls()),
                 toggle_key="camera",
             )
         )
@@ -97,13 +122,22 @@ class RippleSourceControlBinding:
                 replace(
                     control, kind="text", default="Fixed for temporal Gaussian inference",
                     tooltip="Parameter uncertainty is not propagated in temporal Gaussian mode.",
-                ) if control.key == "learning_enabled" else control
+                ) if control.key == "learning_enabled" else
+                replace(
+                    control, label="Canvas Feedback Rate",
+                    tooltip=(
+                        "Scale deterministic canvas feedback from observation-induced hidden innovations. "
+                        "Applied once per frame to available sensory corrections. "
+                        "Zero leaves hidden inference and wave propagation active."
+                    ),
+                )
                 for control in learning_controls
+                if control.key in ("inference_steps", "inference_rate", "learning_enabled", "canvas_rate")
             )
         sections.append(
             ControlPanelSection(
                 key="learning-dynamics",
-                title="Sensory Inference and Learning",
+                title="Temporal Sensory Beliefs" if uncertainty_active else "Sensory Inference and Learning",
                 controls=learning_controls,
                 expanded=True,
             )
@@ -186,11 +220,18 @@ class RippleSourceControlBinding:
             return
         if source_key == "camera":
             visualizer.camera_source.set_enabled(enabled)
+            self.sync_camera_panel(visualizer.control_panel)
             return
         if source_key == "pose":
             visualizer._set_pose_sources_enabled(enabled)
             return
         raise KeyError(f"Unknown source toggle: {source_key}")
+
+    def sync_camera_panel(self, control_panel: RippleControlPanel | None) -> None:
+        if control_panel is not None:
+            control_panel.set_source_control_value(
+                "camera-source", "camera_status", self.visualizer.camera_source.status,
+            )
 
     def sync_audio_panel(
         self,
@@ -240,6 +281,12 @@ class RippleSourceControlBinding:
         value: ControlValue,
     ) -> None:
         visualizer = self.visualizer
+        if control_key == "audio_precision":
+            model = visualizer.source_orchestrator.audio_uncertainty
+            if model is None:
+                raise ValueError("Audio precision requires temporal audio inference")
+            model.set_precision(float(value))
+            return
         visualizer.audio_source.update_control(control_key, value)
 
     def _update_camera_control(

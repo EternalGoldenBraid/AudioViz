@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import numpy as np
+import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
 
 
@@ -9,7 +11,7 @@ class GazeControls(QtWidgets.QWidget):
     precision_changed = QtCore.pyqtSignal()
     mode_changed = QtCore.pyqtSignal()
 
-    def __init__(self, precision, *, mode="mouse", parent=None):
+    def __init__(self, precision, *, mode="mouse", compact=False, parent=None):
         super().__init__(parent)
         if mode not in ("mouse", "autonomous", "full"):
             raise ValueError("gaze mode must be mouse, autonomous or full")
@@ -21,12 +23,18 @@ class GazeControls(QtWidgets.QWidget):
         for label, control in (("Gaze X", self.gaze_x), ("Gaze Y", self.gaze_y)):
             self.coordinates.addWidget(QtWidgets.QLabel(label))
             self.coordinates.addWidget(control)
-        self.observe = QtWidgets.QCheckBox("Observe")
+        self.observe = QtWidgets.QCheckBox("Observe vision" if compact else "Observe")
+        self.observe.setToolTip(
+            "Condition visual beliefs on camera frames. Sound has its own Audio source toggle."
+        )
         self.observe.setChecked(precision.sample)
-        self.coordinates.addWidget(self.observe)
+        if not compact:
+            self.coordinates.addWidget(self.observe)
         self.coordinates.addStretch()
         layout.addLayout(self.coordinates)
-        modes = QtWidgets.QHBoxLayout()
+        if compact:
+            layout.addWidget(self.observe)
+        modes = QtWidgets.QVBoxLayout() if compact else QtWidgets.QHBoxLayout()
         modes.addWidget(QtWidgets.QLabel("Gaze control"))
         self.gaze_modes = QtWidgets.QButtonGroup(self)
         self.autonomous_gaze = QtWidgets.QRadioButton("Autonomous gaze")
@@ -37,6 +45,20 @@ class GazeControls(QtWidgets.QWidget):
             modes.addWidget(button)
         modes.addStretch()
         layout.addLayout(modes)
+        parameters = QtWidgets.QFormLayout()
+        parameters.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
+        self.sigma = pg.SpinBox(value=precision.sigma, bounds=(np.nextafter(0., 1.), None), step=.01)
+        self.baseline = pg.SpinBox(value=precision.baseline, bounds=(0, None), step=.01)
+        self.peak = pg.SpinBox(value=precision.peak, bounds=(0, None), step=.1)
+        for label, control, tooltip in (
+            ("Width (sigma)", self.sigma, "Gaussian width as a fraction of the shorter image side. Narrow foveae can need denser scoring quadrature."),
+            ("Peripheral precision", self.baseline, "Baseline inverse observation variance across the image. Precision is not a probability."),
+            ("Foveal increment", self.peak, "Precision added by the Gaussian fovea. At its center, total precision is baseline plus increment."),
+        ):
+            control.setToolTip(tooltip)
+            control.sigValueChanged.connect(lambda *_: self.precision_changed.emit())
+            parameters.addRow(label, control)
+        layout.addLayout(parameters)
         {"mouse": self.follow_mouse, "autonomous": self.autonomous_gaze, "full": self.full_canvas}[mode].setChecked(True)
         self.follow_mouse.setToolTip("Move over the image, or enter normalized gaze coordinates.")
         self.autonomous_gaze.setToolTip("Choose information gain before capture; hold gaze when Observe is off.")
@@ -59,6 +81,8 @@ class GazeControls(QtWidgets.QWidget):
     def _mode_changed(self):
         self.gaze_x.setEnabled(self.follow_mouse.isChecked())
         self.gaze_y.setEnabled(self.follow_mouse.isChecked())
+        for control in (self.sigma, self.baseline, self.peak):
+            control.setEnabled(not self.full_canvas.isChecked())
         self.mode_changed.emit()
 
     def gaze_precision(self, profile):
@@ -66,6 +90,7 @@ class GazeControls(QtWidgets.QWidget):
             profile,
             gaze=(self.gaze_x.value(), self.gaze_y.value()) if self.follow_mouse.isChecked() else profile.gaze,
             sample=self.observe.isChecked(),
+            sigma=self.sigma.value(), baseline=self.baseline.value(), peak=self.peak.value(),
         )
 
     def observation_precision(self, profile):
