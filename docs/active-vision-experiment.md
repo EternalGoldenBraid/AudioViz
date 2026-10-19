@@ -296,23 +296,63 @@ predictor can still be overconfident. Calibration and richer covariance
 propagation remain necessary before interpreting these scores as trustworthy
 real-camera confidence.
 
-**Stationary autonomous gaze and the conditional no-evidence floor:** during a
-live run (with stimulus time still advancing), autonomous gaze can move across
-early frames and then settle at the grid center `(0.5, 0.5)` without numerical
-divergence or stopped timers. Because the wave canvas is treated as a known
-point estimate (`Var(c) = 0`), the uncoupled hidden transition contracts
-variance by `(1 - inference_rate)^2` every step even on unobserved pixels,
-approaching the steady-state no-evidence floor
-`P_inf = (q * dt) / (1 - (1 - inference_rate)^2)` (at the default
-`inference_rate = 0.1`, `q = 0.01`, `dt = 1 / 30`,
-`P_inf = (0.01 / 30) / (1 - 0.9^2) ≈ 0.001754`). Once hidden variance settles
-near this small, nearly uniform floor across the canvas, candidate scores are
-dominated by the unclipped spatial Gaussian footprint—which has maximum scalar
-precision mass at the image center (`~2225.99` at `(0.5, 0.5)` vs. `~723.75` at
-a corner on a `120 x 160` grid)—plus modest local decoder-Jacobian variation.
-Consequently, greedy one-step information-seeking gaze under this conditional
-hidden-only covariance filter is not guaranteed to continue moving or to track
-the moving dot.
+**Mid-run stationary autonomous gaze—quadrature ranking error vs. conditional-model contraction:**
+during a live `1200`-frame (`40` s) native OpenGL run with stimulus time still
+advancing, autonomous gaze moves across early frames and then stops changing
+after frame `38` (`~1.27` s), remaining at `(0.5, 0.5)` without numerical
+divergence or stopped timers. Investigation separates two distinct mechanisms
+that must not be conflated:
+
+1. **Immediate cause of the frame-38 freeze (quadrature ranking error):**
+   because the wave canvas is treated as a known point estimate (`Var(c) = 0`),
+   the uncoupled hidden transition contracts variance by `(1 - inference_rate)^2`
+   each frame even on unobserved pixels, approaching the no-evidence floor
+   `P_inf = (q * dt) / (1 - (1 - inference_rate)^2) ≈ 0.001754` (at default
+   `inference_rate = 0.1`, `q = 0.01`, `dt = 1 / 30`), while border clipping on
+   `120 x 160` gives higher scalar precision mass at the center (`~2225.99`)
+   than at a corner (`~723.75`). However, `P_inf` and border clipping alone do
+   **not** freeze gaze among interior candidates whose unclipped masses are
+   nearly tied: reusing unweighted endpoint-inclusive `preview_indices`
+   (`48 x 64`, `max_side = 64`) introduces integer-step and boundary-cell
+   quadrature bias larger than the `O(1e-3)` interior variance-depletion margin
+   (and produces a `6–8%` corner preference that locks corners at frames `30–31`
+   in equal-mass and periodic-boundary controls). Holding all current model and
+   covariance parameters unchanged (`inference_rate = 0.1`, `q = 0.01`, clipped
+   Gaussian, same weights/solver), replacing unweighted `48 x 64` scoring with a
+   pixel-area-weighted `48 x 64` prototype or exact full-grid (`120 x 160`)
+   scoring eliminates the frame-38 freeze—both continue alternating between
+   interior candidates through frame `1200`:
+
+   | Native OpenGL scoring quadrature (`120 x 160`, `1200` frames / `40` s) | Last gaze change | Distinct gazes in final `1` s | Final mean hidden variance | Mean forecast MSE |
+   | --- | --- | --- | --- | --- |
+   | Current production unweighted `48 x 64` (`preview_indices`) | Frame `38` (`1.27` s) | `1` (locked at `(0.5, 0.5)`) | `0.00175343` | `0.00093165` |
+   | Diagnostic pixel-area-weighted `48 x 64` prototype (not yet in runtime) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093164` |
+   | Exact full-grid `120 x 160` reference (not yet in runtime) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093177` |
+
+   Sub-sampled area-weighted quadrature still aliases narrow footprints or
+   rapidly varying nonlinear integrands, and the resulting interior alternation
+   is **not** scene-wide exploration or moving-dot pursuit; greedy one-step
+   information-seeking gaze is not globally guaranteed to keep moving across all
+   parameter regimes.
+2. **Deeper sidecar / solver-parameter inconsistency:** `inference_rate` (`alpha`)
+   is reused both as the inner gradient-descent step size in `infer_joint` and
+   as the per-frame covariance contraction factor `(1 - alpha)^2`, while the
+   predictive-coding mean objective keeps fixed unit prior precision `I` on
+   `hidden - W_canvas * tanh(canvas)` rather than weighting by `(P_prior)^-1`
+   (and one frame executes a single CFL acoustic wave step `~1.3e-5` s vs.
+   `1 / 30` s stimulus `dt`). In a fixed-canvas converged-mean oracle across
+   `alpha in {0.05, 0.10, 0.20}`, the converged hidden mean is identical to
+   `1e-14` (`0.0996676844244`), whereas the sidecar posterior variance shifts
+   nearly fourfold (`0.00330819`, `0.00173870`, and `0.000923584`).
+
+**Architectural rule and next-step boundary:** (1) spatial quadrature error must
+be bounded below candidate action margins (validating pixel-area-weighted
+bounded integration against the exact full-grid ranking oracle before changing
+the model), and (2) numerical optimizer step sizes must not silently define
+probabilistic transition dynamics—any subsequent model slice must explicitly
+choose between a memoryless static conditional prior and a temporal conditional
+model whose retention rate is decoupled from solver `inference_rate` and whose
+prior covariance is shared by both mean and covariance updates.
 
 Scores use a fixed `9 x 13` candidate grid and nearest-neighbor spatial
 quadrature with maximum side 64, scaled to the full pixel count. This is a
