@@ -56,47 +56,13 @@ A core distinction to test: **large current prediction error is not equivalent t
 
 These are **schematic diagrams, not empirical results**. The agent must not receive the full-frame ground truth shown to evaluators.
 
-### 1. Look ahead, not chase
+### Circular-dot attention storyboard
 
-```text
-                    predicted next dot  ×  <- fovea samples here
-                 .------------------.
-              .-'                    '-.
-             /                          \
-            |       circular path        |
-            |                            |
-             \        o current dot     /
-              '-.                    .-'
-                 '------------------'
+![Four-panel active-vision storyboard: learning the trajectory, looking ahead, verifying with sparse gaze, and increasing sampling after a perturbation](assets/circular-dot-attention.svg)
 
-       Motion hypothesis -> predict future position -> sample -> update
-```
+**Legend:** gold = actual dot position; blue crosshair and halo = foveal center and spatial precision; dashed ellipse = nominal circular trajectory; blue ticks = observation events. These are illustrative snapshots, **not** a trained agent's measured behavior.
 
-### 2. A sparse observation schedule
-
-```text
-Time  -------------------------------------------------------------->
-Dot     o     o     o     o     o     o     o     o     o     o
-Gaze    ^     ^     ^                 ^                       ^
-        learn frequently              verify                 verify
-
-If uncertainty rises (e.g., changed dynamics): increase sampling again.
-```
-
-### 3. Experimental visualization mock-up
-
-```text
-+--------------------+  +--------------------+  +--------------------+
-| FULL GROUND TRUTH  |  | PRECISION FIELD    |  | MODEL PREDICTION   |
-|   .--trajectory--. |  |   low peripheral   |  |   .--trajectory--. |
-|  |   o dot        |  |   [high precision] |  |  |   x predicted    | |
-|   '--------------' |  |   gaze center      |  |   '--------------' | |
-+--------------------+  +--------------------+  +--------------------+
-         evaluator             weights evidence       model output
-
-Below: gaze location and observation events over time; prediction error;
-       uncertainty estimate; EIG estimate; optional Brownian offset.
-```
+The visual target is an interactive or recorded sequence that shows (1) the dot and ground-truth trajectory, (2) the action-controlled **Gaussian precision heatmap** over the unmodified camera frame, (3) the predicted dot distribution or future image, and (4) a timeline of gaze actions, predicted information gain, and uncertainty. A future short video/GIF can be exported from the deterministic test stimulus and actual agent traces. Avoid implying that the schematic already demonstrates successful learning.
 
 ## Proposed computational graph (conceptual)
 
