@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from audioviz.engine import RippleEngine
-from audioviz.readouts import PredictiveCodingConfig, PredictiveCodingRGBReadout
+from audioviz.readouts import GaussianSpatialPrecision, PredictiveCodingConfig, PredictiveCodingRGBReadout
 from audioviz.sources import (
     AudioSourceConfig,
     CameraFrameSourceConfig,
@@ -362,3 +362,68 @@ def test_audio_and_camera_joint_inference_use_one_observation_and_preserve_wave_
     orchestrator.reset_readouts()
     assert np.all(orchestrator.audio_readout.hidden == 0)
     assert orchestrator.audio_readout.diagnostics is None
+
+
+def test_temporal_gaussian_audio_assimilates_fresh_blocks_once_and_shares_pre_evidence_canvas():
+    def build_pair():
+        proc = _FakeProcessor([440], current_signal_level=0.3)
+        proc.frame_counter = 1
+        proc.spectrogram_buffers = [np.linspace(0.1, 0.9, 32, dtype=np.float32)[:, None]]
+        proc.stft_window = np.ones(2, dtype=np.float32)
+        proc.n_mels = None
+        eng = _build_engine()
+        orch = RippleSourceOrchestrator(
+            config=RippleSourceOrchestratorConfig(
+                audio=AudioSourceConfig(enabled=True),
+                prediction_error=PredictionErrorTransformConfig(enabled=True),
+                visual_pathway=PredictiveCodingConfig(
+                    dtype="float32", canvas_rate=0.25,
+                    spatial_precision=GaussianSpatialPrecision(baseline=0.5, peak=1.5),
+                ),
+            ),
+            processor=proc, engine=eng, resolution=eng.resolution, n_sources=1,
+        )
+        orch.enable_visual_uncertainty(dt=0.1, audio_precision=1.8)
+        return eng, orch, proc
+
+    eng1, orch1, proc1 = build_pair()
+    eng2, orch2, proc2 = build_pair()
+    rng = np.random.default_rng(41)
+    drive = rng.normal(0, 0.4, eng1.canvas_shape).astype(np.float32)
+    cam_obs = rng.uniform(0, 1, eng1.canvas_shape).astype(np.float32)
+    for eng, orch in ((eng1, orch1), (eng2, orch2)):
+        orch.camera_source.excitation = lambda: cam_obs
+        orch.set_diagnostics_enabled(True)
+        eng.propagate(drive)
+        orch.predict_visual(dt=0.1)
+
+    # First run: standard orchestrator order (visual then audio).
+    corr1 = orch1.correct_from_observations()
+    # Second run: reversed branch conditioning order (audio then visual) from the same pre-evidence prior.
+    aud_obs2 = orch2.audio_source.observation()
+    aud_corr2 = orch2.audio_uncertainty.condition(aud_obs2)
+    vis_corr2 = orch2.visual_uncertainty.condition(
+        orch2.camera_source.excitation(), orch2.visual_readout.config.spatial_precision,
+    )
+    eng2.apply_observation_correction(vis_corr2 + aud_corr2)
+
+    np.testing.assert_allclose(corr1, vis_corr2 + aud_corr2, rtol=1e-6, atol=1e-7)
+    np.testing.assert_allclose(eng1.get_field_numpy(), eng2.get_field_numpy(), rtol=1e-6, atol=1e-7)
+    assert orch1.visual_readout.diagnostics.canvas_means == orch1.audio_readout.diagnostics.canvas_means
+    assert orch1.audio_readout.diagnostics.observation_present
+
+    # Next visual frame without advancing processor.frame_counter must coast via OU (no re-assimilation).
+    v_after_block = orch1.audio_uncertainty.variance.copy()
+    eng1.propagate()
+    orch1.predict_visual(dt=0.1)
+    v_forecast = orch1.audio_uncertainty.variance.copy()
+    retention = np.exp(-0.1 / orch1.audio_uncertainty.memory_time_constant)
+    increment = orch1.audio_uncertainty.process_variance * (0.5 * orch1.audio_uncertainty.memory_time_constant) * (1 - retention ** 2)
+    np.testing.assert_allclose(v_forecast, (retention ** 2) * v_after_block + increment, rtol=2e-6)
+    orch1.correct_from_observations()
+    np.testing.assert_array_equal(orch1.audio_uncertainty.variance, v_forecast)
+    assert not orch1.audio_readout.diagnostics.observation_present
+
+    orch1.reset_readouts()
+    np.testing.assert_array_equal(orch1.audio_uncertainty.variance, 1.0)
+    assert orch1.audio_prediction is None

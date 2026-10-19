@@ -558,9 +558,9 @@ class OpenGLPredictiveModel:
             total += .5 * (float(self.states[branch.index]) - predictions[branch.index])**2
         return float(total)
 
-    def _diagnostics(self, before, stream_predictions):
+    def _diagnostics(self, before, stream_predictions, *, branches=None, audio_precision=1.0):
         after = self.weights.download() if before is not None else None
-        for branch in self.branches:
+        for branch in (self.branches if branches is None else branches):
             if not branch.diagnostics_enabled:
                 continue
             b = branch.index
@@ -574,11 +574,20 @@ class OpenGLPredictiveModel:
                 (self._means(observed) if isinstance(observed, GLArray) else observed.mean(axis=(0, 1)))
                 if b == 0 else observed
             ) if present else self._final_sensory_means(b)
+            visual_stats = (
+                self._statistics(branch.visual_error, precision=b == 0)
+                if present else EnergyStatistics(np.nan, np.nan, (np.nan,) * vw.shape[0])
+            )
+            if present and b == 1 and audio_precision != 1.0:
+                scale = float(audio_precision)
+                visual_stats = EnergyStatistics(
+                    visual_stats.mean * scale,
+                    visual_stats.variance * (scale * scale),
+                    tuple(x * scale for x in visual_stats.channel_means),
+                )
             branch.diagnostics = PredictiveCodingDiagnostics(
                 hidden=self._statistics(branch.hidden_error),
-                visual=self._statistics(branch.visual_error, precision=b == 0) if present else EnergyStatistics(
-                    np.nan, np.nan, (np.nan,) * vw.shape[0]
-                ),
+                visual=visual_stats,
                 inference_energy=tuple(self._trajectory),
                 canvas_means=tuple(float(x) for x in self._means(self.canvas)),
                 hidden_means=tuple(float(x) for x in self._means(branch.hidden)),

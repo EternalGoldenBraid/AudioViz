@@ -6,6 +6,8 @@ from audioviz.readouts.predictive_coding import (
     PredictiveCodingRGBReadout,
 )
 from audioviz.readouts.audio import PredictiveCodingAudioReadout
+from audioviz.readouts.gaussian_audio_uncertainty import AudioBeliefSnapshot, GaussianAudioUncertainty
+from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty, VisualBeliefSnapshot
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 
 __all__ = [
@@ -14,5 +16,9 @@ __all__ = [
     "PredictiveCodingConfig",
     "PredictiveCodingRGBReadout",
     "PredictiveCodingAudioReadout",
+    "AudioBeliefSnapshot",
+    "GaussianAudioUncertainty",
+    "GaussianSensoryUncertainty",
+    "VisualBeliefSnapshot",
     "GaussianSpatialPrecision",
 ]

@@ -3,11 +3,14 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from audioviz.readouts.audio import PredictiveCodingAudioReadout
+from audioviz.readouts.gaussian_audio_uncertainty import GaussianAudioUncertainty
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.readouts.predictive_coding import PredictiveCodingConfig, PredictiveCodingRGBReadout
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
-from audioviz.sources.gaze import information_gaze
+from audioviz.sources.gaze import ActiveVisionConfig, information_gaze
 from audioviz.utils.array_backend import to_numpy
+from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
 
 
 def identity_readout(shape=(3, 5), *, backend=np, rate=0, dtype="float32"):
@@ -326,3 +329,153 @@ def test_extreme_memory_preserves_brownian_diffusion_or_instantaneous_relaxation
     model.condition(None)
     np.testing.assert_allclose(to_numpy(readout.hidden), blend*np.tanh(to_numpy(prior)), rtol=2e-6)
     np.testing.assert_allclose(to_numpy(model.variance), variance, rtol=2e-6)
+
+
+@pytest.mark.parametrize("backend_name", ("numpy", "cupy"))
+@pytest.mark.parametrize("dtype", ("float32", "float64"))
+@pytest.mark.parametrize("diffusion", (0, .04))
+def test_common_mode_audio_matches_dense_low_rank_posterior_and_replication_invariance(
+    request, backend_name, dtype, diffusion,
+):
+    xp = np if backend_name == "numpy" else request.getfixturevalue("cupy_backend")
+    shape, channels, bands = (2, 3), 3, AUDIO_SPECTRAL_BANDS
+    pixels = shape[0] * shape[1]
+    rng = np.random.default_rng(19)
+    readout = PredictiveCodingAudioReadout(
+        canvas_shape=(*shape, 3), backend=xp,
+        config=PredictiveCodingConfig(hidden_channels=channels, inference_rate=.3, canvas_rate=.02, dtype=dtype),
+    )
+    readout.set_diagnostics_enabled(True)
+    readout.set_spatial_preview_enabled(True)
+    cw = rng.normal(0, .25, (channels, 3)).astype(dtype)
+    vw = rng.normal(0, .25, (bands, channels)).astype(dtype)
+    h0 = rng.normal(0, .4, (*shape, channels)).astype(dtype)
+    c_prior = rng.normal(0, .3, (*shape, 3)).astype(np.float32)
+    readout.canvas_weights[:] = xp.asarray(cw)
+    readout.visual_weights[:] = xp.asarray(vw)
+    readout.hidden[:] = xp.asarray(h0)
+    lam = 1.7
+    model = GaussianAudioUncertainty(
+        readout, initial_variance=1.5, process_variance=diffusion,
+        memory_time_constant=.5, precision=lam, backend=xp,
+    )
+    initial_variance = np.array([1.5, .4, 0], dtype=np.float32)
+    model.variance[:] = xp.asarray(initial_variance)
+
+    prior = xp.asarray(c_prior)
+    dt = .2
+    pred = model.predict(prior, dt=dt)
+    snap_forecast = model.belief_snapshot()
+    assert snap_forecast["stage"] == "forecast"
+    assert snap_forecast["precision"] == pytest.approx(lam)
+
+    retention = np.exp(-dt / model.memory_time_constant)
+    drive = np.tanh(c_prior.astype(np.float64)) @ cw.astype(np.float64).T
+    expected_frozen = retention * h0.astype(np.float64) + (1 - retention) * drive
+    increment = diffusion * model.memory_time_constant / 2 * (1 - retention ** 2)
+    v_prior = initial_variance.astype(np.float64) * retention ** 2 + increment
+    y_prior = (np.tanh(expected_frozen).mean(axis=(0, 1)) @ vw.astype(np.float64).T)
+    np.testing.assert_allclose(to_numpy(pred), y_prior, rtol=2e-6, atol=2e-7)
+    np.testing.assert_allclose(snap_forecast["sensory_mean"], y_prior, rtol=2e-6, atol=2e-7)
+
+    # Full NK x NK rank-K common-mode covariance Sigma^- = U P_a^- U^T where U = 1_N (x) I_K.
+    u_mat = np.kron(np.ones((pixels, 1), dtype=np.float64), np.eye(channels, dtype=np.float64))
+    p_prior = np.diag(v_prior)
+    sigma_prior = u_mat @ p_prior @ u_mat.T
+    slopes = 1.0 - np.tanh(expected_frozen.reshape(pixels, channels)) ** 2
+    j_blocks = [
+        (1.0 / pixels) * vw.astype(np.float64) @ np.diag(slopes[r])
+        for r in range(pixels)
+    ]
+    j_full = np.hstack(j_blocks)
+    j_bar = j_full @ u_mat
+    np.testing.assert_allclose(j_bar, vw.astype(np.float64) * slopes.mean(axis=0)[None, :], rtol=1e-12)
+    v_sensory = j_full @ sigma_prior @ j_full.T
+    np.testing.assert_allclose(snap_forecast["sensory_covariance"], v_sensory, rtol=2e-6, atol=2e-7)
+
+    _, dense_logdet = np.linalg.slogdet(np.eye(bands) + lam * v_sensory)
+    assert model.expected_information_gain() == pytest.approx(0.5 * dense_logdet, rel=2e-6)
+
+    obs_np = rng.uniform(0, .5, bands).astype(np.float32)
+    s_inv = np.linalg.inv(np.eye(bands) + lam * v_sensory)
+    sigma_post = sigma_prior - lam * sigma_prior @ j_full.T @ s_inv @ j_full @ sigma_prior
+    delta_full = lam * sigma_prior @ j_full.T @ s_inv @ (obs_np.astype(np.float64) - y_prior)
+    c_post = p_prior - lam * p_prior @ j_bar.T @ s_inv @ j_bar @ p_prior
+    delta_common = delta_full[:channels]
+    for r in range(pixels):
+        np.testing.assert_allclose(delta_full[r * channels:(r + 1) * channels], delta_common, rtol=1e-12)
+        for s in range(pixels):
+            block = sigma_post[r * channels:(r + 1) * channels, s * channels:(s + 1) * channels]
+            np.testing.assert_allclose(block, c_post, rtol=1e-12, atol=1e-14)
+
+    correction = model.condition(xp.asarray(obs_np))
+    np.testing.assert_allclose(
+        to_numpy(readout.hidden), expected_frozen + delta_common, rtol=2e-6, atol=2e-7,
+    )
+    np.testing.assert_allclose(to_numpy(model.variance), np.diag(c_post), rtol=2e-6, atol=2e-7)
+    expected_corr = readout.config.canvas_rate * (1 - np.tanh(c_prior.astype(np.float64)) ** 2) * (
+        delta_common @ cw.astype(np.float64)
+    )
+    np.testing.assert_allclose(to_numpy(correction), expected_corr, rtol=2e-6, atol=2e-7)
+    assert readout.diagnostics.stream_state is None
+    assert len(readout.diagnostics.inference_energy) == 2
+    assert readout.diagnostics.inference_energy[1] <= readout.diagnostics.inference_energy[0] + 1e-7
+    snap_post = model.belief_snapshot()
+    assert snap_post["stage"] == "posterior"
+    np.testing.assert_allclose(snap_post["variance"], np.diag(c_post), rtol=2e-6, atol=2e-7)
+
+    # Resolution replication invariance: tiling the canvas and initial hidden state by 2x4 preserves pooled posterior.
+    tiled_shape = (shape[0] * 2, shape[1] * 4)
+    tiled_readout = PredictiveCodingAudioReadout(
+        canvas_shape=(*tiled_shape, 3), backend=xp, config=readout.config,
+    )
+    tiled_readout.canvas_weights[:] = xp.asarray(cw)
+    tiled_readout.visual_weights[:] = xp.asarray(vw)
+    tiled_readout.hidden[:] = xp.asarray(np.tile(h0, (2, 4, 1)))
+    tiled_model = GaussianAudioUncertainty(
+        tiled_readout, initial_variance=1.5, process_variance=diffusion,
+        memory_time_constant=.5, precision=lam, backend=xp,
+    )
+    tiled_model.variance[:] = xp.asarray(initial_variance)
+    tiled_prior = xp.asarray(np.tile(c_prior, (2, 4, 1)))
+    tiled_pred = tiled_model.predict(tiled_prior, dt=dt)
+    np.testing.assert_allclose(to_numpy(tiled_pred), to_numpy(pred), rtol=2e-6, atol=2e-7)
+    tiled_corr = tiled_model.condition(xp.asarray(obs_np))
+    np.testing.assert_allclose(to_numpy(tiled_model.variance), to_numpy(model.variance), rtol=2e-6, atol=2e-7)
+    np.testing.assert_allclose(
+        to_numpy(tiled_corr)[:shape[0], :shape[1]], to_numpy(correction), rtol=2e-6, atol=2e-7,
+    )
+
+
+def test_audio_precision_validation_and_visual_belief_snapshot():
+    for invalid in (-0.1, np.nan, np.inf, True):
+        with pytest.raises(ValueError, match="audio_precision"):
+            ActiveVisionConfig(audio_precision=invalid)
+    cfg = ActiveVisionConfig(audio_precision=0)
+    assert cfg.audio_precision == 0.0
+
+    readout = PredictiveCodingAudioReadout(canvas_shape=(2, 3, 3))
+    audio_unc = GaussianAudioUncertainty(readout, precision=1.2)
+    for invalid in (-1, np.nan, np.inf, False):
+        with pytest.raises(ValueError, match="audio precision"):
+            audio_unc.set_precision(invalid)
+    audio_unc.set_precision(0.0)
+    assert audio_unc.precision == 0.0
+    prior = np.zeros((2, 3, 3), dtype=np.float32)
+    audio_unc.predict(prior, dt=0.1)
+    v_before = audio_unc.variance.copy()
+    corr = audio_unc.condition(np.ones(AUDIO_SPECTRAL_BANDS, dtype=np.float32))
+    np.testing.assert_array_equal(audio_unc.variance, v_before)
+    np.testing.assert_array_equal(corr, 0.0)
+    assert audio_unc.expected_information_gain(0.0, prior=prior, dt=0.1) == 0.0
+
+    vis_readout = identity_readout((3, 5))
+    vis_readout.hidden[1, 2] = np.array([0.2, -0.3, 0.4])
+    vis_unc = GaussianSensoryUncertainty(vis_readout, initial_variance=0.5)
+    snap = vis_unc.belief_snapshot((0.5, 0.5))
+    assert snap["pixel"] == (1, 2) and snap["stage"] == "posterior"
+    np.testing.assert_allclose(snap["mean"], [0.2, -0.3, 0.4], atol=1e-7)
+    np.testing.assert_allclose(snap["variance"], [0.5, 0.5, 0.5], atol=1e-7)
+    np.testing.assert_allclose(snap["sensory_mean"], np.tanh([0.2, -0.3, 0.4]), atol=1e-7)
+    j = np.diag(1.0 - np.tanh([0.2, -0.3, 0.4]) ** 2)
+    np.testing.assert_allclose(snap["sensory_covariance"], 0.5 * (j @ j.T), atol=1e-7)

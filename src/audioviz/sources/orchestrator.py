@@ -12,6 +12,7 @@ from audioviz.readouts import (
 from audioviz.sources.audio import AudioRippleSource, AudioSourceConfig
 from audioviz.readouts.audio import PredictiveCodingAudioReadout
 from audioviz.readouts.predictive_coding import PredictiveCodingHiddenCoupling, infer_joint
+from audioviz.readouts.gaussian_audio_uncertainty import GaussianAudioUncertainty
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
 from audioviz.sources.gaze import GazePolicy
@@ -99,6 +100,7 @@ class RippleSourceOrchestrator:
         self._validate_cross_modal(config.visual_pathway.cross_modal_enabled)
         self.visual_observation: np.ndarray | None = None
         self.visual_uncertainty: GaussianSensoryUncertainty | None = None
+        self.audio_uncertainty: GaussianAudioUncertainty | None = None
         self._uncertainty_dt = 0.0
         self.gaze_policy: GazePolicy | None = None
         self.gaze_scores: np.ndarray | None = None
@@ -180,7 +182,13 @@ class RippleSourceOrchestrator:
         if self.gaze_policy is not None:
             self._select_visual_gaze(self.gaze_policy)
         if self.visual_uncertainty is not None:
-            return self.visual_uncertainty.predict(self.engine.get_prior(), dt=self._uncertainty_dt)
+            prior = self.engine.get_prior()
+            prediction = self.visual_uncertainty.predict(prior, dt=self._uncertainty_dt)
+            self.audio_prediction = (
+                self.audio_uncertainty.predict(prior, dt=self._uncertainty_dt)
+                if self.audio_uncertainty is not None else None
+            )
+            return prediction
         return self._predict_visual_mean()
 
     def _select_visual_gaze(self, policy: GazePolicy) -> None:
@@ -201,22 +209,33 @@ class RippleSourceOrchestrator:
 
     def enable_visual_uncertainty(
         self, *, dt, initial_variance=1.0, process_variance=0.01, memory_time_constant=1/3,
+        audio_precision: float | None = None,
     ):
-        """Opt into shared temporal Gaussian inference for a visual-only model."""
+        """Opt into shared temporal Gaussian inference for visual and optional common-mode audio."""
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError("visual uncertainty requires a finite, positive timestep")
         if self.shader_model is None and not isinstance(self.visual_readout, PredictiveCodingRGBReadout):
             raise ValueError("visual uncertainty requires the predictive RGB readout")
         if self.visual_uncertainty is not None:
             raise RuntimeError("Visual uncertainty is already enabled")
-        if self.audio_readout is not None:
+        if self.audio_readout is not None and audio_precision is None:
             raise ValueError("Temporal Gaussian visual inference requires a visual-only model")
+        if audio_precision is not None and self.audio_readout is None:
+            raise ValueError("Temporal Gaussian audio inference requires an audio readout")
+        device = self.shader_model.device if self.shader_model is not None else None
         self.visual_uncertainty = GaussianSensoryUncertainty(
             self.visual_readout, initial_variance=initial_variance, process_variance=process_variance,
             memory_time_constant=memory_time_constant,
             backend=self.engine.backend,
-            device=self.shader_model.device if self.shader_model is not None else None,
+            device=device,
         )
+        if audio_precision is not None:
+            self.audio_uncertainty = GaussianAudioUncertainty(
+                self.audio_readout, initial_variance=initial_variance, process_variance=process_variance,
+                memory_time_constant=memory_time_constant, precision=audio_precision,
+                backend=self.engine.backend,
+                device=device,
+            )
         self._uncertainty_dt = float(dt)
         return self.visual_uncertainty
 
@@ -256,6 +275,36 @@ class RippleSourceOrchestrator:
             correction = self.visual_uncertainty.condition(
                 self.visual_observation, self.visual_readout.config.spatial_precision,
             )
+            if self.audio_uncertainty is not None:
+                audio = self.audio_source.observation()
+                audio_correction = self.audio_uncertainty.condition(audio)
+                if self.shader_model is not None:
+                    self.shader_model.device.run(
+                        """layout(std430,binding=0) buffer Visual {float visual[];};
+                        layout(std430,binding=1) readonly buffer Audio {float audio[];};
+                        uniform int count;
+                        void main(){int i=int(gl_GlobalInvocationID.x);if(i<count)visual[i]+=audio[i];}""",
+                        [correction, audio_correction], correction.size, count=correction.size,
+                    )
+                    for branch, unc in (
+                        (self.shader_model.camera, self.visual_uncertainty),
+                        (self.shader_model.audio, self.audio_uncertainty),
+                    ):
+                        if branch.diagnostics_enabled:
+                            self.shader_model._trajectory = getattr(branch, "_trajectory", ())
+                            self.shader_model._diagnostics(
+                                None, None, branches=(branch,), audio_precision=unc.precision if branch.index == 1 else 1.0,
+                            )
+                else:
+                    correction = correction + audio_correction
+                    final_canvas = self.engine.get_prior() + correction
+                    canvas_means = tuple(
+                        float(v) for v in self.engine.backend.asnumpy(final_canvas.mean(axis=(0, 1)))
+                        if self.engine.use_gpu
+                    ) if self.engine.use_gpu else tuple(float(v) for v in final_canvas.mean(axis=(0, 1)))
+                    for branch in (self.visual_readout, self.audio_readout):
+                        if branch.diagnostics is not None:
+                            branch.diagnostics = replace(branch.diagnostics, canvas_means=canvas_means)
             self.engine.apply_observation_correction(correction)
             return correction
         return self._correct_from_observations_mean()
@@ -300,6 +349,8 @@ class RippleSourceOrchestrator:
     def update_pathway_config(self, **changes) -> None:
         if self.visual_uncertainty is not None:
             self.visual_uncertainty.validate_config(replace(self.visual_readout.config, **changes))
+        if self.audio_uncertainty is not None:
+            self.audio_uncertainty.validate_config(replace(self.audio_readout.config, **changes))
         if "cross_modal_enabled" in changes:
             self._validate_cross_modal(changes["cross_modal_enabled"])
         self.visual_readout.update_config(**changes)
@@ -325,12 +376,14 @@ class RippleSourceOrchestrator:
             self.visual_readout.reset()
         if self.audio_readout is not None:
             self.audio_readout.set_spatial_preview_enabled(False)
-            if self.shader_model is None:
+            if self.shader_model is None and self.audio_uncertainty is None:
                 self.audio_readout.reset()
         self.audio_prediction = None
         self.visual_observation = None
         if self.visual_uncertainty is not None:
             self.visual_uncertainty.reset()
+        if self.audio_uncertainty is not None:
+            self.audio_uncertainty.reset()
         self.gaze_scores = None
 
     def _to_canvas_grid(self, grid: np.ndarray) -> np.ndarray:

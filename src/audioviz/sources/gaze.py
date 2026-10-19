@@ -14,10 +14,20 @@ class ActiveVisionConfig:
     initial_variance: float = 1.0
     process_variance: float = .01
     memory_time_constant: float = 1/3
+    audio_precision: float | None = None
 
     def __post_init__(self):
         if self.mode not in ("mouse", "autonomous", "full"):
             raise ValueError("gaze mode must be mouse, autonomous or full")
+        if self.audio_precision is not None:
+            if (
+                isinstance(self.audio_precision, bool)
+                or not np.isfinite(self.audio_precision)
+                or self.audio_precision < 0
+                or self.audio_precision > np.finfo(np.float32).max
+            ):
+                raise ValueError("audio_precision must be finite, non-negative and representable as float32")
+            object.__setattr__(self, "audio_precision", float(self.audio_precision))
 
 
 def has_gaze_preference(scores: np.ndarray) -> bool:

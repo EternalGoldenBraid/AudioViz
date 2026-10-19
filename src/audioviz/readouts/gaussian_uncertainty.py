@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Literal, TypedDict
 
 import numpy as np
 
@@ -9,6 +10,16 @@ from audioviz.readouts.diagnostics import mean_energy
 from audioviz.utils.array_backend import canvas_direction, project_channels, to_numpy
 from audioviz.utils.opengl_compute import GLArray
 from audioviz.utils.spatial_preview import preview_indices
+
+
+class VisualBeliefSnapshot(TypedDict):
+    mean: np.ndarray
+    variance: np.ndarray
+    sensory_mean: np.ndarray
+    sensory_covariance: np.ndarray
+    pixel: tuple[int, int]
+    gaze: tuple[float, float]
+    stage: Literal["forecast", "posterior"]
 
 
 class GaussianSensoryUncertainty:
@@ -112,7 +123,7 @@ class GaussianSensoryUncertainty:
         else:
             model = self.readout.model
             model._copy_prior(prior)
-            self._prior = model.canvas
+            self._prior = prior
             self.prediction = model.camera_prediction
             self.device.run(
                 self._native_source() + """
@@ -216,22 +227,23 @@ class GaussianSensoryUncertainty:
         model.observation = evidence if observed else None
         x, y, width = precision.pixel_parameters(self.shape)
         source = self._native_source() + GAUSSIAN_PRECISION_GLSL + f"""
-            layout(std430,binding=4) buffer Canvas {{float canvas[];}};
+            layout(std430,binding=4) readonly buffer Prior {{float prior[];}};
             layout(std430,binding=5) readonly buffer Observation {{float observation[];}};
             layout(std430,binding=6) writeonly buffer Correction {{float correction[];}};
             layout(std430,binding=7) buffer Errors {{float errors[];}};
+            layout(std430,binding=8) buffer Canvas {{float canvas[];}};
             uniform int observed;
             uniform float gaze_x,gaze_y,width,baseline,peak,canvas_rate;
             const int VISUAL=2*N*H;
         """
-        arrays = [*self._native_arrays(), model.canvas, evidence, model.correction, model.errors]
+        arrays = [*self._native_arrays(), self._prior, evidence, model.correction, model.errors, model.canvas]
         uniforms = dict(
             observed=int(observed), gaze_x=float(x), gaze_y=float(y), width=float(width),
             baseline=float(precision.baseline), peak=float(precision.peak),
             canvas_rate=float(self.readout.config.canvas_rate),
         )
         collect = self.readout.diagnostics_enabled
-        model._trajectory = []
+        self.readout._trajectory = trajectory = []
         if collect and observed:
             self.device.run(source + """
                 void main(){int p=int(gl_GlobalInvocationID.x);if(p>=N)return;
@@ -239,7 +251,7 @@ class GaussianSensoryUncertainty:
                     for(int c=0;c<3;++c)errors[VISUAL+p*3+c]=observation[p*3+c]-expected[c];
                 }""", arrays, int(np.prod(self.shape)), **uniforms,
             )
-            model._trajectory.append(float(model._means(model.camera.visual_error, energy=True, precision=True).sum()))
+            trajectory.append(float(model._means(model.camera.visual_error, energy=True, precision=True).sum()))
         self.device.run(source + f"""
             void main(){{int p=int(gl_GlobalInvocationID.x);if(p>=N)return;
                 vec3 residual=vec3(0.0);
@@ -266,9 +278,9 @@ class GaussianSensoryUncertainty:
                     for(int c=0;c<3;++c)feedback[c]+=weights[WC+k*3+c]*delta;
                 }}
                 for(int c=0;c<3;++c){{
-                    float value=canvas[p*3+c],a=tanh(value);
+                    float value=prior[p*3+c],a=tanh(value);
                     float change=canvas_rate*(1.0-a*a)*feedback[c];
-                    correction[p*3+c]=change;canvas[p*3+c]=value+change;
+                    correction[p*3+c]=change;canvas[p*3+c]+=change;
                     errors[VISUAL+p*3+c]=residual[c]-decoded_delta[c];
                 }}
             }}""", arrays, int(np.prod(self.shape)), **uniforms,
@@ -276,11 +288,12 @@ class GaussianSensoryUncertainty:
         model._validate(model.hidden, self.variance, model.correction)
         if collect:
             if observed:
-                model._trajectory.append(float(
+                trajectory.append(float(
                     model._means(model.camera.hidden_error, energy=True).sum()
                     +model._means(model.camera.visual_error, energy=True, precision=True).sum()
                 ))
-            model._diagnostics(None, None)
+            model._trajectory = trajectory
+            model._diagnostics(None, None, branches=(model.camera,))
         return model.correction
 
     def _native_arrays(self):
@@ -417,6 +430,62 @@ class GaussianSensoryUncertainty:
         if not np.all(np.isfinite(scores)) or np.any(scores < 0):
             raise FloatingPointError("Gaussian uncertainty diverged; reduce variance settings or timestep")
         return scores
+
+    def belief_snapshot(self, gaze: tuple[float, float] | None = None) -> VisualBeliefSnapshot:
+        """Return bounded host snapshot of current stored projected visual belief at nearest gaze pixel."""
+        self.validate_config(self.readout.config)
+        self._ensure_initialized()
+        if gaze is None:
+            precision = self.readout.config.spatial_precision
+            gaze = precision.gaze if precision is not None else (0.5, 0.5)
+        if len(gaze) != 2 or any(not np.isfinite(v) or not 0 <= v <= 1 for v in gaze):
+            raise ValueError("gaze must contain two finite coordinates in [0, 1]")
+        rows, cols = self.shape
+        col = int(np.clip(round(float(gaze[0]) * (cols - 1)), 0, cols - 1))
+        row = int(np.clip(round(float(gaze[1]) * (rows - 1)), 0, rows - 1))
+        pixel = row * cols + col
+        if self.device is None:
+            hidden_source = self._frozen_hidden if self._pending else self.readout.hidden
+            mean = to_numpy(hidden_source[row, col]).astype(np.float32, copy=True)
+            variance = to_numpy(self.variance[row, col]).astype(np.float32, copy=True)
+            vw = to_numpy(self.readout.visual_weights).astype(np.float64, copy=False)
+        else:
+            hidden_source = self._frozen_hidden if self._pending else self.readout.model.hidden
+            sample = GLArray(self.device, (2 * self.channels,))
+            self.device.run(
+                """layout(std430,binding=0) readonly buffer Hidden {float hidden[];};
+                layout(std430,binding=1) readonly buffer Variance {float variance[];};
+                layout(std430,binding=2) writeonly buffer Out {float out_values[];};
+                uniform int base,channels;
+                void main(){int k=int(gl_GlobalInvocationID.x);if(k>=channels)return;
+                    out_values[k]=hidden[base+k];
+                    out_values[channels+k]=variance[base+k];
+                }""",
+                [hidden_source, self.variance, sample], self.channels,
+                base=pixel * self.channels, channels=self.channels,
+            )
+            values = sample.download()
+            self.device.release(sample)
+            mean = values[:self.channels].astype(np.float32, copy=True)
+            variance = values[self.channels:].astype(np.float32, copy=True)
+            _, vw_f32, _, _, _ = self.readout.weights()
+            vw = vw_f32.astype(np.float64, copy=False)
+        mean64 = mean.astype(np.float64)
+        var64 = np.maximum(variance.astype(np.float64), 0.0)
+        sensory_mean = (vw @ np.tanh(mean64)).astype(np.float32)
+        j = vw * (1.0 - np.tanh(mean64) ** 2)[None, :]
+        sensory_cov = ((j * var64[None, :]) @ j.T).astype(np.float32)
+        for arr in (mean, variance, sensory_mean, sensory_cov):
+            arr.setflags(write=False)
+        return {
+            "mean": mean,
+            "variance": variance,
+            "sensory_mean": sensory_mean,
+            "sensory_covariance": sensory_cov,
+            "pixel": (row, col),
+            "gaze": (float(gaze[0]), float(gaze[1])),
+            "stage": "forecast" if self._pending else "posterior",
+        }
 
 
 def _pixel_area_weights(indices, size):

@@ -322,3 +322,78 @@ def test_shader_camera_preprocessing_and_exact_levels(shader_engine, kind):
         model.infer(shader_engine.get_prior(), image, None, states=(True, False))
     finally:
         renderer.widget.close()
+
+
+def test_shader_audio_uncertainty_matches_reference_and_preserves_pre_evidence_canvas(shader_engine):
+    from audioviz.readouts.audio import PredictiveCodingAudioReadout
+    from audioviz.readouts.gaussian_audio_uncertainty import GaussianAudioUncertainty
+    from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
+
+    shape = shader_engine.resolution
+    config = PredictiveCodingConfig(
+        dtype="float32", inference_steps=4, inference_rate=0.2, canvas_rate=0.25,
+    )
+    shader = OpenGLPredictiveModel(shader_engine, config, audio_enabled=True)
+    vis_ref = PredictiveCodingRGBReadout(canvas_shape=(*shape, 3), config=config)
+    aud_ref = PredictiveCodingAudioReadout(canvas_shape=(*shape, 3), config=config)
+    native_vis = GaussianSensoryUncertainty(shader.camera, device=shader_engine.propagator.compute)
+    native_aud = GaussianAudioUncertainty(shader.audio, precision=1.6, device=shader_engine.propagator.compute)
+    ref_vis = GaussianSensoryUncertainty(vis_ref)
+    ref_aud = GaussianAudioUncertainty(aud_ref, precision=1.6)
+    for branch in (shader.camera, shader.audio, vis_ref, aud_ref):
+        branch.set_diagnostics_enabled(True)
+        branch.set_spatial_preview_enabled(True)
+
+    rng = np.random.default_rng(108)
+    shader_engine.propagate(rng.normal(0, 0.3, (*shape, 3)).astype(np.float32))
+    prior = shader_engine.get_prior()
+    host_prior = prior.download()
+
+    for step, (cam_present, aud_present) in enumerate(((True, True), (True, False), (False, True))):
+        precision = GaussianSpatialPrecision(gaze=(0.4, 0.6), sample=cam_present, baseline=0.2, peak=1.2)
+        native_vis.predict(prior, dt=0.1)
+        native_aud.predict(prior, dt=0.1)
+        ref_vis.predict(host_prior, dt=0.1)
+        ref_aud.predict(host_prior, dt=0.1)
+        if step == 0:
+            ref_aud.variance[0] = 0.0
+            native_aud.variance.upload(ref_aud.variance)
+        np.testing.assert_allclose(shader.audio_prediction.download(), aud_ref._predict_observation(np.tanh(aud_ref.hidden)), atol=2e-6)
+        assert native_aud.expected_information_gain() == pytest.approx(ref_aud.expected_information_gain(), rel=2e-5)
+
+        image = rng.random((*shape, 3), dtype=np.float32) if cam_present else None
+        spectrum = rng.uniform(0, 0.8, AUDIO_SPECTRAL_BANDS).astype(np.float32) if aud_present else None
+        vis_corr_gl = native_vis.condition(image, precision)
+        aud_corr_gl = native_aud.condition(spectrum)
+        vis_corr_ref = ref_vis.condition(image, precision)
+        aud_corr_ref = ref_aud.condition(spectrum)
+
+        np.testing.assert_allclose(shader.audio.hidden.download(), aud_ref.hidden, atol=2e-6)
+        np.testing.assert_allclose(native_aud.variance.download(), ref_aud.variance, rtol=2e-6, atol=2e-7)
+        np.testing.assert_allclose(vis_corr_gl.download(), vis_corr_ref, atol=2e-6)
+        np.testing.assert_allclose(aud_corr_gl.download(), aud_corr_ref, atol=2e-6)
+        np.testing.assert_allclose(
+            shader.canvas.download(), host_prior + vis_corr_ref + aud_corr_ref, atol=2e-6,
+        )
+        assert shader.audio.diagnostics.stream_state is None
+        np.testing.assert_allclose(
+            shader.audio.diagnostics.inference_energy, aud_ref.diagnostics.inference_energy, rtol=2e-5, atol=2e-6,
+        )
+        np.testing.assert_allclose(
+            shader.audio.diagnostics.visual.mean, aud_ref.diagnostics.visual.mean, rtol=2e-5, atol=2e-6,
+        )
+
+    snap_vis_gl = native_vis.belief_snapshot((0.4, 0.6))
+    snap_vis_ref = ref_vis.belief_snapshot((0.4, 0.6))
+    np.testing.assert_allclose(snap_vis_gl["mean"], snap_vis_ref["mean"], atol=2e-6)
+    np.testing.assert_allclose(snap_vis_gl["variance"], snap_vis_ref["variance"], atol=2e-6)
+    np.testing.assert_allclose(snap_vis_gl["sensory_covariance"], snap_vis_ref["sensory_covariance"], atol=2e-6)
+
+    snap_aud_gl = native_aud.belief_snapshot()
+    snap_aud_ref = ref_aud.belief_snapshot()
+    np.testing.assert_allclose(snap_aud_gl["variance"], snap_aud_ref["variance"], atol=2e-6)
+    np.testing.assert_allclose(snap_aud_gl["sensory_mean"], snap_aud_ref["sensory_mean"], atol=2e-6)
+    np.testing.assert_allclose(snap_aud_gl["sensory_covariance"], snap_aud_ref["sensory_covariance"], atol=2e-6)
+    assert native_aud.expected_information_gain(prior=prior, dt=0.1) == pytest.approx(
+        ref_aud.expected_information_gain(prior=host_prior, dt=0.1), rel=2e-5,
+    )
