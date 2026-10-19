@@ -325,7 +325,7 @@ that must not be conflated:
 
    | Native OpenGL scoring quadrature (`120 x 160`, `1200` frames / `40` s) | Last gaze change | Distinct gazes in final `1` s | Final mean hidden variance | Mean forecast MSE |
    | --- | --- | --- | --- | --- |
-   | Current production unweighted `48 x 64` (`preview_indices`) | Frame `38` (`1.27` s) | `1` (locked at `(0.5, 0.5)`) | `0.00175343` | `0.00093165` |
+   | Current production unweighted `48 x 64` (`preview_indices`) | Frame `38` (`1.27` s) | `1` (locked at `(0.5, 0.5)`) | `0.00175343` | `0.00093626` |
    | Diagnostic pixel-area-weighted `48 x 64` prototype (not yet in runtime) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093164` |
    | Exact full-grid `120 x 160` reference (not yet in runtime) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093177` |
 
@@ -345,14 +345,14 @@ that must not be conflated:
    `1e-14` (`0.0996676844244`), whereas the sidecar posterior variance shifts
    nearly fourfold (`0.00330819`, `0.00173870`, and `0.000923584`).
 
-**Architectural rule and next-step boundary:** (1) spatial quadrature error must
-be bounded below candidate action margins (validating pixel-area-weighted
-bounded integration against the exact full-grid ranking oracle before changing
-the model), and (2) numerical optimizer step sizes must not silently define
-probabilistic transition dynamics—any subsequent model slice must explicitly
-choose between a memoryless static conditional prior and a temporal conditional
-model whose retention rate is decoupled from solver `inference_rate` and whose
-prior covariance is shared by both mean and covariance updates.
+**Architectural rule and next-step boundary:** (1) spatial quadrature
+action-ranking error must be checked against candidate margins and a full-grid
+reference before changing the model, and (2) numerical optimizer step sizes must
+not silently define probabilistic transition dynamics—any subsequent model slice
+must explicitly choose between a memoryless static conditional prior and a
+temporal conditional model whose retention rate is decoupled from solver
+`inference_rate` and whose prior covariance is shared by both mean and
+covariance updates.
 
 Scores use a fixed `9 x 13` candidate grid and nearest-neighbor spatial
 quadrature with maximum side 64, scaled to the full pixel count. This is a
