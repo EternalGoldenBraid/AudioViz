@@ -109,6 +109,12 @@ layouts, minimizing, hiding and resetting release the old preview.
 
 ## Predictive canvas
 
+The OpenGL inference architecture is documented in the
+[shader architecture and implementation plan](docs/shader-inference-plan.md),
+with an editable three-page draw.io diagram and rendered previews. The existing
+RGB predictive model now runs on OpenGL compute shaders; arbitrary sparse
+neighborhoods remain a separate extension.
+
 The wave surface has two learned sensory branches:
 
 ```text
@@ -205,8 +211,13 @@ inference, and learning on the GPU. Inference defaults to float64; set
 `transforms.prediction_error.inference.dtype` to `"float32"` explicitly for GPU
 throughput. Both backends support both precisions. Changing precision requires
 rebuilding the readouts; wave states and returned predictions/corrections remain
-float32. OpenGL sensory correction remains unsupported and is explicitly
-rejected; pose-medium coupling still requires the CPU backend.
+float32. Selecting `"opengl"` runs RGB wave propagation, prediction, joint
+camera/audio inference, stream-state nodes, optional hidden coupling and learning
+in OpenGL 4.3 compute shaders, with direct texture presentation. This backend
+requires explicitly configured `"float32"` inference; it never silently converts
+float64 to float32 or falls back to CPU inference. The startup configuration
+selects float32 explicitly; `PredictiveCodingConfig` retains its float64 default.
+Pose-medium coupling still requires the CPU backend.
 
 Numerical graph state stays on its selected backend. Host/device transfers belong
 only at sensor and presentation boundaries: OpenCV capture and audio analysis
@@ -221,12 +232,23 @@ is also open. Keep diagnostic plots closed when measuring throughput. Finite-sta
 at settling boundaries rather than synchronizing the GPU on every inference
 step, and still raises explicitly on divergence before weight learning.
 
+The OpenGL path has no CuPy/CUDA dependency. Python/Qt owns capture, audio
+analysis and frame scheduling; shader-storage buffers own hidden states, weights,
+errors and reductions. Camera samples are uploaded in float32 raw-value storage;
+RGB conversion, normalization, resizing and gain run in a shader. Direct display
+downloads no image. Exact automatic percentile levels use radix histograms with
+small counter readbacks, not full-field transfers. Prediction popups and plots
+retain their bounded snapshot behavior. Resources are allocated lazily under the
+renderer-owned context and released before its destruction. Drivers without the
+required OpenGL version or buffer limits fail explicitly.
+
 Benchmark the numerical path without live camera/audio devices or a GUI:
 
 ```bash
 uv run python scripts/benchmark_predictive_inference.py --backend both
 uv run python scripts/benchmark_predictive_inference.py --backend gpu --resolution 300 400 --inference-steps 8 --learning --cross-modal
 uv run python scripts/benchmark_predictive_inference.py --backend gpu --resolution 1080 1920 --dtype float32 --render --profile /tmp/inference.prof
+QT_QPA_PLATFORM=xcb uv run python scripts/benchmark_predictive_inference.py --backend opengl --resolution 1080 1920 --dtype float32 --render
 ```
 
 The benchmark uses deterministic camera/audio evidence, warmup frames, and
@@ -262,6 +284,15 @@ large channel counts retain matrix multiplication.
 Enabling both weight learning and the camera/audio hidden loop at eight steps
 measured 152 ms/frame (6.6 frames/s), including offscreen Qt rendering, with about
 1281 MiB of reserved pool memory.
+
+The restored OpenGL path at native 1080p/eight steps measured **117 ms/frame
+(8.6 frames/s)** with direct RGB rendering, or **208 ms/frame (4.8 frames/s)**
+with learning and the hidden loop. These initial measurements used three warmup
+and six measured frames, X11 Qt presentation, exact automatic levels and
+synthetic sensors on the same RTX 3060. They establish a working shader baseline,
+not a speedup over CuPy or a 30 FPS result. The implementation also passes
+numerical parity on Mesa software OpenGL; that is a portability check, not an
+AMD/Intel hardware performance claim.
 
 For a throughput-oriented configuration, set these values in `main.py` before
 starting the application:
@@ -361,7 +392,7 @@ Enable **Pathway Learning** with paired camera/audio evidence to learn the
 connections, then freeze learning to probe them. In startup configuration,
 `transforms.prediction_error.inference.cross_modal_enabled` enables the same mode.
 An audio processor must exist, but its observation toggle can be off.
-The shader-only backend does not support the loop.
+The NumPy, CuPy and OpenGL backends support the loop.
 
 With `h` the camera hidden field and `a` the audio hidden field:
 
