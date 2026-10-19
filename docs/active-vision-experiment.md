@@ -6,6 +6,43 @@ advisory expected-information-gain estimator. It does not implement an
 autonomous gaze policy, calibrated predictive covariance, or a learned
 circular-motion predictor.
 
+## Mathematics diagram and source map
+
+Open [the editable mathematics diagram](predictive-uncertainty-math.drawio)
+in the VS Code draw.io extension or draw.io desktop. Its three pages cover
+terms/distributions, forecast/conditioning, and the sensory information
+objective. The diagram describes the implementation at code snapshot
+`7bc7cfa`, including its approximation boundaries.
+
+Each blue code label is a clickable `vscode://file/...:line:column` link into
+this checkout at `/home/nicklas/Projects/AudioViz`. These local links work
+without publishing the implementation to GitHub; if the checkout moves,
+replace that root in the diagram. The repository-relative source links below
+are the portable index. Function names remain useful if line numbers move.
+
+| Mathematical responsibility | Implementation |
+| --- | --- |
+| Existing hidden-mean prediction | [`PredictiveCodingRGBReadout.predict`](../src/audioviz/readouts/predictive_coding.py#L139-L145) |
+| Predicted sensory mean | [`_capture_prediction`](../src/audioviz/readouts/predictive_coding.py#L147-L158), [`_predict_observation`](../src/audioviz/readouts/predictive_coding.py#L332-L333) |
+| Equivalent native mean transition | [`OpenGLPredictiveModel._advance`](../src/audioviz/readouts/opengl_predictive.py#L271-L299) |
+| Hidden covariance initialization and assumptions | [`GaussianSensoryUncertainty.__init__`](../src/audioviz/readouts/gaussian_uncertainty.py#L21-L51) |
+| Forecast covariance and freeze pre-evidence mean | [`GaussianSensoryUncertainty.predict`](../src/audioviz/readouts/gaussian_uncertainty.py#L78-L99) |
+| Decoder Jacobian and RGB covariance components | [`_jacobian` / `_components`](../src/audioviz/readouts/gaussian_uncertainty.py#L101-L109) |
+| Gaussian conditioning and hidden-diagonal projection | [`GaussianSensoryUncertainty.condition`](../src/audioviz/readouts/gaussian_uncertainty.py#L111-L159) |
+| Gaze-conditioned scalar precision | [`GaussianSpatialPrecision.field`](../src/audioviz/readouts/spatial_precision.py#L40-L58) |
+| Normalized Gaussian measurement likelihood | [`negative_log_likelihood`](../src/audioviz/readouts/spatial_precision.py#L60-L75) |
+| Planning forecast, RGB log-determinant, and quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L179-L282) |
+| Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L235-L279) |
+| Prediction and observation lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L171-L175), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L220-L226) |
+| Manual-only recommendation and hypothetical sampling | [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L184-L226), [`refresh_previews`](../src/audioviz/visualization/active_vision_experiment.py#L256-L282) |
+| Dense Gaussian mathematical reference | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L47-L79) |
+
+In the diagram, `lambda` is the scalar precision field called `Pi(r)` below;
+the RGB precision matrix is `lambda * I_3`. `m` is the hidden point estimate
+stored in `readout.hidden`, while `h` denotes the uncertain hidden variable.
+`v = diag(P)` extracts the stored variance vector; `P = Diag(v)` constructs
+the conceptual diagonal covariance matrix. These are different operations.
+
 ## Run
 
 ```bash
@@ -145,10 +182,10 @@ float32 on the inference backend. Its transition is the derivative of the
 actual uncoupled prediction step:
 
 ```text
-h_next = (1 - inference_rate) * h + inference_rate * W_canvas * tanh(canvas)
+m_next = (1 - inference_rate) * m + inference_rate * W_canvas * tanh(canvas)
 F = (1 - inference_rate) * I
-P_prior = F * P_posterior * F^T + Q * dt * I
-J = W_visual * diag(1 - tanh(h_next)^2)
+P_prior = F * P_posterior * F^T + q * dt * I
+J = W_visual * Diag(1 - tanh(m_next)^2)
 V_sensory = J * P_prior * J^T
 ```
 
@@ -157,10 +194,17 @@ RGB correlations induced by the decoder are not discarded. Given an
 observation with precision `Pi`, Gaussian conditioning gives:
 
 ```text
-P_posterior = diag(P_prior
-    - Pi * P_prior * J^T * inverse(I + Pi * V_sensory) * J * P_prior)
+C = P_prior - Pi * P_prior * J^T * inverse(I + Pi * V_sensory) * J * P_prior
+v_posterior = diag(C)
+P_posterior = Diag(v_posterior)
 IG(action) = 0.5 * sum_pixels(log(det(I + Pi(action) * V_sensory)))
 ```
+
+Here `q` is the scalar `process_variance`. The information-gain expression
+uses ideal conditioning of the local Gaussian **before** discarding hidden
+correlations; it is not the entropy difference of the diagonally projected
+stored beliefs. The log-determinant form also supports rank-deficient
+positive-semidefinite sensory covariance.
 
 Conditioning uses the decoder Jacobian frozen **before** the current evidence,
 once per observation, not once per settling iteration. Hidden cross-channel
