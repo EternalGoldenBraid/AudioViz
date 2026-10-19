@@ -45,6 +45,10 @@ python main.py
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
+For the experimental circular-dot stimulus and manual Gaussian-precision
+attention, see [the active-vision experiment](docs/active-vision-experiment.md).
+It runs on OpenGL, NumPy, or CuPy without a physical camera or microphone.
+
 For live streaming, the first run prompts for audio devices and stores the
 machine-local selection in `config/audio_devices.json`. The file is ignored by
 Git; `config/audio_devices.example.json` documents its structure and safe null
