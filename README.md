@@ -45,9 +45,24 @@ python main.py
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
-For the experimental circular-dot stimulus, conditional Gaussian information-gain
-heatmap, mouse/autonomous/full-canvas gaze modes, and headless policy comparison,
-see [the active-vision experiment](docs/active-vision-experiment.md) and
+For a live camera-only active-vision session in the main visualizer, run:
+```bash
+python main.py --active-vision mouse
+```
+(`mouse`, `autonomous`, or `full`; also configurable via `RIPPLE_CONFIG["active_vision"]`).
+This explicit camera-only profile skips audio device/hardware initialization,
+disables the spectrogram and pitch-helix windows and ripple audio, enables
+camera/ripple with the shared `GazeControls` bar and temporal Gaussian filter
+(advancing hidden-state time `dt` by the nominal timer interval on the first
+frame / after reset and monotonic frame-to-frame elapsed time thereafter, while
+the wave canvas remains deterministic on its separate CFL timestep), and keeps
+ordinary `python main.py` unchanged. Camera/prediction previews remain under
+**Show Predictions / 3D Scene**; no synthetic stimulus or evaluator ground truth
+is added to `main.py`.
+
+For the deterministic synthetic circular-dot stimulus, conditional Gaussian
+information-gain heatmap, mouse/autonomous/full-canvas gaze modes, and headless
+policy comparison, see [the active-vision experiment](docs/active-vision-experiment.md) and
 [the editable predictive-uncertainty mathematics diagram](docs/predictive-uncertainty-math.drawio).
 Both run on OpenGL, NumPy, or CuPy without a physical camera or microphone.
 

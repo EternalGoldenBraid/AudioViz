@@ -13,7 +13,7 @@ Open [the editable mathematics diagram](predictive-uncertainty-math.drawio)
 in the VS Code draw.io extension or draw.io desktop. Its three pages cover
 terms/distributions, forecast/conditioning, and the sensory information
 objective. The diagram describes the implementation at code snapshot
-`eb35320`, including its approximation boundaries.
+`1b15206`, including its approximation boundaries.
 
 Each blue code label is a clickable `vscode://file/...:line:column` link into
 this checkout at `/home/nicklas/Projects/AudioViz`. These local links work
@@ -33,9 +33,9 @@ are the portable index. Function names remain useful if line numbers move.
 | Normalized Gaussian measurement likelihood | [`negative_log_likelihood`](../src/audioviz/readouts/spatial_precision.py#L60-L75) |
 | Planning forecast, RGB log-determinant, and pixel-area quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L309-L419), [`_pixel_area_weights`](../src/audioviz/readouts/gaussian_uncertainty.py#L422-L427) |
 | Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L364-L414) |
-| Greedy tie/flat-score handling and policy selection | [`has_gaze_preference`](../src/audioviz/sources/gaze.py#L6-L7), [`information_gaze`](../src/audioviz/sources/gaze.py#L10-L23), [`GazePolicy.select`](../src/audioviz/sources/gaze.py#L37-L50) |
-| Opt-in temporal Gaussian wiring, pre-capture gaze selection, and conditioning lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L175-L180), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L182-L196), [`enable_visual_uncertainty`](../src/audioviz/sources/orchestrator.py#L198-L217), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L246-L257) |
-| Gaze-mode controls, responsive preview reflow, advisory cue, hypothetical sampling, and finite-run restart | [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L198-L210), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L212-L236), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L254-L301), [`_after_frame` / `refresh_previews` / `_restart`](../src/audioviz/visualization/active_vision_experiment.py#L320-L388), [`main`](../src/audioviz/visualization/active_vision_experiment.py#L397-L433) |
+| Greedy tie/flat-score handling and policy selection | [`ActiveVisionConfig`](../src/audioviz/sources/gaze.py#L11-L20), [`has_gaze_preference`](../src/audioviz/sources/gaze.py#L23-L24), [`information_gaze`](../src/audioviz/sources/gaze.py#L27-L40), [`GazePolicy.select`](../src/audioviz/sources/gaze.py#L54-L67) |
+| Opt-in temporal Gaussian wiring, pre-capture gaze selection, and conditioning lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L175-L184), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L186-L200), [`enable_visual_uncertainty`](../src/audioviz/sources/orchestrator.py#L202-L221), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L250-L261) |
+| Shared gaze controls, live main-visualizer integration, responsive preview reflow, advisory cue, and finite-run restart | [`build_ripple_visualizer_config`](../main.py#L188-L277), [`main`](../main.py#L388-L485), [`GazeControls`](../src/audioviz/ui/gaze_controls.py#L6-L77), [`RippleWaveVisualizer._advance_canvas`](../src/audioviz/visualization/ripple_wave_visualizer.py#L644-L701), [`_capture_scene_sources`](../src/audioviz/visualization/ripple_wave_visualizer.py#L703-L755), [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L164-L176), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L178-L192), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L210-L257), [`_after_frame` / `refresh_previews` / `_restart`](../src/audioviz/visualization/active_vision_experiment.py#L276-L344), [`main`](../src/audioviz/visualization/active_vision_experiment.py#L353-L389) |
 | Headless fixed/random/autonomous evaluation and metrics | [`GazeFrameMetrics` / `GazeRunResult`](../src/audioviz/offline/active_vision.py#L22-L38), [`run_gaze_comparison`](../src/audioviz/offline/active_vision.py#L75-L164), [`main`](../src/audioviz/offline/active_vision.py#L167-L226) |
 | Dense/scalar affine references, OU partition invariance, native parity, and quadrature ranking oracle | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L51-L104), [`test_bounded_gain_preserves_full_grid_action_ranking_after_repeated_center_observations`](../tests/readouts/test_gaussian_uncertainty.py#L181-L212), [`test_temporal_posterior_and_scores_match_scalar_affine_oracle_independently_of_solver`](../tests/readouts/test_gaussian_uncertainty.py#L216-L279), [`test_temporal_mean_and_covariance_match_exact_ou_independently_of_step_partition`](../tests/readouts/test_gaussian_long_run.py#L10-L38), [`test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_grid`](../tests/readouts/test_opengl_predictive.py#L219-L292) |
 
@@ -79,9 +79,8 @@ an independent gate across all modes):
   `1e-6` float32 tolerance), autonomous gaze remains frozen at its current
   position; non-flat ties keep the current gaze if it is among the maximizers
   and otherwise use the first near-maximizer in row-major order. The preview
-  arrow uses this same selector. This mode is restricted to the synthetic
-  experiment and never reads evaluator ground truth or the unsampled current
-  frame.
+  arrow uses this same selector. It never reads evaluator ground truth or the
+  unsampled current frame.
 - **Full canvas (`--gaze-mode full`):** disables spatial gating and applies
   uniform unit precision (`Pi(r) = 1`, `R(r) = I_3`) across the entire frame
   whenever `Observe` is on; switching back to `mouse` or `autonomous` restores
@@ -120,6 +119,49 @@ The frame clock advances by `1 / fps` for every generated frame, independent
 of wall-clock rendering speed. Display FPS therefore need not equal stimulus
 FPS. Parameters are experimental settings, not calibrated camera-noise
 estimates.
+
+### Live camera-only mode in `main.py`
+
+```bash
+python main.py --active-vision mouse
+```
+
+Passing `--active-vision {mouse,autonomous,full}` (or enabling
+`RIPPLE_CONFIG["active_vision"]` in `main.py`, disabled by default with knobs
+`mode`, `gaze`, `sigma`, `baseline`, `peak`, `initial_variance`,
+`process_variance`, and `memory_time_constant`) launches an explicit
+camera-only session in `RippleWaveVisualizer` using the same shared
+`GazeControls` bar and `GaussianSensoryUncertainty` filter:
+
+- Skips audio hardware/device initialization (`_create_audio_processor` is not
+  called), disables the spectrogram and pitch-helix windows and ripple audio,
+  and enables camera and ripple while preserving the configured backend
+  (`numpy`, `gpu`, or `opengl`) and other field/model settings. Ordinary
+  `python main.py` remains unchanged.
+- Enforces the uncoupled visual-only model contract: rejects an audio
+  `processor` or ripple audio drive, pose-medium coupling (both at startup and
+  by disabling/guarding the CPU pose toggle), weight learning, cross-modal
+  coupling, or disabled camera prediction-error inference.
+- **Mouse gaze** maps mouse movement over the main wave image to normalized
+  `[0, 1]^2` gaze coordinates (ignoring surrounding viewport margins);
+  **Autonomous gaze** selects greedy `argmax_a IG(a)` before camera capture;
+  **Full canvas** applies uniform unit precision (`Pi(r) = 1`); turning
+  **Observe** off holds policy gaze and propagates the OU belief without
+  conditioning.
+- Retains camera/prediction inspection under **Show Predictions / 3D Scene**
+  (omitting the absent categorical `stream_state` factor so both
+  `stream_state` and `stream_state_prediction` are `None` across all three
+  popup layouts); no synthetic dot stimulus, ground-truth preview, or offline
+  evaluator is added to `main.py`.
+- Advances the live hidden-state filter timestep `dt` by the nominal timer
+  interval (`timer.interval() / 1000` s) on the first frame and immediately
+  after reset, and by monotonic frame-to-frame elapsed time
+  (`time.monotonic()`) at each subsequent prediction step (`predict_visual(dt=elapsed)`),
+  supplying the identical `dt` to autonomous gaze planning and the OU forecast.
+  The deterministic synthetic experiment continues to use fixed
+  `dt = 1 / stimulus.frame_rate`, and the wave surface continues to step on its
+  separate deterministic CFL timestep. This live mode makes no moving-target
+  pursuit, noise-calibration, or real-time 1080p performance claim.
 
 ## Stimulus contract
 
@@ -313,8 +355,10 @@ hidden-state entropy.
 `--initial-variance` (`1.0`), `--process-variance` (`0.01`), and
 `--memory-time-constant` (`1 / 3` s) are configured experimental assumptions,
 not learned or calibrated noise estimates. The source orchestrator advances
-mean and covariance with `dt = 1 / fps` during actual prediction/conditioning,
-independently of preview rendering. Missing or skipped observations (`Observe`
+mean and covariance with `dt = 1 / fps` in the deterministic synthetic
+experiment (and with monotonic frame-to-frame elapsed `dt` after the initial
+nominal timer interval in `main.py --active-vision`) during actual
+prediction/conditioning, independently of preview rendering. Missing or skipped observations (`Observe`
 off) apply the OU transition without conditioning (`delta_m = 0`,
 `delta_canvas = 0`, `m_posterior = m_prior`, `P_posterior = P_prior`). Variance
 relaxes toward `v_inf = 0.5 * D * tau` under `rho < 1` even without an
