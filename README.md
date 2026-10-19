@@ -45,7 +45,8 @@ python main.py
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
-For the experimental circular-dot stimulus and manual Gaussian-precision
+For the experimental circular-dot stimulus, advisory information-gain heatmap,
+and manual Gaussian-precision
 attention, see [the active-vision experiment](docs/active-vision-experiment.md).
 It runs on OpenGL, NumPy, or CuPy without a physical camera or microphone.
 

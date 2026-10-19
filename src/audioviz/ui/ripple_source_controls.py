@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from audioviz.source_controls import (
     CameraFrameSourceControls,
     ControlValue,
@@ -67,28 +69,38 @@ class RippleSourceControlBinding:
             )
         )
         pathway_config = visualizer.source_orchestrator.visual_readout.config
+        uncertainty_active = visualizer.source_orchestrator.visual_uncertainty is not None
+        learning_controls = PredictionLearningControls(
+            enabled=pathway_config.learning_enabled,
+            inference_steps=pathway_config.inference_steps,
+            inference_rate=pathway_config.inference_rate,
+            canvas_rate=pathway_config.canvas_rate,
+            learning_rate=pathway_config.learning_rate,
+            weight_decay=pathway_config.weight_decay,
+            weight_clip=pathway_config.weight_clip,
+            gradient_clip=pathway_config.gradient_clip,
+            cross_modal_enabled=pathway_config.cross_modal_enabled,
+            cross_modal_available=not uncertainty_active and (
+                visualizer.source_orchestrator.hidden_coupling is not None
+                or (
+                    visualizer.source_orchestrator.shader_model is not None
+                    and visualizer.source_orchestrator.audio_readout is not None
+                )
+            ),
+        ).get_controls()
+        if uncertainty_active:
+            learning_controls = tuple(
+                replace(
+                    control, kind="text", default="Fixed for Gaussian uncertainty",
+                    tooltip="Parameter uncertainty is not propagated in this experiment.",
+                ) if control.key == "learning_enabled" else control
+                for control in learning_controls
+            )
         sections.append(
             ControlPanelSection(
                 key="learning-dynamics",
                 title="Sensory Inference and Learning",
-                controls=PredictionLearningControls(
-                    enabled=pathway_config.learning_enabled,
-                    inference_steps=pathway_config.inference_steps,
-                    inference_rate=pathway_config.inference_rate,
-                    canvas_rate=pathway_config.canvas_rate,
-                    learning_rate=pathway_config.learning_rate,
-                    weight_decay=pathway_config.weight_decay,
-                    weight_clip=pathway_config.weight_clip,
-                    gradient_clip=pathway_config.gradient_clip,
-                    cross_modal_enabled=pathway_config.cross_modal_enabled,
-                    cross_modal_available=(
-                        visualizer.source_orchestrator.hidden_coupling is not None
-                        or (
-                            visualizer.source_orchestrator.shader_model is not None
-                            and visualizer.source_orchestrator.audio_readout is not None
-                        )
-                    ),
-                ).get_controls(),
+                controls=learning_controls,
                 expanded=True,
             )
         )
