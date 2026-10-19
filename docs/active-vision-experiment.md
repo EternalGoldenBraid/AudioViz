@@ -13,7 +13,7 @@ Open [the editable mathematics diagram](predictive-uncertainty-math.drawio)
 in the VS Code draw.io extension or draw.io desktop. Its three pages cover
 terms/distributions, forecast/conditioning, and the sensory information
 objective. The diagram describes the implementation at code snapshot
-`b427020`, including its approximation boundaries.
+`4ada271`, including its approximation boundaries.
 
 Each blue code label is a clickable `vscode://file/...:line:column` link into
 this checkout at `/home/nicklas/Projects/AudioViz`. These local links work
@@ -36,7 +36,7 @@ are the portable index. Function names remain useful if line numbers move.
 | Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L235-L279) |
 | Greedy tie/flat-score handling and policy selection | [`has_gaze_preference`](../src/audioviz/sources/gaze.py#L6-L7), [`information_gaze`](../src/audioviz/sources/gaze.py#L10-L23), [`GazePolicy.select`](../src/audioviz/sources/gaze.py#L37-L50) |
 | Prediction, pre-capture gaze selection, and conditioning lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L175-L181), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L183-L197), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L242-L248) |
-| Gaze-mode controls, responsive preview reflow, advisory cue, and hypothetical sampling | [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L189-L201), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L203-L227), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L245-L289), [`refresh_previews`](../src/audioviz/visualization/active_vision_experiment.py#L325-L352) |
+| Gaze-mode controls, responsive preview reflow, advisory cue, hypothetical sampling, and finite-run restart | [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L196-L208), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L210-L234), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L252-L299), [`_after_frame` / `refresh_previews` / `_restart`](../src/audioviz/visualization/active_vision_experiment.py#L318-L386) |
 | Headless fixed/random/autonomous evaluation and metrics | [`GazeFrameMetrics` / `GazeRunResult`](../src/audioviz/offline/active_vision.py#L22-L38), [`run_gaze_comparison`](../src/audioviz/offline/active_vision.py#L75-L162) |
 | Dense Gaussian mathematical reference | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L47-L79) |
 
@@ -99,8 +99,16 @@ when there is no expected gain or when all candidates tie. Advice and
 autonomous selection are restricted to this synthetic image grid, not a
 physical-camera navigation plan.
 Gaussian width and baseline/peak precision
-remain fixed for the run. The stimulus stops after its configured duration.
-Previews update at most 10 Hz and have a maximum side of 256 pixels.
+remain fixed for the run. The stimulus stops after its configured duration
+(`--duration`, default `10` s), stopping both the model and preview timers and
+showing `Finished: <N> frames - Restart to continue` (during the run, the
+status shows `Stimulus time: <elapsed> / <duration> s`). Switching gaze modes
+after a run finishes does not automatically restart timers or reset history;
+use **Restart** (`ActiveVisionExperiment._restart`) to replay the seeded
+stimulus and reset wave/readout/covariance beliefs while preserving the
+selected gaze mode, gaze coordinates, and `Observe` state. Previews update at
+most 10 Hz and have a maximum side of 256 pixels (the committed
+`active-vision-bench.png` screenshot reflects the `b427020` UI snapshot).
 
 ```bash
 uv run python -m audioviz.visualization.active_vision_experiment \
