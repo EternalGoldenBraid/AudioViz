@@ -10,6 +10,7 @@ from audioviz.readouts.predictive_coding import (
     PredictiveCodingConfig, PredictiveCodingHiddenCoupling, PredictiveCodingRGBReadout, infer_joint,
 )
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
+from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 
 
 @pytest.fixture
@@ -212,6 +213,60 @@ def test_shader_float_precision_uniforms_accept_integral_parameters(shader_engin
     correction = model.infer(prior, observation, None, states=(True, False))
     expected = infer_joint(prior.download(), ((reference, observation),), stream_states={reference: True})
     np.testing.assert_allclose(correction.download(), expected, atol=3e-6)
+
+
+def test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_grid(shader_engine, monkeypatch):
+    from audioviz.utils.opengl_compute import GLArray
+
+    shape = shader_engine.resolution
+    config = PredictiveCodingConfig(dtype="float32", inference_steps=2)
+    shader = OpenGLPredictiveModel(shader_engine, config, audio_enabled=False)
+    readout = PredictiveCodingRGBReadout(canvas_shape=(*shape, 3), config=config)
+    native = GaussianSensoryUncertainty(shader.camera, device=shader_engine.propagator.compute)
+    reference = GaussianSensoryUncertainty(readout)
+    rng = np.random.default_rng(74)
+    shader_engine.propagate(rng.normal(0, .1, (*shape, 3)).astype(np.float32))
+    prior = shader_engine.get_prior()
+    host_prior = prior.download()
+    for observed, sampling, gaze in (
+        (True, True, (0.2, 0.7)), (False, True, (0.5, 0.5)),
+        (True, False, (0, 1)), (True, True, (0.8, 0.3)),
+    ):
+        precision = GaussianSpatialPrecision(gaze=gaze, sample=sampling, baseline=0, peak=1)
+        shader.camera.update_config(spatial_precision=precision)
+        readout.update_config(spatial_precision=precision)
+        shader.predict(prior)
+        readout.predict(host_prior)
+        native.predict(dt=.1)
+        reference.predict(dt=.1)
+        image = rng.random((*shape, 3), dtype=np.float32) if observed else None
+        shader.infer(prior, image, None, states=(True, False))
+        readout.infer(host_prior, image, stream_state=True)
+        native.condition(precision, observed=observed)
+        reference.condition(precision, observed=observed)
+        np.testing.assert_allclose(native.variance.download(), reference.variance, atol=2e-7)
+        expected = reference.expected_information_gain(
+            precision, prior=host_prior, dt=.1, grid_shape=(5, 7), max_side=11,
+        )
+        download = GLArray.download
+
+        def only_grid(array):
+            assert array.size == 35, "Advisory scoring must only download the candidate grid"
+            return download(array)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(GLArray, "download", only_grid)
+            actual = native.expected_information_gain(
+                precision, prior=prior, dt=.1, grid_shape=(5, 7), max_side=11,
+            )
+        np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=3e-5)
+
+    tiny_precision = GaussianSpatialPrecision(baseline=1e-8, peak=0)
+    np.testing.assert_allclose(
+        native.expected_information_gain(tiny_precision, prior=prior, dt=.1, grid_shape=(3, 3)),
+        reference.expected_information_gain(tiny_precision, prior=host_prior, dt=.1, grid_shape=(3, 3)),
+        rtol=1e-5, atol=1e-12,
+    )
 
 
 @pytest.mark.parametrize("kind", ("rgb", "rgba", "gray", "float"))

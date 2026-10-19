@@ -10,6 +10,7 @@ from audioviz.readouts.diagnostics import (
     copy_weights,
 )
 from audioviz.readouts.predictive_coding import PredictiveCodingRGBReadout
+from audioviz.readouts.spatial_precision import GAUSSIAN_PRECISION_GLSL
 from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
 from audioviz.utils.opengl_compute import GLArray, GLArrayView
 
@@ -200,15 +201,15 @@ class OpenGLPredictiveModel:
         """
 
     def _precision_source(self):
-        return f"""
+        return GAUSSIAN_PRECISION_GLSL + f"""
         uniform int spatial_precision_enabled,spatial_sample;
         uniform float gaze_x,gaze_y,foveal_width,peripheral_precision,peak_precision;
         float camera_precision(int p){{
             if(spatial_precision_enabled==0)return 1.0;
             if(spatial_sample==0)return 0.0;
             vec2 r=vec2(float(p%{self.shape[1]}),float(p/{self.shape[1]}));
-            vec2 delta=(r-vec2(gaze_x,gaze_y))/foveal_width;
-            return peripheral_precision+peak_precision*exp(-0.5*dot(delta,delta));
+            return gaussian_precision(r-vec2(gaze_x,gaze_y),foveal_width,
+                peripheral_precision,peak_precision);
         }}
         """
 

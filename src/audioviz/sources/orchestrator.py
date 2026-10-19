@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -12,6 +12,7 @@ from audioviz.readouts import (
 from audioviz.sources.audio import AudioRippleSource, AudioSourceConfig
 from audioviz.readouts.audio import PredictiveCodingAudioReadout
 from audioviz.readouts.predictive_coding import PredictiveCodingHiddenCoupling, infer_joint
+from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
 from audioviz.transforms.prediction_error import PredictionErrorTransform
@@ -95,6 +96,8 @@ class RippleSourceOrchestrator:
         )
         self._validate_cross_modal(config.visual_pathway.cross_modal_enabled)
         self.visual_observation: np.ndarray | None = None
+        self.visual_uncertainty: GaussianSensoryUncertainty | None = None
+        self._uncertainty_dt = 0.0
         self.synthetic_source = SyntheticRippleSource(
             frequency=config.synthetic.frequency,
             n_sources=self.n_sources,
@@ -166,6 +169,28 @@ class RippleSourceOrchestrator:
         return None if grid is None else self._to_canvas_grid(grid)
 
     def predict_visual(self) -> np.ndarray:
+        prediction = self._predict_visual_mean()
+        if self.visual_uncertainty is not None:
+            self.visual_uncertainty.predict(dt=self._uncertainty_dt)
+        return prediction
+
+    def enable_visual_uncertainty(self, *, dt, initial_variance=1.0, process_variance=0.01):
+        """Opt into conditional visual covariance alongside the existing mean inference."""
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError("visual uncertainty requires a finite, positive timestep")
+        if self.shader_model is None and not isinstance(self.visual_readout, PredictiveCodingRGBReadout):
+            raise ValueError("visual uncertainty requires the predictive RGB readout")
+        if self.visual_uncertainty is not None:
+            raise RuntimeError("Visual uncertainty is already enabled")
+        self.visual_uncertainty = GaussianSensoryUncertainty(
+            self.visual_readout, initial_variance=initial_variance, process_variance=process_variance,
+            backend=self.engine.backend,
+            device=self.shader_model.device if self.shader_model is not None else None,
+        )
+        self._uncertainty_dt = float(dt)
+        return self.visual_uncertainty
+
+    def _predict_visual_mean(self) -> np.ndarray:
         prior = self.engine.get_prior()
         if self.shader_model is not None:
             prediction, self.audio_prediction = self.shader_model.predict(prior)
@@ -193,6 +218,14 @@ class RippleSourceOrchestrator:
         )
 
     def correct_from_observations(self) -> np.ndarray:
+        correction = self._correct_from_observations_mean()
+        if self.visual_uncertainty is not None:
+            self.visual_uncertainty.condition(
+                self.visual_readout.config.spatial_precision, observed=self.visual_observation is not None,
+            )
+        return correction
+
+    def _correct_from_observations_mean(self) -> np.ndarray:
         self.visual_observation = None
         audio = self.audio_source.observation()
         if self.shader_model is not None:
@@ -230,6 +263,8 @@ class RippleSourceOrchestrator:
         return correction
 
     def update_pathway_config(self, **changes) -> None:
+        if self.visual_uncertainty is not None:
+            self.visual_uncertainty.validate_config(replace(self.visual_readout.config, **changes))
         if "cross_modal_enabled" in changes:
             self._validate_cross_modal(changes["cross_modal_enabled"])
         self.visual_readout.update_config(**changes)
@@ -258,6 +293,8 @@ class RippleSourceOrchestrator:
                 self.audio_readout.reset()
         self.audio_prediction = None
         self.visual_observation = None
+        if self.visual_uncertainty is not None:
+            self.visual_uncertainty.reset()
 
     def _to_canvas_grid(self, grid: np.ndarray) -> np.ndarray:
         values = np.asarray(grid, dtype=np.float32)

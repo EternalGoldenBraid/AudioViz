@@ -5,6 +5,14 @@ from dataclasses import dataclass
 import numpy as np
 
 
+GAUSSIAN_PRECISION_GLSL = """
+float gaussian_precision(vec2 delta,float width,float baseline,float peak){
+    vec2 scaled=delta/width;
+    return baseline+peak*exp(-0.5*dot(scaled,scaled));
+}
+"""
+
+
 @dataclass(frozen=True)
 class GaussianSpatialPrecision:
     """Gaze in normalized image coordinates; sigma as a fraction of the shorter side."""
@@ -35,14 +43,16 @@ class GaussianSpatialPrecision:
             raise ValueError("precision field requires a nonempty image")
         return self.gaze[0] * (cols - 1), self.gaze[1] * (rows - 1), self.sigma * min(rows, cols)
 
-    def field(self, shape, *, backend=np, dtype=np.float32):
+    def field(self, shape, *, backend=np, dtype=np.float32, indices=None):
+        """Evaluate the full grid or the Cartesian product of selected row/column indices."""
         xp = backend
         x, y, width = self.pixel_parameters(shape)
-        if not self.sample:
-            return xp.zeros(shape, dtype=dtype)
         rows, cols = shape
-        u = (xp.arange(cols, dtype=dtype) - x) / width
-        v = (xp.arange(rows, dtype=dtype) - y) / width
+        v = xp.arange(rows, dtype=dtype) if indices is None else xp.asarray(indices[0], dtype=dtype)
+        u = xp.arange(cols, dtype=dtype) if indices is None else xp.asarray(indices[1], dtype=dtype)
+        if not self.sample:
+            return xp.zeros((len(v), len(u)), dtype=dtype)
+        u, v = (u - x) / width, (v - y) / width
         return (
             self.baseline + self.peak * xp.exp(-0.5 * (v[:, None]**2 + u[None, :]**2))
         ).astype(dtype, copy=False)
