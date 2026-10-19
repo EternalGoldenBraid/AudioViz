@@ -37,6 +37,7 @@ from audioviz.ui.ripple_source_controls import (
     RippleSourceControlBinding,
 )
 from audioviz.visualization.visualizer_base import VisualizerBase
+from audioviz.visualization.frame_rate_display import FrameRateDisplay
 from audioviz.audio_processing.audio_processor import AudioProcessor
 
 POSE_RENDER_MODE_OVERLAY = "overlay"
@@ -265,6 +266,9 @@ class RippleWaveVisualizer(VisualizerBase):
         self.scene_button.setCheckable(True)
         self.scene_button.toggled.connect(self.set_prediction_scene_visible)
         layout.addWidget(self.scene_button)
+        self.frame_rate = FrameRateDisplay(self)
+        self.renderer.frame_presented.connect(self.frame_rate.record_frame)
+        layout.addWidget(self.frame_rate)
 
     def _update_speed(self, val: float):
         self.speed = val

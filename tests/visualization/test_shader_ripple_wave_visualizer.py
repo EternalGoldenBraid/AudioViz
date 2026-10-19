@@ -11,6 +11,7 @@ from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 @pytest.mark.parametrize("layout", ("comparison", "prediction", "3d"))
 def test_shader_live_flow_previews_diagnostics_reset_and_cleanup(qapp, layer_view_stub, monkeypatch, layout):
     from PyQt5 import QtGui
+    from PyQt5.QtTest import QSignalSpy
     from audioviz.utils.opengl_compute import GLArray
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
@@ -56,6 +57,7 @@ def test_shader_live_flow_previews_diagnostics_reset_and_cleanup(qapp, layer_vie
         widget.resize(800, 600)
         widget.show()
         qapp.processEvents()
+        presentations = QSignalSpy(widget.renderer.frame_presented)
         widget.set_prediction_scene_visible(True)
         view = widget.prediction_scene
         view.layout_selector.setCurrentIndex(view.layout_selector.findData(layout))
@@ -70,6 +72,8 @@ def test_shader_live_flow_previews_diagnostics_reset_and_cleanup(qapp, layer_vie
             for source in view.sources for value in (source.observation, source.prediction, source.hidden)
         )
         qapp.processEvents()
+        assert len(presentations) == 1
+        assert widget.frame_rate._frames == 1
         assert not widget.renderer.widget.grabFramebuffer().isNull()
         widget.set_prediction_diagnostics_visible(True)
         processor.frame_counter += 1

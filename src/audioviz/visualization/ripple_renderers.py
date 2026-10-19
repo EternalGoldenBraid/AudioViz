@@ -4,7 +4,7 @@ from typing import Optional, Protocol
 import matplotlib.cm as cm
 import numpy as np
 import pyqtgraph as pg
-from PyQt5 import QtGui, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 from audioviz.utils.array_backend import array_module, to_numpy
 
@@ -72,8 +72,10 @@ class OpenGLFieldSource(Protocol):
         """Return the field shape as (rows, columns)."""
 
 
-class NumpyImageRenderer:
+class NumpyImageRenderer(QtCore.QObject):
     """Render ripple fields through PyQtGraph from a NumPy array."""
+
+    frame_presented = QtCore.pyqtSignal()
 
     def __init__(
         self,
@@ -86,6 +88,7 @@ class NumpyImageRenderer:
         auto_level_floor: float = 0.1,
         auto_level_activation_threshold: float = 0.1,
     ):
+        super().__init__()
         if auto_level_percentile <= 0.0 or auto_level_percentile > 100.0:
             raise ValueError("auto_level_percentile must be in (0, 100]")
         if auto_level_floor < 0.0:
@@ -116,6 +119,8 @@ class NumpyImageRenderer:
         self.plot.addItem(self.prediction_overlay_image)
 
         self.widget = pg.GraphicsLayoutWidget()
+        self._frame_pending = False
+        self.widget.viewport().installEventFilter(self)
         self.widget.addItem(self.plot, row=0, col=0)
 
         self.histogram = pg.HistogramLUTItem(image=self.image_item)
@@ -124,6 +129,12 @@ class NumpyImageRenderer:
 
     def prepare_frame(self) -> bool:
         return True
+
+    def eventFilter(self, watched, event):
+        if event.type() == QtCore.QEvent.Paint and self._frame_pending:
+            self._frame_pending = False
+            self.frame_presented.emit()
+        return super().eventFilter(watched, event)
 
     @property
     def auto_percentile_levels(self) -> bool:
@@ -205,6 +216,7 @@ class NumpyImageRenderer:
             )
         else:
             self.image_item.setImage(to_numpy(display_field), autoLevels=False)
+        self._frame_pending = True
 
     def render_rgb_frame(self, rgb_frame: np.ndarray) -> None:
         self.image_item.setImage(
@@ -212,6 +224,7 @@ class NumpyImageRenderer:
             autoLevels=False,
             levels=(0, 255),
         )
+        self._frame_pending = True
 
     def render_prediction_coupling_overlay(
         self,
@@ -349,6 +362,7 @@ class OpenGLFieldRenderer:
         if auto_level_floor < 0 or auto_level_activation_threshold < 0:
             raise ValueError("OpenGL display floor and activation threshold must be non-negative")
         self.widget = OpenGLFieldWidget(value_scale=value_scale)
+        self.frame_presented = self.widget.frame_presented
         self.widget.rgb_enabled = bool(rgb_canvas_enabled)
         self._auto = True
         self._pending = True
@@ -392,6 +406,7 @@ class OpenGLFieldRenderer:
                 self.widget.display_limit = limit
             self._pending = False
         self.widget.set_field_source(field_source)
+        self.widget.frame_pending = True
         self.widget.update()
 
     def _native_percentile(self, field, percentile):
@@ -451,6 +466,8 @@ class OpenGLFieldRenderer:
 
 
 class OpenGLFieldWidget(QtWidgets.QOpenGLWidget):
+    frame_presented = QtCore.pyqtSignal()
+
     def __init__(self, *, value_scale: float):
         super().__init__()
         surface_format = QtGui.QSurfaceFormat()
@@ -467,6 +484,14 @@ class OpenGLFieldWidget(QtWidgets.QOpenGLWidget):
         self._program = None
         self._vertex_array = None
         self._color_texture = None
+        self.frame_pending = False
+        self._fresh_frame_painted = False
+        self.frameSwapped.connect(self._record_swap)
+
+    def _record_swap(self):
+        if self._fresh_frame_painted:
+            self._fresh_frame_painted = False
+            self.frame_presented.emit()
 
     def prepare_frame(self) -> bool:
         if self.context() is None:
@@ -540,6 +565,9 @@ class OpenGLFieldWidget(QtWidgets.QOpenGLWidget):
         gl.glBindVertexArray(self._vertex_array)
         vertex_count = 4
         gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, vertex_count)
+        if self.frame_pending:
+            self.frame_pending = False
+            self._fresh_frame_painted = True
         gl.glBindVertexArray(0)
         gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 

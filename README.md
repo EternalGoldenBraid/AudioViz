@@ -96,6 +96,14 @@ Accessible from GUI sliders:
 * **Substrate Conductances (Fixed)**: Diagnostic overlay of the wave operator, not the learned visual weights
 * **Show Inference / Learning Plots**: Opens the energy / 2D weight plot catalogue
 * **Show Predictions / 3D Scene**: Opens a popup with selectable prediction layouts
+* **Show FPS**: Toggles the main window's FPS and average ms/frame readout
+
+FPS counts newly presented canvas frames over wall-clock time, averaged over
+about one second. OpenGL counts swaps after a fresh draw; NumPy/CuPy count fresh
+image viewport paints. Coalesced updates count once, and redraws of unchanged
+data do not count. The displayed ms/frame is the presentation interval, not
+inference/GPU kernel time. Hiding the window or disabling the counter clears
+the sample; collecting the counter does not synchronize the GPU.
 
 The prediction popup's **Layout** selector offers the existing **3D graph**,
 a **2D comparison** of the corrected canvas, pre-evidence camera prediction,
