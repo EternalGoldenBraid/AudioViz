@@ -1,10 +1,11 @@
-# Active vision: manual gaze and advisory information gain
+# Active vision: gaze modes, advisory information gain, and headless evaluation
 
 This implements the stimulus and Stage A foundation of [the research
-proposal](https://github.com/EternalGoldenBraid/AudioViz/pull/1), plus a small
-advisory expected-information-gain estimator. It does not implement an
-autonomous gaze policy, calibrated predictive covariance, or a learned
-circular-motion predictor.
+proposal](https://github.com/EternalGoldenBraid/AudioViz/pull/1), an
+expected-information-gain estimator, three mutually exclusive experiment gaze
+modes (`mouse`, `autonomous`, and `full`), and a headless policy comparison
+runner. It does not implement calibrated predictive covariance, a learned
+circular-motion predictor, or a physical-camera navigation policy.
 
 ## Mathematics diagram and source map
 
@@ -12,7 +13,7 @@ Open [the editable mathematics diagram](predictive-uncertainty-math.drawio)
 in the VS Code draw.io extension or draw.io desktop. Its three pages cover
 terms/distributions, forecast/conditioning, and the sensory information
 objective. The diagram describes the implementation at code snapshot
-`7bc7cfa`, including its approximation boundaries.
+`b427020`, including its approximation boundaries.
 
 Each blue code label is a clickable `vscode://file/...:line:column` link into
 this checkout at `/home/nicklas/Projects/AudioViz`. These local links work
@@ -23,7 +24,7 @@ are the portable index. Function names remain useful if line numbers move.
 | Mathematical responsibility | Implementation |
 | --- | --- |
 | Existing hidden-mean prediction | [`PredictiveCodingRGBReadout.predict`](../src/audioviz/readouts/predictive_coding.py#L139-L145) |
-| Predicted sensory mean | [`_capture_prediction`](../src/audioviz/readouts/predictive_coding.py#L147-L158), [`_predict_observation`](../src/audioviz/readouts/predictive_coding.py#L332-L333) |
+| Predicted sensory mean | [`_capture_prediction`](../src/audioviz/readouts/predictive_coding.py#L147-L156), [`_predict_observation`](../src/audioviz/readouts/predictive_coding.py#L332-L333) |
 | Equivalent native mean transition | [`OpenGLPredictiveModel._advance`](../src/audioviz/readouts/opengl_predictive.py#L271-L299) |
 | Hidden covariance initialization and assumptions | [`GaussianSensoryUncertainty.__init__`](../src/audioviz/readouts/gaussian_uncertainty.py#L21-L51) |
 | Forecast covariance and freeze pre-evidence mean | [`GaussianSensoryUncertainty.predict`](../src/audioviz/readouts/gaussian_uncertainty.py#L78-L99) |
@@ -33,8 +34,10 @@ are the portable index. Function names remain useful if line numbers move.
 | Normalized Gaussian measurement likelihood | [`negative_log_likelihood`](../src/audioviz/readouts/spatial_precision.py#L60-L75) |
 | Planning forecast, RGB log-determinant, and quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L179-L282) |
 | Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L235-L279) |
-| Prediction and observation lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L171-L175), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L220-L226) |
-| Manual-only recommendation and hypothetical sampling | [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L184-L226), [`refresh_previews`](../src/audioviz/visualization/active_vision_experiment.py#L256-L282) |
+| Greedy tie/flat-score handling and policy selection | [`has_gaze_preference`](../src/audioviz/sources/gaze.py#L6-L7), [`information_gaze`](../src/audioviz/sources/gaze.py#L10-L23), [`GazePolicy.select`](../src/audioviz/sources/gaze.py#L37-L50) |
+| Prediction, pre-capture gaze selection, and conditioning lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L175-L181), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L183-L197), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L242-L248) |
+| Gaze-mode controls, responsive preview reflow, advisory cue, and hypothetical sampling | [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L189-L201), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L203-L227), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L245-L289), [`refresh_previews`](../src/audioviz/visualization/active_vision_experiment.py#L325-L352) |
+| Headless fixed/random/autonomous evaluation and metrics | [`GazeFrameMetrics` / `GazeRunResult`](../src/audioviz/offline/active_vision.py#L22-L38), [`run_gaze_comparison`](../src/audioviz/offline/active_vision.py#L75-L162) |
 | Dense Gaussian mathematical reference | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L47-L79) |
 
 In the diagram, `lambda` is the scalar precision field called `Pi(r)` below;
@@ -46,33 +49,55 @@ the conceptual diagonal covariance matrix. These are different operations.
 ## Run
 
 ```bash
-uv run python -m audioviz.visualization.active_vision_experiment --backend opengl --gaze 0.8 0.5
+uv run python -m audioviz.visualization.active_vision_experiment --backend opengl --gaze-mode mouse --gaze 0.8 0.5
 ```
 
 OpenGL 4.3 is required for the shader backend. `--backend numpy` and
 `--backend cupy` run the same inference semantics on the existing array
 backends. No camera, microphone, or video codec is required.
 
+![Active vision experimentation bench](active-vision-bench.png)
+
 The top panels show evaluator ground truth with an optional information-gain
 overlay, the Gaussian precision field over
 that frame with a gaze cross, and the model's prediction **before the current
-frame was incorporated**. The lower canvas is the existing corrected wave
-surface. The model weights remain fixed by default. Controls change gaze
-location and whether to observe. **Follow mouse** is enabled by default:
-hover over any of the three preview images to move gaze directly. Image
-coordinates account for scaling and the inverted image Y axis; moving into
-the surrounding margins leaves gaze unchanged. Turn the toggle off to
-freeze gaze, or position it with the numeric controls.
-**Information gain** toggles the advisory overlay. Brighter cells indicate
+frame was incorporated** (aligned in three columns on wide windows `>= 1000 px`
+and stacked vertically on narrower windows). The lower canvas is the existing corrected wave
+surface. The model weights remain fixed by default. Controls select one of
+three mutually exclusive gaze modes and whether to observe (`Observe` remains
+an independent gate across all modes):
+
+- **Mouse gaze (`--gaze-mode mouse`, default):** hover over any of the three
+  preview images while **Mouse gaze** is selected, or position gaze with the
+  numeric controls. Image coordinates account for
+  scaling and the inverted image Y axis; moving into the surrounding margins
+  leaves gaze unchanged.
+- **Autonomous gaze (`--gaze-mode autonomous`):** selects the greedy maximum of
+  the expected-information-gain candidate grid at model-step cadence in
+  `RippleSourceOrchestrator.predict_visual` before each camera frame is
+  captured (not throttled to the 10 Hz preview timer). When `Observe` is off,
+  or when all candidates tie / have zero expected gain (within relative
+  `1e-6` float32 tolerance), autonomous gaze remains frozen at its current
+  position; non-flat ties keep the current gaze if it is among the maximizers
+  and otherwise use the first near-maximizer in row-major order. The preview
+  arrow uses this same selector. This mode is restricted to the synthetic
+  experiment and never reads evaluator ground truth or the unsampled current
+  frame.
+- **Full canvas (`--gaze-mode full`):** disables spatial gating and applies
+  uniform unit precision (`Pi(r) = 1`, `R(r) = I_3`) across the entire frame
+  whenever `Observe` is on; switching back to `mouse` or `autonomous` restores
+  the Gaussian profile. This is distinct from turning `Observe` off
+  (`Pi(r) = 0`, no observation update).
+
+**Information gain** toggles the overlay. Brighter cells indicate
 greater expected uncertainty reduction from an observation centered there;
 the white circle marks the highest-scoring candidate, and the arrow points
 from current gaze toward it. The status row reports total gain in nats and
 normalized target coordinates. The heatmap is scaled to its current score
 range; brightness is not an absolute confidence scale. No direction is shown
-when there is no expected gain. Gaze never moves automatically. Advice is
-restricted to this image, not a physical-camera navigation plan.
-If every candidate has equal gain, the status reports no gaze preference and
-the direction cue is hidden.
+when there is no expected gain or when all candidates tie. Advice and
+autonomous selection are restricted to this synthetic image grid, not a
+physical-camera navigation plan.
 Gaussian width and baseline/peak precision
 remain fixed for the run. The stimulus stops after its configured duration.
 Previews update at most 10 Hz and have a maximum side of 256 pixels.
@@ -169,6 +194,23 @@ dot positions. Brownian motion perturbs the trajectory, not the observation
 noise. Do not give a gaze policy the evaluator's raw frames, true positions,
 or raw diagnostic residuals.
 
+**Deterministic stimulus pixels do not imply `R = I_3`:** a deterministic
+synthetic frame is a noiseless scene realization (zero empirical sampling
+jitter across repeats of the same seed); taken literally as a noise distribution
+that would approach a degenerate `R -> 0` where Gaussian log-likelihood is
+singular. Instead, `R_a(r) = (1 / Pi_a(r)) * I_3` is the **assigned
+observation-likelihood covariance** that weights prediction errors in the
+variational objective and sets the signal-to-noise ratio in information
+scoring:
+
+- In spatial gaze modes (`mouse`, `autonomous`), `Pi_a(r)` varies by pixel so
+  `R_a(r) = (1 / Pi_a(r)) * I_3` on observed dimensions (`Pi_a(r) > 0`).
+- In `full` canvas mode (`spatial_precision=None` or uniform unit precision),
+  `Pi(r) = 1` assigns `R(r) = I_3` everywhere by unit-precision convention,
+  not because deterministic pixels inherently have unit variance.
+- When `Observe` is off (`sample=False`), `Pi(r) = 0` everywhere (unobserved;
+  not inverted, and posterior covariance remains `P_posterior = P_prior`).
+
 ## Advisory Gaussian belief
 
 The inference objective already has a Gaussian observation-likelihood
@@ -257,13 +299,51 @@ Neither stimulus truth, seeds, raw images nor error-energy statistics enter
 the information objective directly; observed information reaches it through
 the model's inferred beliefs. The ground-truth overlay is evaluator-only.
 
-This slice provides no observation-cost objective, automatic skip decision,
-or autonomous temporal policy.
+This slice provides no observation-cost objective or automatic skip decision.
+
+## Headless policy comparison
+
+```bash
+uv run python -m audioviz.offline.active_vision --backend numpy --resolution 120 160 --duration 2 --seed 7 --policy-seed 29 --output outputs/gaze-comparison.json
+```
+
+`audioviz.offline.active_vision` runs matched headless rollouts (`--backend
+numpy`, `cupy`, or `opengl`) comparing `fixed` (fixed at the `(0.5, 0.5)` grid
+center), `random`, and information-seeking (`autonomous`) gaze policies under an
+identical frame count, observation schedule (observing every frame), initial
+model state/weights, and Gaussian precision profile (`--policy-seed` controls
+random-policy draws independently of the stimulus `--seed`). Because Gaussian
+footprints near image borders are clipped by the finite pixel grid, total
+precision mass per frame varies with gaze position; the evaluator reports
+`precision_mass` as the sum of scalar per-pixel precision `Pi(r)` over the image
+grid (not multiplied by the 3 RGB channels) rather than assuming border-clipped
+gazes have equal summed precision. Native OpenGL metric readbacks reduce MSE and
+mean hidden variance to scalars on-device; candidate scoring downloads only the
+`9 x 13` (`117`-value) score grid.
+
+The comparison separates three distinct quantities that must not be conflated:
+
+1. **Expected ideal sensory information gain (`expected_gain_nats`):** one-step
+   mutual information `0.5 * sum_r log(det(I_3 + Pi_a(r) * V_sensory(r)))`
+   evaluated from the full local `3 x 3` RGB covariance `V_sensory` **before**
+   projecting hidden covariance onto its diagonal.
+2. **Retained hidden-diagonal uncertainty (`posterior_hidden_variance_mean`):**
+   mean of the stored diagonal variance vector `v_posterior = diag(C)` after
+   discarding off-diagonal hidden correlations induced by conditioning.
+3. **Next-frame pre-evidence prediction error (`forecast_mse`):** evaluator
+   image residual comparing the model's pre-observation prediction against the
+   next stimulus frame.
+
+Greedy one-step maximization of expected sensory information gain does not
+universally guarantee higher cumulative information gain over a rollout, lower
+final projected diagonal variance, or lower image prediction error than fixed
+or random policies on arbitrary trajectories. Analytical dominance holds only in
+specifically constructed regimes.
 
 ## Focused verification
 
 ```bash
-uv run python -m pytest -q tests/sources/test_circular_dot.py tests/readouts/test_spatial_precision.py tests/readouts/test_gaussian_uncertainty.py
+uv run python -m pytest -q tests/sources/test_circular_dot.py tests/sources/test_gaze.py tests/readouts/test_spatial_precision.py tests/readouts/test_gaussian_uncertainty.py tests/offline/test_active_vision.py
 QT_QPA_PLATFORM=xcb uv run python -m pytest -q tests/readouts/test_opengl_predictive.py tests/visualization/test_active_vision_experiment.py
 ```
 

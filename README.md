@@ -45,10 +45,11 @@ python main.py
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
-For the experimental circular-dot stimulus, advisory information-gain heatmap,
-and manual Gaussian-precision
-attention, see [the active-vision experiment](docs/active-vision-experiment.md).
-It runs on OpenGL, NumPy, or CuPy without a physical camera or microphone.
+For the experimental circular-dot stimulus, conditional Gaussian information-gain
+heatmap, mouse/autonomous/full-canvas gaze modes, and headless policy comparison,
+see [the active-vision experiment](docs/active-vision-experiment.md) and
+[the editable predictive-uncertainty mathematics diagram](docs/predictive-uncertainty-math.drawio).
+Both run on OpenGL, NumPy, or CuPy without a physical camera or microphone.
 
 For live streaming, the first run prompts for audio devices and stores the
 machine-local selection in `config/audio_devices.json`. The file is ignored by
@@ -597,20 +598,31 @@ incompatible PyOpenGL platform can be corrected by restarting with
 
 ---
 
-## 🖼️ Gallery (placeholder)
+## 🖼️ Active Vision Experimentation Bench & Architecture Visuals
 
-*Add demo visuals here.*
+![Active vision experimentation bench](docs/active-vision-bench.png)
 
-| Audio Stimulus | Ripple Response                   |
-| -------------- | --------------------------------- |
-| "S" sound      | ![img1](images/demo_s_ripple.png) |
-| Percussive hit | ![img2](images/demo_hit.png)      |
+The [active-vision experimentation bench](docs/active-vision-experiment.md)
+(`uv run python -m audioviz.visualization.active_vision_experiment --backend opengl --gaze-mode autonomous`)
+pairs the predictive-coding wave canvas with a conditional Gaussian sensory
+uncertainty filter:
 
----
+- **Top-left (`Ground truth + advisory gain`):** evaluator-only stimulus frame
+  overlaid with the expected sensory information-gain (`IG`) heatmap, current-to-target
+  gaze arrow, and maximizing candidate marker.
+- **Top-center (`Observation precision and gaze`):** spatial precision envelope
+  `Pi(r)` and gaze crosshair (`+`), controlled via **Mouse gaze**, **Autonomous
+  gaze** (greedy one-step `IG` maximization before camera capture), or **Full
+  canvas** (uniform unit precision `Pi(r) = 1`, `R = I_3`), with an independent
+  **Observe** gate (`sample=False` sets `Pi(r) = 0`).
+- **Top-right (`Prediction before current evidence`):** pre-observation RGB
+  expectation `g(m^-)` rendered before the current frame is incorporated.
+- **Bottom (`Ripple Simulation`):** corrected 3-channel predictive wave surface.
 
-## 🎥 Demo (placeholder)
+Companion mathematical and architectural diagrams in `docs/`:
 
-> *Insert phone-recorded demo or YouTube link here.*
+- [Predictive uncertainty mathematics (`docs/predictive-uncertainty-math.drawio`)](docs/predictive-uncertainty-math.drawio) — three-page editable draw.io diagram with clickable local VS Code source links covering terms/distributions (including why deterministic stimulus frames do not imply `R = I_3`), forecast/conditioning, and the sensory mutual-information objective.
+- [Shader inference architecture (`docs/shader-inference-architecture.drawio`)](docs/shader-inference-architecture.drawio) and rendered SVG views ([system](docs/shader-inference-system.svg), [model](docs/shader-inference-model.svg), [phases](docs/shader-inference-phases.svg)).
 
 ---
 
@@ -636,14 +648,16 @@ This project is meant to be more than a tool—it's a medium. Imagine walking in
 ## 🧠 Project Structure
 
 ```
-audioviz/
-├── audio_processing/
-│   └── audio_processor.py
-├── visualization/
-│   ├── ripple_wave_visualizer.py
-│   └── spectrogram_visualizer.py
-├── utils/
-│   └── signal_processing.py
+src/audioviz/
+├── audio_processing/          # Real-time STFT/mel audio analysis
+├── engine/                    # 2D wave propagation (NumPy, CuPy, OpenGL compute)
+├── offline/                   # Headless active-vision policy comparison & renderers
+├── pose/                      # MediaPipe pose graph & body-mask medium coupling
+├── readouts/                  # Predictive coding, OpenGL shaders, Gaussian precision & uncertainty
+├── sources/                   # Camera, audio, synthetic, circular-dot stimulus, gaze policies & orchestrator
+├── transforms/                # Sensory prediction-error transform configuration
+├── utils/                     # Array backends, OpenGL compute helpers, spatial previews
+└── visualization/             # Main Qt/OpenGL visualizer, active-vision bench, 2D/3D diagnostics
 main.py
 ```
 
