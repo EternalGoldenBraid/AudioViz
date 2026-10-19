@@ -48,7 +48,7 @@ A core distinction to test: **large current prediction error is not equivalent t
 **Still open implementation/research choices**
 
 - The probabilistic belief representation over future sensory states and how to calculate/approximate EIG with the existing predictive-coding architecture.
-- The observation model: sharp fovea with blurred periphery, missing observations, or precision-weighted measurements; exact spatial/temporal sampling budget.
+- The Gaussian precision-field width, baseline precision, total spatial/temporal sensing budget, and how to implement a no-observation action.
 - Which existing modules can be reused, and the staged learning/frozen-weights schedule.
 - How to quantify uncertainty calibration and separate reducible uncertainty from irreducible perturbation noise.
 
@@ -87,12 +87,12 @@ If uncertainty rises (e.g., changed dynamics): increase sampling again.
 
 ```text
 +--------------------+  +--------------------+  +--------------------+
-| FULL GROUND TRUTH  |  | ATTENDED INPUT     |  | MODEL PREDICTION   |
-|   .--trajectory--. |  |   dim periphery    |  |   .--trajectory--. |
-|  |   o dot        |  |   [sharp fovea]     |  |  |   x predicted    | |
-|   '--------------' |  |   rest uncertain   |  |   '--------------' | |
+| FULL GROUND TRUTH  |  | PRECISION FIELD    |  | MODEL PREDICTION   |
+|   .--trajectory--. |  |   low peripheral   |  |   .--trajectory--. |
+|  |   o dot        |  |   [high precision] |  |  |   x predicted    | |
+|   '--------------' |  |   gaze center      |  |   '--------------' | |
 +--------------------+  +--------------------+  +--------------------+
-         evaluator             agent sees this        model output
+         evaluator             weights evidence       model output
 
 Below: gaze location and observation events over time; prediction error;
        uncertainty estimate; EIG estimate; optional Brownian offset.
@@ -102,12 +102,24 @@ Below: gaze location and observation events over time; prediction error;
 
 - Full camera frame `x_t` (available for experiment/evaluation).
 - Attention/action parameters `a_t` (initially location and spatial extent; later anisotropic or multi-focus).
-- Observation operator `S(x_t, a_t)`: sharp near focus, progressively lower resolution or precision in the periphery. This must be differentiable with respect to attention parameters if optimized by gradients.
+- **Spatial precision field** `Pi(r; a_t)`: a Gaussian centered at the action-selected gaze location, with low baseline precision in the periphery. This weights sensory prediction errors; no separate image blur/sampler is required in experiment 1. The field should be differentiable in gaze location if optimized by gradients.
 - Predictive model (which may internally use existing hidden state) produces a future sensory prediction `x_hat_{t+1}`; **no new semantic latent model is required** for the first experiment.
 - Inference updates to `z_t` from the *attended observation*, with a spatially varying observation precision or equivalent weighting.
 - Attention policy chooses `a_t` based on predicted usefulness of the next observation.
 
-Attention should change **what evidence the model receives**, not just add a blur effect to a displayed image.
+The same action-dependent precision must be used consistently in the inference updates and in the observation likelihood assumed by EIG. The full frame may exist in the experimental harness, but the agent must not access its unweighted pixels through any other path.
+
+## Gaussian spatial precision: attention mechanism
+
+For image position `r=(u,v)` and gaze action `a_t=(a_u,a_v)`, use the initial parameterization
+
+```math
+\Pi(r;a_t)=\Pi_{\min}+\Pi_{\mathrm{peak}}\exp\left(-\frac{\|r-a_t\|^2}{2\sigma_f^2}\right).
+```
+
+`Pi_min` is peripheral baseline precision, `Pi_peak` the additional foveal precision, and `sigma_f` the fovea width. The precision-weighted sensory error is `epsilon(r)=Pi(r;a_t)*(x(r)-x_hat(r))`. In a Gaussian observation model, `Pi` is inverse observation variance; this makes gaze-dependent weighting a probabilistic choice of how much sensory evidence enters inference, rather than a visualization-only mask. The physical video frame itself need not be blurred. Very small peripheral precision should mean negligible evidential influence, and no other model path may bypass that restriction.
+
+**Important contract:** A policy must evaluate candidate gaze actions using the *same* precision-dependent likelihood used for predictive coding. A pure scaling of a loss while still giving the model unrestricted access to the full image is not sufficient. Specify the observation covariance and normalization consistently; `Pi_min=0` represents an unobserved limit, requiring care with singular covariance. Fix or budget the precision mass/width so EIG cannot improve trivially by increasing precision everywhere.
 
 ## Information gain formulation (candidate, not yet committed)
 
@@ -140,7 +152,7 @@ Choose gaze actions that maximize EIG subject to an explicit observation budget 
 
 Show simultaneously:
 1. Original full camera frame (ground truth, for development only).
-2. Actual attended observation delivered to the model, with the attention field visible.
+2. Gaussian spatial precision field over the camera frame, with gaze center visible (not a separately blurred image).
 3. Model's full-frame prediction.
 4. Optionally, spatial prediction error and attention/precision maps.
 
@@ -148,8 +160,8 @@ Log attention position/shape, reconstruction quality by region, model uncertaint
 
 ## Staged experiments
 
-### Stage A — observation operator, no learned attention
-Implement and test a deterministic, adjustable spatial sampler/blur with explicit contracts. Keep predictive model weights fixed initially. Compare attended input to full-frame predictions and verify the observation operator really affects inference.
+### Stage A — Gaussian precision field, no learned attention
+Implement and test a deterministic spatial precision field with explicit contracts. Keep predictive model weights fixed initially. Verify that changing gaze location changes precision-weighted inference updates and the likelihood used for EIG, without introducing a separate blur pipeline.
 
 ### Stage B — optimize attention with a fixed model
 Use a simple, explicitly named proxy objective first (e.g. predicted reconstruction improvement under an observation budget), while separately testing whether it tracks actual information gain on synthetic controlled data. Compare against fixed-center, random, and prediction-error-greedy attention.
@@ -163,7 +175,7 @@ Investigate attention-model co-adaptation, temporal predictive memory, movement 
 ## Workstream boundaries for CLI agents
 
 - **WS1: architecture audit.** Read current repo; identify camera source, predictive coding interfaces, inference update, rendering and tests. Return a proposed integration seam, not code changes.
-- **WS2: sensory observation operator.** Implement Stage A in a small independently testable module; include numerical tests for shape, identity/full-attention behavior, boundary behavior, differentiability if required, and precision-mask consistency.
+- **WS2: spatial precision field.** Implement Stage A in a small independently testable module; include numerical tests for Gaussian center/width, positivity, boundary behavior, gradient if required, and consistent precision use in inference and observation likelihood.
 - **WS3: visualization.** Add side-by-side observation/prediction and visible attention map with minimal coupling to the model.
 - **WS4: experimental harness.** Add reproducible synthetic scenarios, metrics and baseline attention policies.
 - **WS5: EIG derivation and estimator.** Research/derive probabilistic formulation grounded in the actual model representation; no implementation until approved.
@@ -174,7 +186,7 @@ Each workstream should be a separate issue or implementation branch, with tests 
 
 - Which belief family can express uncertainty about **future sensory observations** with the existing model?
 - What tractable estimator approximates sensory-space EIG, and how will it be validated against a controlled probabilistic toy model?
-- Which observation operator and fixed sensing budget should the first implementation use?
+- What Gaussian width, baseline/peak precision, and spatial sensing budget should the first implementation use?
 - How should observation timing be represented (including the option **not to sample**), and what cost/budget prevents always observing?
 - What should be held fixed versus learned at each stage?
 - How do we distinguish reducible uncertainty from unpredictable Brownian perturbations?
@@ -214,4 +226,4 @@ For the simplest sensory-space formulation, the uncertain quantity may be the do
 
 ### Agent handoff
 
-Start with a repository audit and a minimal test plan. Implement the deterministic synthetic stimulus and its tests first, then add stochastic perturbations and tests. Only then integrate the attention-conditioned observation path and an explicitly defined information-seeking policy. Keep the generator, observation operator, predictive model, and policy independently testable. Do not alter the production camera pipeline unnecessarily.
+Start with a repository audit and a minimal test plan. Implement the deterministic synthetic stimulus and its tests first, then add stochastic perturbations and tests. Only then integrate Gaussian precision-weighted sensory inference and an explicitly defined information-seeking policy. Keep the generator, observation operator, predictive model, and policy independently testable. Do not alter the production camera pipeline unnecessarily.
