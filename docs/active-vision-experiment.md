@@ -296,6 +296,24 @@ predictor can still be overconfident. Calibration and richer covariance
 propagation remain necessary before interpreting these scores as trustworthy
 real-camera confidence.
 
+**Stationary autonomous gaze and the conditional no-evidence floor:** during a
+live run (with stimulus time still advancing), autonomous gaze can move across
+early frames and then settle at the grid center `(0.5, 0.5)` without numerical
+divergence or stopped timers. Because the wave canvas is treated as a known
+point estimate (`Var(c) = 0`), the uncoupled hidden transition contracts
+variance by `(1 - inference_rate)^2` every step even on unobserved pixels,
+approaching the steady-state no-evidence floor
+`P_inf = (q * dt) / (1 - (1 - inference_rate)^2)` (at the default
+`inference_rate = 0.1`, `q = 0.01`, `dt = 1 / 30`,
+`P_inf = (0.01 / 30) / (1 - 0.9^2) ≈ 0.001754`). Once hidden variance settles
+near this small, nearly uniform floor across the canvas, candidate scores are
+dominated by the unclipped spatial Gaussian footprint—which has maximum scalar
+precision mass at the image center (`~2225.99` at `(0.5, 0.5)` vs. `~723.75` at
+a corner on a `120 x 160` grid)—plus modest local decoder-Jacobian variation.
+Consequently, greedy one-step information-seeking gaze under this conditional
+hidden-only covariance filter is not guaranteed to continue moving or to track
+the moving dot.
+
 Scores use a fixed `9 x 13` candidate grid and nearest-neighbor spatial
 quadrature with maximum side 64, scaled to the full pixel count. This is a
 coarse approximation: footprints narrower than the sample spacing may be
