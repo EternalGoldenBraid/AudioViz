@@ -12,13 +12,14 @@ from audioviz.sources import (
     CameraFrameSourceConfig, CircularDotCapture, CircularDotConfig, CircularDotSource,
     RippleSourceOrchestratorConfig, SyntheticSourceConfig,
 )
+from audioviz.sources.gaze import GazePolicy, has_gaze_preference, information_gaze
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
-from audioviz.utils.spatial_preview import spatial_preview
+from audioviz.utils.spatial_preview import preview_indices, spatial_preview
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
 
 class ActiveVisionExperiment(QtWidgets.QWidget):
-    """Manual gaze with model-linked conditional Gaussian information advice."""
+    """Mouse, autonomous, or full-canvas observation with conditional Gaussian advice."""
 
     PREVIEW_MAX_SIDE = 256
 
@@ -26,20 +27,24 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         self, *, stimulus: CircularDotConfig, precision: GaussianSpatialPrecision,
         backend: str = "opengl", inference_steps: int = 8,
         initial_variance: float = 1.0, process_variance: float = 0.01,
+        gaze_mode: str = "mouse",
     ):
         super().__init__()
         if backend not in ("numpy", "cupy", "opengl"):
             raise ValueError("backend must be numpy, cupy or opengl")
+        if gaze_mode not in ("mouse", "autonomous", "full"):
+            raise ValueError("gaze mode must be mouse, autonomous or full")
         self.stimulus = CircularDotSource(stimulus)
         self.precision = precision
+        self._gaze_precision = precision
         self.information_scores = None
         self._score_dirty = True
         self.setWindowTitle("Active Vision - Gaussian Precision Experiment")
         self.resize(1180, 860)
         layout = QtWidgets.QVBoxLayout(self)
         description = QtWidgets.QLabel(
-            "Manual gaze; fixed model weights. The heatmap advises where to look within this image. "
-            "It never moves gaze automatically. Ground truth is evaluator-only."
+            "Choose mouse gaze, autonomous information-seeking gaze, or ungated full-canvas observation. "
+            "Fixed model weights; ground truth is evaluator-only. Eye tracking is not connected."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -50,21 +55,32 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         controls.addWidget(self.gaze_x)
         controls.addWidget(QtWidgets.QLabel("Gaze Y"))
         controls.addWidget(self.gaze_y)
-        self.follow_mouse = QtWidgets.QCheckBox("Follow mouse")
-        self.follow_mouse.setChecked(True)
-        self.follow_mouse.setToolTip("Move over any preview image to position gaze. Turn off to freeze it.")
-        controls.addWidget(self.follow_mouse)
         self.observe = QtWidgets.QCheckBox("Observe")
         self.observe.setChecked(precision.sample)
         controls.addWidget(self.observe)
-        controls.addWidget(QtWidgets.QLabel(
-            f"Width: {precision.sigma:g} x shorter side | "
-            f"Precision: {precision.baseline:g} + {precision.peak:g} x Gaussian"
-        ))
         controls.addStretch()
         self.progress = QtWidgets.QLabel("Waiting for first frame")
         controls.addWidget(self.progress)
         layout.addLayout(controls)
+        modes = QtWidgets.QHBoxLayout()
+        modes.addWidget(QtWidgets.QLabel("Gaze control"))
+        self.gaze_modes = QtWidgets.QButtonGroup(self)
+        self.autonomous_gaze = QtWidgets.QRadioButton("Autonomous gaze")
+        self.follow_mouse = QtWidgets.QRadioButton("Mouse gaze")
+        self.full_canvas = QtWidgets.QRadioButton("Full canvas (gaze disabled)")
+        for button in (self.autonomous_gaze, self.follow_mouse, self.full_canvas):
+            self.gaze_modes.addButton(button)
+            modes.addWidget(button)
+        {
+            "mouse": self.follow_mouse, "autonomous": self.autonomous_gaze, "full": self.full_canvas,
+        }[gaze_mode].setChecked(True)
+        self.follow_mouse.setToolTip("Move over any preview image, or enter gaze coordinates.")
+        self.autonomous_gaze.setToolTip(
+            "Select the highest information-gain candidate before each observation. Paused when Observe is off."
+        )
+        self.full_canvas.setToolTip("Observe every pixel with unit precision. This does not stop observations.")
+        modes.addStretch()
+        layout.addLayout(modes)
         advice = QtWidgets.QHBoxLayout()
         self.information_toggle = QtWidgets.QCheckBox("Information gain")
         self.information_toggle.setChecked(True)
@@ -76,13 +92,15 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         advice.addWidget(self.information_status)
         advice.addStretch()
         layout.addLayout(advice)
-        assumptions = QtWidgets.QLabel(
+        self.assumptions = QtWidgets.QLabel(
             f"Conditional Gaussian: initial hidden variance {initial_variance:g}; "
-            f"process variance {process_variance:g}/s. Brighter = greater expected information gain. "
+            f"process variance {process_variance:g}/s. "
+            "Assumed R = I / precision where precision > 0 (full canvas: R = I). "
+            "Stimulus pixels are deterministic; no measurement noise is sampled. "
             "Diagonal hidden covariance; known wave canvas and fixed weights. Not calibrated confidence."
         )
-        assumptions.setWordWrap(True)
-        layout.addWidget(assumptions)
+        self.assumptions.setWordWrap(True)
+        layout.addWidget(self.assumptions)
 
         self.previews = pg.GraphicsLayoutWidget()
         self.previews.setMinimumHeight(220)
@@ -138,7 +156,10 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         self.gaze_y.valueChanged.connect(self._update_precision)
         self.observe.toggled.connect(self._update_precision)
         self.information_toggle.toggled.connect(self._update_advisory_marker)
-        self._update_precision()
+        self.gaze_modes.buttonToggled.connect(
+            lambda _button, checked: self._change_gaze_mode() if checked else None,
+        )
+        self._change_gaze_mode()
         self.previews.setMouseTracking(True)
         self.previews.viewport().setMouseTracking(True)
         self.previews.scene().sigMouseMoved.connect(self._move_gaze_from_mouse)
@@ -147,7 +168,7 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
     def _gaze_control(value):
         control = QtWidgets.QDoubleSpinBox()
         control.setRange(0, 1)
-        control.setDecimals(3)
+        control.setDecimals(6)
         control.setSingleStep(0.05)
         control.setValue(value)
         return control
@@ -162,15 +183,37 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         plot.addItem(image)
         return image, plot
 
+    def _change_gaze_mode(self):
+        self.information_scores = None
+        self.gaze_x.setEnabled(self.follow_mouse.isChecked())
+        self.gaze_y.setEnabled(self.follow_mouse.isChecked())
+        self.visualizer.source_orchestrator.gaze_policy = (
+            GazePolicy() if self.autonomous_gaze.isChecked() else None
+        )
+        self._update_precision()
+
     def _update_precision(self):
-        self.precision = replace(
-            self.precision, gaze=(self.gaze_x.value(), self.gaze_y.value()),
+        self._gaze_precision = replace(
+            self._gaze_precision,
+            gaze=(
+                (self.gaze_x.value(), self.gaze_y.value())
+                if self.follow_mouse.isChecked() else self._gaze_precision.gaze
+            ),
             sample=self.observe.isChecked(),
         )
+        self.precision = (
+            replace(self._gaze_precision, baseline=1.0, peak=0.0)
+            if self.full_canvas.isChecked() else self._gaze_precision
+        )
         self.visualizer.source_orchestrator.update_pathway_config(spatial_precision=self.precision)
+        self._score_dirty = True
+        self._refresh_precision_preview()
+
+    def _refresh_precision_preview(self):
         # This CPU field is evaluator-only; OpenGL inference evaluates the Gaussian natively.
-        field = spatial_preview(
-            self.precision.field(self.stimulus.config.resolution), max_side=self.PREVIEW_MAX_SIDE,
+        shape = self.stimulus.config.resolution
+        field = self.precision.field(
+            shape, indices=preview_indices(shape, max_side=self.PREVIEW_MAX_SIDE),
         )
         self.precision_image.setImage(
             field, autoLevels=False, levels=(0, max(self.precision.baseline + self.precision.peak, 1e-6)),
@@ -179,6 +222,7 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
             [0.5 + self.precision.gaze[0] * (field.shape[1] - 1)],
             [0.5 + self.precision.gaze[1] * (field.shape[0] - 1)],
         )
+        self.gaze_marker.setVisible(not self.full_canvas.isChecked())
         self._update_advisory_marker()
 
     def _update_advisory_marker(self):
@@ -193,20 +237,22 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         ):
             item.setVisible(visible)
         if scores is None:
+            self.information_status.setText("Waiting for uncertainty estimate")
             return
         if not available:
             self.information_status.setText("No expected gain with the configured observation precision")
             return
-        if np.allclose(scores, scores.flat[0], rtol=1e-6, atol=0):
+        if self.full_canvas.isChecked() or not has_gaze_preference(scores):
             self.information_status.setText(
                 f"Next observation: {scores.flat[0]:.1f} nats | no gaze preference"
+                + (" | full canvas: uniform unit precision" if self.full_canvas.isChecked() else "")
                 + (" | sampling paused" if not self.precision.sample else "")
             )
             for item in (self.recommended_marker, self.direction_line, self.direction_arrow):
                 item.hide()
             return
-        iy, ix = np.unravel_index(np.argmax(scores), scores.shape)
-        target = np.array((ix / (scores.shape[1] - 1), iy / (scores.shape[0] - 1)))
+        target = np.asarray(information_gaze(scores, self.precision.gaze))
+        iy, ix = round(target[1]*(scores.shape[0]-1)), round(target[0]*(scores.shape[1]-1))
         self.information_status.setText(
             f"Next observation: {scores[iy, ix]:.1f} nats | range {scores.min():.1f}-{scores.max():.1f} | "
             f"look at ({target[0]:.2f}, {target[1]:.2f})"
@@ -244,6 +290,12 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
 
     def _after_frame(self):
         self._score_dirty = True
+        if self.autonomous_gaze.isChecked():
+            self.precision = self.visualizer.source_orchestrator.visual_readout.config.spatial_precision
+            self._gaze_precision = self.precision
+            with QtCore.QSignalBlocker(self.gaze_x), QtCore.QSignalBlocker(self.gaze_y):
+                self.gaze_x.setValue(self.precision.gaze[0])
+                self.gaze_y.setValue(self.precision.gaze[1])
         sample = self.stimulus.latest
         if sample is not None:
             self.progress.setText(f"Stimulus time: {sample.time:.2f} s")
@@ -260,6 +312,7 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
             return
         if not self.visualizer.renderer.prepare_frame():
             return
+        self._refresh_precision_preview()
         truth = spatial_preview(sample.frame, max_side=self.PREVIEW_MAX_SIDE)
         self.truth_image.setImage(truth, autoLevels=False, levels=(0, 255))
         self.precision_background.setImage(truth, autoLevels=False, levels=(0, 255))
@@ -289,7 +342,7 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Manual gaze with advisory Gaussian information gain.")
+    parser = argparse.ArgumentParser(description="Mouse, autonomous, or full-canvas active vision.")
     parser.add_argument("--backend", choices=("numpy", "cupy", "opengl"), default="opengl")
     parser.add_argument("--resolution", type=int, nargs=2, metavar=("ROWS", "COLS"), default=(120, 160))
     parser.add_argument("--fps", type=float, default=30)
@@ -297,6 +350,7 @@ def main():
     parser.add_argument("--brownian-scale", type=float, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--gaze", type=float, nargs=2, metavar=("X", "Y"), default=(0.5, 0.5))
+    parser.add_argument("--gaze-mode", choices=("mouse", "autonomous", "full"), default="mouse")
     parser.add_argument("--sigma", type=float, default=0.15)
     parser.add_argument("--baseline", type=float, default=0.01)
     parser.add_argument("--peak", type=float, default=1.0)
@@ -315,6 +369,7 @@ def main():
     window = ActiveVisionExperiment(
         stimulus=stimulus, precision=precision, backend=args.backend,
         initial_variance=args.initial_variance, process_variance=args.process_variance,
+        gaze_mode=args.gaze_mode,
     )
     window.show()
     return app.exec()

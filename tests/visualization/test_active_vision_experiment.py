@@ -74,12 +74,26 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
             assert widget.visualizer.source_orchestrator.visual_readout.config.spatial_precision.gaze == gaze
         widget.previews.scene().sigMouseMoved.emit(QtCore.QPointF(-1000, -1000))
         assert widget.precision.gaze == (0, 1)
-        widget.follow_mouse.setChecked(False)
+        widget.full_canvas.setChecked(True)
         widget.previews.scene().sigMouseMoved.emit(widget.truth_image.mapToScene(QtCore.QPointF(16, 12)))
         assert widget.precision.gaze == (0, 1)
+        assert widget.full_canvas.isChecked() and not widget.follow_mouse.isChecked()
+        assert not widget.autonomous_gaze.isChecked()
+        np.testing.assert_array_equal(widget.precision_image.image, 1)
+        assert widget.precision.baseline == 1 and widget.precision.peak == 0
+        assert not widget.gaze_marker.isVisible() and not widget.gaze_x.isEnabled()
+        widget.refresh_previews()
+        assert "full canvas" in widget.information_status.text()
+        assert not widget.direction_arrow.isVisible()
+        widget.observe.setChecked(False)
+        assert not widget.precision_image.image.any()
+        widget.observe.setChecked(True)
+        widget.follow_mouse.setChecked(True)
+        assert widget.precision.baseline == .01 and widget.precision.peak == 1
 
         widget.gaze_x.setValue(0.9)
         assert widget.visualizer.source_orchestrator.visual_readout.config.spatial_precision.gaze == (0.9, 1)
+        widget.refresh_previews()
         assert widget.direction_arrow.isVisible()
         scores_before_missing_frame = widget.information_scores.copy()
         widget.visualizer.camera_source.set_enabled(False)
@@ -123,6 +137,72 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
         widget.visualizer.source_orchestrator.reset_readouts()
         widget.uncertainty._ensure_initialized()
         np.testing.assert_array_equal(spatial_preview(widget.uncertainty.variance, max_side=32), 1)
+    finally:
+        widget.close()
+        qapp.processEvents()
+        widget.deleteLater()
+        qapp.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+
+
+@pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
+def test_autonomous_gaze_acts_on_model_steps_not_preview_or_mouse_events(qapp, request, monkeypatch, backend):
+    if backend == "cupy":
+        request.getfixturevalue("cupy_backend")
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("QOpenGLWidget requires a window-system context")
+    widget = ActiveVisionExperiment(
+        stimulus=CircularDotConfig(resolution=(24, 32), radius=6, frame_rate=10, duration=0.4),
+        precision=GaussianSpatialPrecision(baseline=.02, peak=2),
+        backend=backend, inference_steps=2, gaze_mode="autonomous",
+    )
+    widget.visualizer.timer.stop()
+    widget.preview_timer.stop()
+    calls = []
+    policy = widget.visualizer.source_orchestrator.gaze_policy
+    original = policy.select
+    scores = np.zeros((9, 13), dtype=np.float32)
+    scores[2, 9] = 10
+    monkeypatch.setattr(widget.uncertainty, "expected_information_gain", lambda *a, **k: scores.copy())
+
+    def select(values, current):
+        calls.append(current)
+        return original(values, current)
+
+    monkeypatch.setattr(policy, "select", select)
+    try:
+        widget.show()
+        qapp.processEvents()
+        widget.visualizer.update_visualization()
+        widget._after_frame()
+        assert len(calls) == 1
+        assert widget.precision.gaze == (.75, .25)
+        assert (widget.gaze_x.value(), widget.gaze_y.value()) == (.75, .25)
+        assert not widget.follow_mouse.isChecked() and not widget.full_canvas.isChecked()
+        widget.previews.scene().sigMouseMoved.emit(widget.truth_image.mapToScene(QtCore.QPointF(16, 12)))
+        for _ in range(3):
+            widget.refresh_previews()
+        assert len(calls) == 1 and widget.precision.gaze == (.75, .25)
+        variance = spatial_preview(widget.uncertainty.variance, max_side=32).copy()
+        widget.observe.setChecked(False)
+        widget.visualizer.update_visualization()
+        widget._after_frame()
+        assert len(calls) == 1 and widget.precision.gaze == (.75, .25)
+        np.testing.assert_allclose(
+            spatial_preview(widget.uncertainty.variance, max_side=32), .81*variance+.001, atol=1e-7,
+        )
+        widget.observe.setChecked(True)
+        widget.information_toggle.setChecked(False)
+        widget.visualizer.update_visualization()
+        widget._after_frame()
+        assert len(calls) == 2
+        widget.information_toggle.setChecked(True)
+        widget.full_canvas.setChecked(True)
+        assert widget.visualizer.source_orchestrator.gaze_policy is None
+        np.testing.assert_array_equal(widget.precision_image.image, 1)
+        widget.follow_mouse.setChecked(True)
+        assert widget.precision.baseline == .02 and widget.precision.peak == 2
+        assert widget.gaze_x.isEnabled()
+        assert "deterministic" in widget.assumptions.text()
     finally:
         widget.close()
         qapp.processEvents()
