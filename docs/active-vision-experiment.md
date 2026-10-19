@@ -13,7 +13,7 @@ Open [the editable mathematics diagram](predictive-uncertainty-math.drawio)
 in the VS Code draw.io extension or draw.io desktop. Its three pages cover
 terms/distributions, forecast/conditioning, and the sensory information
 objective. The diagram describes the implementation at code snapshot
-`4ada271`, including its approximation boundaries.
+`46a7f7a`, including its approximation boundaries.
 
 Each blue code label is a clickable `vscode://file/...:line:column` link into
 this checkout at `/home/nicklas/Projects/AudioViz`. These local links work
@@ -32,13 +32,13 @@ are the portable index. Function names remain useful if line numbers move.
 | Gaussian conditioning and hidden-diagonal projection | [`GaussianSensoryUncertainty.condition`](../src/audioviz/readouts/gaussian_uncertainty.py#L111-L159) |
 | Gaze-conditioned scalar precision | [`GaussianSpatialPrecision.field`](../src/audioviz/readouts/spatial_precision.py#L40-L58) |
 | Normalized Gaussian measurement likelihood | [`negative_log_likelihood`](../src/audioviz/readouts/spatial_precision.py#L60-L75) |
-| Planning forecast, RGB log-determinant, and quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L179-L282) |
-| Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L235-L279) |
+| Planning forecast, RGB log-determinant, and pixel-area quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L179-L290), [`_pixel_area_weights`](../src/audioviz/readouts/gaussian_uncertainty.py#L293-L298) |
+| Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L242-L287) |
 | Greedy tie/flat-score handling and policy selection | [`has_gaze_preference`](../src/audioviz/sources/gaze.py#L6-L7), [`information_gaze`](../src/audioviz/sources/gaze.py#L10-L23), [`GazePolicy.select`](../src/audioviz/sources/gaze.py#L37-L50) |
 | Prediction, pre-capture gaze selection, and conditioning lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L175-L181), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L183-L197), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L242-L248) |
 | Gaze-mode controls, responsive preview reflow, advisory cue, hypothetical sampling, and finite-run restart | [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L196-L208), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L210-L234), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L252-L299), [`_after_frame` / `refresh_previews` / `_restart`](../src/audioviz/visualization/active_vision_experiment.py#L318-L386) |
 | Headless fixed/random/autonomous evaluation and metrics | [`GazeFrameMetrics` / `GazeRunResult`](../src/audioviz/offline/active_vision.py#L22-L38), [`run_gaze_comparison`](../src/audioviz/offline/active_vision.py#L75-L162) |
-| Dense Gaussian mathematical reference | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L47-L79) |
+| Dense Gaussian mathematical reference and quadrature ranking oracle | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L48-L80), [`test_bounded_gain_preserves_full_grid_action_ranking_after_repeated_center_observations`](../tests/readouts/test_gaussian_uncertainty.py#L154-L184) |
 
 In the diagram, `lambda` is the scalar precision field called `Pi(r)` below;
 the RGB precision matrix is `lambda * I_3`. `m` is the hidden point estimate
@@ -296,14 +296,15 @@ predictor can still be overconfident. Calibration and richer covariance
 propagation remain necessary before interpreting these scores as trustworthy
 real-camera confidence.
 
-**Mid-run stationary autonomous gaze—quadrature ranking error vs. conditional-model contraction:**
-during a live `1200`-frame (`40` s) native OpenGL run with stimulus time still
-advancing, autonomous gaze moves across early frames and then stops changing
-after frame `38` (`~1.27` s), remaining at `(0.5, 0.5)` without numerical
-divergence or stopped timers. Investigation separates two distinct mechanisms
-that must not be conflated:
+**Mid-run stationary autonomous gaze—pixel-area quadrature fix vs. conditional-model contraction:**
+in a live `1200`-frame (`40` s) native OpenGL run with stimulus time still
+advancing, the historical unweighted `preview_indices` (`48 x 64`) scorer moved
+autonomous gaze across early frames and then stopped changing after frame `38`
+(`~1.27` s), remaining at `(0.5, 0.5)` without numerical divergence or stopped
+timers. Investigation separated two distinct mechanisms that must not be
+conflated:
 
-1. **Immediate cause of the frame-38 freeze (quadrature ranking error):**
+1. **Immediate cause of the frame-38 freeze (quadrature ranking error, now fixed in `46a7f7a`):**
    because the wave canvas is treated as a known point estimate (`Var(c) = 0`),
    the uncoupled hidden transition contracts variance by `(1 - inference_rate)^2`
    each frame even on unobserved pixels, approaching the no-evidence floor
@@ -312,53 +313,60 @@ that must not be conflated:
    `120 x 160` gives higher scalar precision mass at the center (`~2225.99`)
    than at a corner (`~723.75`). However, `P_inf` and border clipping alone do
    **not** freeze gaze among interior candidates whose unclipped masses are
-   nearly tied: reusing unweighted endpoint-inclusive `preview_indices`
-   (`48 x 64`, `max_side = 64`) introduces integer-step and boundary-cell
-   quadrature bias larger than the `O(1e-3)` interior variance-depletion margin
-   (and produces a `6–8%` corner preference that locks corners at frames `30–31`
-   in equal-mass and periodic-boundary controls). Holding all current model and
-   covariance parameters unchanged (`inference_rate = 0.1`, `q = 0.01`, clipped
-   Gaussian, same weights/solver), replacing unweighted `48 x 64` scoring with a
-   pixel-area-weighted `48 x 64` prototype or exact full-grid (`120 x 160`)
-   scoring eliminates the frame-38 freeze—both continue alternating between
-   interior candidates through frame `1200`:
+   nearly tied: unweighted endpoint-inclusive `preview_indices` (`48 x 64`,
+   `max_side = 64`) introduced integer-step and boundary-cell quadrature bias
+   larger than the `O(1e-3)` interior variance-depletion margin, reversing the
+   true candidate ranking (at the identical post-240-step covariance state,
+   unweighted `48 x 64` scored center `5.727252` above left `5.723267` by
+   `-0.003985`, whereas exact full-grid `120 x 160` scored left `5.836790` above
+   center `5.834804` by `+0.001986` and pixel-area-weighted `48 x 64` scored
+   left `5.836767` above center `5.834881` by `+0.001886`). `_pixel_area_weights`
+   now weights each sampled row/column by its Voronoi cell width over
+   `[-0.5, size - 0.5]` (`e_0 = -0.5`, `e_N = size - 0.5`, midpoint interior
+   edges `e_i = 0.5 * (r_{i-1} + r_i)`, `w_{ij} = w_row[i] * w_col[j]`),
+   eliminating the frame-38 freeze across NumPy, CuPy, and OpenGL while holding
+   all model and covariance parameters unchanged:
 
    | Native OpenGL scoring quadrature (`120 x 160`, `1200` frames / `40` s) | Last gaze change | Distinct gazes in final `1` s | Final mean hidden variance | Mean forecast MSE |
    | --- | --- | --- | --- | --- |
-   | Current production unweighted `48 x 64` (`preview_indices`) | Frame `38` (`1.27` s) | `1` (locked at `(0.5, 0.5)`) | `0.00175343` | `0.00093626` |
-   | Diagnostic pixel-area-weighted `48 x 64` prototype (not yet in runtime) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093164` |
-   | Exact full-grid `120 x 160` reference (not yet in runtime) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093177` |
+   | Historical unweighted `48 x 64` baseline (pre-`46a7f7a`) | Frame `38` (`1.27` s) | `1` (locked at `(0.5, 0.5)`) | `0.00175343` | `0.00093626` |
+   | Current production pixel-area-weighted `48 x 64` (`46a7f7a`) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093164` |
+   | Exact full-grid `120 x 160` reference (`max_side = 160`) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093177` |
 
    Sub-sampled area-weighted quadrature still aliases narrow footprints or
    rapidly varying nonlinear integrands, and the resulting interior alternation
    is **not** scene-wide exploration or moving-dot pursuit; greedy one-step
    information-seeking gaze is not globally guaranteed to keep moving across all
    parameter regimes.
-2. **Deeper sidecar / solver-parameter inconsistency:** `inference_rate` (`alpha`)
-   is reused both as the inner gradient-descent step size in `infer_joint` and
-   as the per-frame covariance contraction factor `(1 - alpha)^2`, while the
-   predictive-coding mean objective keeps fixed unit prior precision `I` on
-   `hidden - W_canvas * tanh(canvas)` rather than weighting by `(P_prior)^-1`
-   (and one frame executes a single CFL acoustic wave step `~1.3e-5` s vs.
-   `1 / 30` s stimulus `dt`). In a fixed-canvas converged-mean oracle across
-   `alpha in {0.05, 0.10, 0.20}`, the converged hidden mean is identical to
-   `1e-14` (`0.0996676844244`), whereas the sidecar posterior variance shifts
-   nearly fourfold (`0.00330819`, `0.00173870`, and `0.000923584`).
+2. **Deeper sidecar / solver-parameter inconsistency (still open):** `inference_rate`
+   (`alpha`) is reused both as the inner gradient-descent step size in
+   `infer_joint` and as the per-frame covariance contraction factor
+   `(1 - alpha)^2`, while the predictive-coding mean objective keeps fixed unit
+   prior precision `I` on `hidden - W_canvas * tanh(canvas)` rather than
+   weighting by `(P_prior)^-1` (and one frame executes a single CFL acoustic
+   wave step `~1.3e-5` s vs. `1 / 30` s stimulus `dt`). In a fixed-canvas
+   converged-mean oracle across `alpha in {0.05, 0.10, 0.20}`, the converged
+   hidden mean is identical to `1e-14` (`0.0996676844244`), whereas the sidecar
+   posterior variance shifts nearly fourfold (`0.00330819`, `0.00173870`, and
+   `0.000923584`).
 
 **Architectural rule and next-step boundary:** (1) spatial quadrature
 action-ranking error must be checked against candidate margins and a full-grid
-reference before changing the model, and (2) numerical optimizer step sizes must
-not silently define probabilistic transition dynamics—any subsequent model slice
-must explicitly choose between a memoryless static conditional prior and a
-temporal conditional model whose retention rate is decoupled from solver
-`inference_rate` and whose prior covariance is shared by both mean and
-covariance updates.
+reference (now enforced for bounded pixel-area quadrature), and (2) numerical
+optimizer step sizes must not silently define probabilistic transition
+dynamics—any subsequent model slice must explicitly choose between a memoryless
+static conditional prior and a temporal conditional model whose retention rate
+is decoupled from solver `inference_rate` and whose prior covariance is shared
+by both mean and covariance updates.
 
 Scores use a fixed `9 x 13` candidate grid and nearest-neighbor spatial
-quadrature with maximum side 64, scaled to the full pixel count. This is a
+quadrature with maximum side 64 weighted by represented pixel area (`w_{ij} =
+w_row[i] * w_col[j]` over `[-0.5, R - 0.5] x [-0.5, C - 0.5]`, summing to the
+full pixel count). This remains a
 coarse approximation: footprints narrower than the sample spacing may be
 missed. NumPy/CuPy keep covariance on their own backend. OpenGL updates
-covariance in GLSL and projects bounded samples through the actual decoder
+covariance in GLSL and projects bounded samples (packing row/column indices and
+pixel-area weights in the cached index buffer) through the actual decoder
 before reducing candidate scores, downloading only the small score grid.
 Scoring runs at preview cadence (at most 10 Hz), not per settling step.
 Neither stimulus truth, seeds, raw images nor error-energy statistics enter
