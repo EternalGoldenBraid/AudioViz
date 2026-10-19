@@ -50,20 +50,32 @@ For a live camera-only active-vision session in the main visualizer, run:
 python main.py --active-vision mouse
 ```
 (`mouse`, `autonomous`, or `full`; also configurable via `RIPPLE_CONFIG["active_vision"]`).
-This explicit camera-only profile skips audio device/hardware initialization,
-disables the spectrogram and pitch-helix windows and ripple audio, enables
-camera/ripple with the shared `GazeControls` bar and temporal Gaussian filter
-(advancing hidden-state time `dt` by the nominal timer interval on the first
-frame / after reset and monotonic frame-to-frame elapsed time thereafter, while
-the wave canvas remains deterministic on its separate CFL timestep), and keeps
-ordinary `python main.py` unchanged. Camera/prediction previews remain under
-**Show Predictions / 3D Scene**; no synthetic stimulus or evaluator ground truth
-is added to `main.py`.
+Add `--active-audio` (or set a positive `RIPPLE_CONFIG["active_vision"]["audio_precision"]`)
+to opt into the common-mode temporal Gaussian audio filter alongside active vision:
+```bash
+python main.py --active-vision mouse --active-audio
+```
+Without `--active-audio`, the explicit camera-only profile skips audio
+device/hardware initialization, disables the spectrogram and pitch-helix windows
+and ripple audio, and enables camera/ripple with the shared `GazeControls` panel
+(including live `sigma` / `baseline` / `peak` foveal `pg.SpinBox` controls),
+on-canvas/2D-preview gaze/fovea/advisory-IG overlay (`AttentionOverlay`), and
+temporal Gaussian filter. Passing `--active-audio` initializes audio capture and
+routes freshness-gated 16-band spectral observations through
+`GaussianAudioUncertainty` into the shared deterministic wave medium (without
+claiming physical sound localization or learned modality-specialized regions).
+The canvas toolbar provides **Controls**, **Predictions**, and **Diagnostics**
+(`BeliefDiagnosticsView`, polling bounded `10 Hz` host snapshots of hidden
+mean/variance and linearized sensory signal covariance `J P J^T` without
+observation noise, plus prospective visual/audio EIG). Failed camera opens or
+reads latch cleanly without per-frame hardware retry loops until **Camera
+Frame** is toggled off and on. Ordinary `python main.py` remains unchanged.
 
 For the deterministic synthetic circular-dot stimulus, conditional Gaussian
-information-gain heatmap, mouse/autonomous/full-canvas gaze modes, and headless
-policy comparison, see [the active-vision experiment](docs/active-vision-experiment.md) and
-[the editable predictive-uncertainty mathematics diagram](docs/predictive-uncertainty-math.drawio).
+information-gain heatmap, mouse/autonomous/full-canvas gaze modes, common-mode
+audio filter equations, and headless policy comparison, see
+[the active-vision and audio uncertainty documentation](docs/active-vision-experiment.md)
+and [the editable four-page predictive-uncertainty mathematics diagram](docs/predictive-uncertainty-math.drawio).
 Both run on OpenGL, NumPy, or CuPy without a physical camera or microphone.
 
 For live streaming, the first run prompts for audio devices and stores the

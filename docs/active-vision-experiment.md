@@ -10,10 +10,11 @@ circular-motion predictor, or a physical-camera navigation policy.
 ## Mathematics diagram and source map
 
 Open [the editable mathematics diagram](predictive-uncertainty-math.drawio)
-in the VS Code draw.io extension or draw.io desktop. Its three pages cover
-terms/distributions, forecast/conditioning, and the sensory information
-objective. The diagram describes the implementation at code snapshot
-`1b15206`, including its approximation boundaries.
+in the VS Code draw.io extension or draw.io desktop. Its four pages cover
+terms/distributions, visual forecast/conditioning, the sensory information
+objective, and the common-mode temporal Gaussian audio filter over a shared
+latent wave medium. The diagram describes the implementation at code snapshot
+`af669c2`, including its approximation boundaries.
 
 Each blue code label is a clickable `vscode://file/...:line:column` link into
 this checkout at `/home/nicklas/Projects/AudioViz`. These local links work
@@ -24,20 +25,22 @@ are the portable index. Function names remain useful if line numbers move.
 | Mathematical responsibility | Implementation |
 | --- | --- |
 | Known canvas projection & ordinary PC mean prediction (when Gaussian filter is off) | [`PredictiveCodingRGBReadout.predict`](../src/audioviz/readouts/predictive_coding.py#L139-L145), [`OpenGLPredictiveModel._advance`](../src/audioviz/readouts/opengl_predictive.py#L271-L299) |
-| Predicted sensory mean | [`_capture_prediction`](../src/audioviz/readouts/predictive_coding.py#L147-L157), [`_predict_observation`](../src/audioviz/readouts/predictive_coding.py#L334-L335) |
-| Temporal Gaussian initialization, assumptions, and exact OU transition | [`GaussianSensoryUncertainty.__init__`](../src/audioviz/readouts/gaussian_uncertainty.py#L22-L59), [`validate_config`](../src/audioviz/readouts/gaussian_uncertainty.py#L62-L64), [`_transition`](../src/audioviz/readouts/gaussian_uncertainty.py#L66-L76) |
-| Shared OU hidden-mean / covariance forecast and frozen pre-evidence mean | [`GaussianSensoryUncertainty.predict`](../src/audioviz/readouts/gaussian_uncertainty.py#L97-L138) |
-| Decoder Jacobian and RGB covariance components | [`_jacobian` / `_components`](../src/audioviz/readouts/gaussian_uncertainty.py#L140-L148) |
-| Joint frozen-affine Gaussian conditioning, hidden-diagonal projection, and deterministic canvas feedback | [`GaussianSensoryUncertainty.condition`](../src/audioviz/readouts/gaussian_uncertainty.py#L150-L210), [`_condition_native`](../src/audioviz/readouts/gaussian_uncertainty.py#L212-L284), [`_finish_inference`](../src/audioviz/readouts/predictive_coding.py#L184-L269), [`_diagnostics`](../src/audioviz/readouts/opengl_predictive.py#L561-L604) |
-| Gaze-conditioned scalar precision | [`GaussianSpatialPrecision.field`](../src/audioviz/readouts/spatial_precision.py#L40-L58) |
+| Predicted sensory mean | [`_capture_prediction`](../src/audioviz/readouts/predictive_coding.py#L147-L156), [`_predict_observation`](../src/audioviz/readouts/predictive_coding.py#L333-L334) |
+| Temporal Gaussian initialization, assumptions, and exact OU transition | [`GaussianSensoryUncertainty.__init__`](../src/audioviz/readouts/gaussian_uncertainty.py#L33-L70), [`validate_config`](../src/audioviz/readouts/gaussian_uncertainty.py#L73-L75), [`_transition`](../src/audioviz/readouts/gaussian_uncertainty.py#L77-L87) |
+| Shared OU hidden-mean / covariance forecast and frozen pre-evidence mean | [`GaussianSensoryUncertainty.predict`](../src/audioviz/readouts/gaussian_uncertainty.py#L108-L149) |
+| Decoder Jacobian and RGB covariance components | [`_jacobian` / `_components`](../src/audioviz/readouts/gaussian_uncertainty.py#L151-L159) |
+| Joint frozen-affine Gaussian conditioning, hidden-diagonal projection, and deterministic canvas feedback | [`GaussianSensoryUncertainty.condition`](../src/audioviz/readouts/gaussian_uncertainty.py#L161-L221), [`_condition_native`](../src/audioviz/readouts/gaussian_uncertainty.py#L223-L297), [`_finish_inference`](../src/audioviz/readouts/predictive_coding.py#L184-L269), [`_diagnostics`](../src/audioviz/readouts/opengl_predictive.py#L561-L613) |
+| Gaze-conditioned scalar precision | [`GaussianSpatialPrecision.field`](../src/audioviz/readouts/spatial_precision.py#L46-L58) |
 | Normalized Gaussian measurement likelihood | [`negative_log_likelihood`](../src/audioviz/readouts/spatial_precision.py#L60-L75) |
-| Planning forecast, RGB log-determinant, and pixel-area quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L309-L419), [`_pixel_area_weights`](../src/audioviz/readouts/gaussian_uncertainty.py#L422-L427) |
-| Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L364-L414) |
-| Greedy tie/flat-score handling and policy selection | [`ActiveVisionConfig`](../src/audioviz/sources/gaze.py#L11-L20), [`has_gaze_preference`](../src/audioviz/sources/gaze.py#L23-L24), [`information_gaze`](../src/audioviz/sources/gaze.py#L27-L40), [`GazePolicy.select`](../src/audioviz/sources/gaze.py#L54-L67) |
-| Opt-in temporal Gaussian wiring, pre-capture gaze selection, and conditioning lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L175-L184), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L186-L200), [`enable_visual_uncertainty`](../src/audioviz/sources/orchestrator.py#L202-L221), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L250-L261) |
-| Shared gaze controls, live main-visualizer integration, responsive preview reflow, advisory cue, and finite-run restart | [`build_ripple_visualizer_config`](../main.py#L188-L277), [`main`](../main.py#L388-L485), [`GazeControls`](../src/audioviz/ui/gaze_controls.py#L6-L77), [`RippleWaveVisualizer._advance_canvas`](../src/audioviz/visualization/ripple_wave_visualizer.py#L644-L701), [`_capture_scene_sources`](../src/audioviz/visualization/ripple_wave_visualizer.py#L703-L755), [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L164-L176), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L178-L192), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L210-L257), [`_after_frame` / `refresh_previews` / `_restart`](../src/audioviz/visualization/active_vision_experiment.py#L276-L344), [`main`](../src/audioviz/visualization/active_vision_experiment.py#L353-L389) |
+| Planning forecast, RGB log-determinant, and pixel-area quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L322-L432), [`_pixel_area_weights`](../src/audioviz/readouts/gaussian_uncertainty.py#L491-L496) |
+| Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L377-L427) |
+| Freshness-gated 16-band audio observation and common-mode temporal Gaussian audio filter | [`AudioRippleSource.observation`](../src/audioviz/sources/audio.py#L80-L93), [`spectral_observation`](../src/audioviz/utils/audio_features.py#L9-L36), [`GaussianAudioUncertainty.predict`](../src/audioviz/readouts/gaussian_audio_uncertainty.py#L131-L189), [`_pooled_jacobian` / `_solve_common_mode`](../src/audioviz/readouts/gaussian_audio_uncertainty.py#L191-L209), [`condition` / `_condition_native`](../src/audioviz/readouts/gaussian_audio_uncertainty.py#L211-L360), [`expected_information_gain`](../src/audioviz/readouts/gaussian_audio_uncertainty.py#L362-L430) |
+| Bounded host belief snapshots (`VisualBeliefSnapshot` / `AudioBeliefSnapshot`) and live diagnostics view | [`VisualBeliefSnapshot` / `GaussianSensoryUncertainty.belief_snapshot`](../src/audioviz/readouts/gaussian_uncertainty.py#L15-L22), [`AudioBeliefSnapshot` / `GaussianAudioUncertainty.belief_snapshot`](../src/audioviz/readouts/gaussian_audio_uncertainty.py#L432-L477), [`BeliefDiagnosticsView`](../src/audioviz/visualization/belief_diagnostics_view.py#L22-L229) |
+| Greedy tie/flat-score handling and policy selection | [`ActiveVisionConfig`](../src/audioviz/sources/gaze.py#L11-L30), [`has_gaze_preference`](../src/audioviz/sources/gaze.py#L33-L34), [`information_gaze`](../src/audioviz/sources/gaze.py#L37-L50), [`GazePolicy.select`](../src/audioviz/sources/gaze.py#L64-L77) |
+| Opt-in temporal Gaussian wiring, pre-capture gaze selection, and synchronous dual-branch conditioning | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L177-L192), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L194-L208), [`enable_visual_uncertainty`](../src/audioviz/sources/orchestrator.py#L210-L240), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L269-L310) |
+| Shared gaze controls, live main-visualizer integration, attention overlay, responsive preview reflow, advisory cue, and finite-run restart | [`build_ripple_visualizer_config`](../main.py#L189-L280), [`main`](../main.py#L391-L505), [`GazeControls`](../src/audioviz/ui/gaze_controls.py#L8-L102), [`AttentionOverlay`](../src/audioviz/visualization/attention_overlay.py#L29-L119), [`RippleWaveVisualizer._advance_canvas`](../src/audioviz/visualization/ripple_wave_visualizer.py#L805-L868), [`_capture_scene_sources`](../src/audioviz/visualization/ripple_wave_visualizer.py#L870-L922), [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L164-L176), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L178-L192), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L210-L257), [`_after_frame` / `refresh_previews` / `_restart`](../src/audioviz/visualization/active_vision_experiment.py#L276-L344), [`main`](../src/audioviz/visualization/active_vision_experiment.py#L353-L389) |
 | Headless fixed/random/autonomous evaluation and metrics | [`GazeFrameMetrics` / `GazeRunResult`](../src/audioviz/offline/active_vision.py#L22-L38), [`run_gaze_comparison`](../src/audioviz/offline/active_vision.py#L75-L164), [`main`](../src/audioviz/offline/active_vision.py#L167-L226) |
-| Dense/scalar affine references, OU partition invariance, native parity, and quadrature ranking oracle | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L51-L104), [`test_bounded_gain_preserves_full_grid_action_ranking_after_repeated_center_observations`](../tests/readouts/test_gaussian_uncertainty.py#L181-L212), [`test_temporal_posterior_and_scores_match_scalar_affine_oracle_independently_of_solver`](../tests/readouts/test_gaussian_uncertainty.py#L216-L279), [`test_temporal_mean_and_covariance_match_exact_ou_independently_of_step_partition`](../tests/readouts/test_gaussian_long_run.py#L10-L38), [`test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_grid`](../tests/readouts/test_opengl_predictive.py#L219-L292) |
+| Dense/scalar affine references, common-mode low-rank audio oracle, OU partition invariance, native parity, and quadrature ranking oracle | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L54-L107), [`test_bounded_gain_preserves_full_grid_action_ranking_after_repeated_center_observations`](../tests/readouts/test_gaussian_uncertainty.py#L184-L215), [`test_temporal_posterior_and_scores_match_scalar_affine_oracle_independently_of_solver`](../tests/readouts/test_gaussian_uncertainty.py#L219-L282), [`test_common_mode_audio_matches_dense_low_rank_posterior_and_replication_invariance`](../tests/readouts/test_gaussian_uncertainty.py#L337-L447), [`test_temporal_mean_and_covariance_match_exact_ou_independently_of_step_partition`](../tests/readouts/test_gaussian_long_run.py#L10-L38), [`test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_grid`](../tests/readouts/test_opengl_predictive.py#L219-L292), [`test_shader_audio_uncertainty_matches_reference_and_preserves_pre_evidence_canvas`](../tests/readouts/test_opengl_predictive.py#L327-L399) |
 
 In the diagram, `lambda` is the scalar precision field called `Pi(r)` below;
 the RGB precision matrix is `lambda * I_3`. `m` is the hidden point estimate
@@ -120,48 +123,78 @@ of wall-clock rendering speed. Display FPS therefore need not equal stimulus
 FPS. Parameters are experimental settings, not calibrated camera-noise
 estimates.
 
-### Live camera-only mode in `main.py`
+### Live camera-only and active-audio modes in `main.py`
 
 ```bash
 python main.py --active-vision mouse
+python main.py --active-vision mouse --active-audio
 ```
 
 Passing `--active-vision {mouse,autonomous,full}` (or enabling
 `RIPPLE_CONFIG["active_vision"]` in `main.py`, disabled by default with knobs
 `mode`, `gaze`, `sigma`, `baseline`, `peak`, `initial_variance`,
-`process_variance`, and `memory_time_constant`) launches an explicit
-camera-only session in `RippleWaveVisualizer` using the same shared
-`GazeControls` bar and `GaussianSensoryUncertainty` filter:
+`process_variance`, `memory_time_constant`, and optional `audio_precision`)
+launches a live temporal-Gaussian session in `RippleWaveVisualizer` using the
+shared `GazeControls` widget and `GaussianSensoryUncertainty` filter:
 
-- Skips audio hardware/device initialization (`_create_audio_processor` is not
+- **Default camera-only profile (`--active-vision` without `--active-audio`, `audio_precision=None`):**
+  skips audio hardware/device initialization (`_create_audio_processor` is not
   called), disables the spectrogram and pitch-helix windows and ripple audio,
   and enables camera and ripple while preserving the configured backend
   (`numpy`, `gpu`, or `opengl`) and other field/model settings. Ordinary
-  `python main.py` remains unchanged.
-- Enforces the uncoupled visual-only model contract: rejects an audio
-  `processor` or ripple audio drive, pose-medium coupling (both at startup and
-  by disabling/guarding the CPU pose toggle), weight learning, cross-modal
-  coupling, or disabled camera prediction-error inference.
-- **Mouse gaze** maps mouse movement over the main wave image to normalized
-  `[0, 1]^2` gaze coordinates (ignoring surrounding viewport margins);
-  **Autonomous gaze** selects greedy `argmax_a IG(a)` before camera capture;
-  **Full canvas** applies uniform unit precision (`Pi(r) = 1`); turning
-  **Observe** off holds policy gaze and propagates the OU belief without
-  conditioning.
-- Retains camera/prediction inspection under **Show Predictions / 3D Scene**
-  (omitting the absent categorical `stream_state` factor so both
-  `stream_state` and `stream_state_prediction` are `None` across all three
-  popup layouts); no synthetic dot stimulus, ground-truth preview, or offline
-  evaluator is added to `main.py`.
-- Advances the live hidden-state filter timestep `dt` by the nominal timer
-  interval (`timer.interval() / 1000` s) on the first frame and immediately
-  after reset, and by monotonic frame-to-frame elapsed time
-  (`time.monotonic()`) at each subsequent prediction step (`predict_visual(dt=elapsed)`),
-  supplying the identical `dt` to autonomous gaze planning and the OU forecast.
-  The deterministic synthetic experiment continues to use fixed
-  `dt = 1 / stimulus.frame_rate`, and the wave surface continues to step on its
-  separate deterministic CFL timestep. This live mode makes no moving-target
-  pursuit, noise-calibration, or real-time 1080p performance claim.
+  `python main.py` remains unchanged. Enforces the uncoupled visual-only model
+  contract: rejects an audio `processor` or ripple audio drive unless
+  `audio_precision` is explicitly configured, and rejects pose-medium coupling
+  (both at startup and by disabling/guarding the CPU pose toggle), weight
+  learning, cross-modal hidden coupling, or disabled camera prediction-error
+  inference.
+- **Opt-in common-mode audio profile (`--active-vision ... --active-audio` or `audio_precision` set to a positive finite float):**
+  initializes the audio processor and routes it to `RippleWaveVisualizer`
+  alongside `GaussianAudioUncertainty` (default `audio_precision = 1.0` when
+  `--active-audio` is passed). **Observe vision** in `GazeControls` and the
+  **Audio** source toggle remain independent gates.
+- **Interactive gaze, foveal profile, and overlays:** `GazeControls` is hosted
+  inside the **Controls** panel (preserving widget state when closing/reopening)
+  and exposes live `pg.SpinBox` controls for foveal width (`sigma`), peripheral
+  baseline (`baseline`), and foveal increment (`peak`). Mouse movement over the
+  main wave canvas or the 2D prediction/camera comparison images maps to
+  normalized `[0, 1]^2` gaze coordinates (ignoring surrounding viewport
+  margins). A mouse-transparent `AttentionOverlay` draws the current gaze cross,
+  the `1-sigma` foveal outline (one physical fovea, even when the EIG surface
+  has multiple local maxima), and an image-space advisory arrow toward the
+  highest-IG candidate (suppressed when all candidates tie/are flat, when the
+  current gaze is already among the near-maximizers, or when camera capture is
+  unavailable). This arrow is an image-space uncertainty-reduction cue, not
+  calibrated eye tracking, action probabilities, or a physical head-pose/motor
+  command.
+- **Camera failure latching:** if camera open or frame read fails,
+  `CameraFrameSource` logs once, releases the failed handle, and latches into a
+  no-evidence state without retrying hardware opens on every frame. The filter
+  continues its OU forecast (`delta_m = 0`, `delta_canvas = 0`), and the UI
+  prompts to toggle **Camera Frame** off and on to retry.
+- **Toolbar and live numerical diagnostics (`BeliefDiagnosticsView`):** the
+  canvas toolbar provides **Controls**, **Predictions**, and **Diagnostics**
+  plus a compact mode/status footer. While **Diagnostics** is visible, it polls
+  bounded `10 Hz` host snapshots (`VisualBeliefSnapshot` and
+  `AudioBeliefSnapshot` via `belief_snapshot()`) and prospective `10 Hz` visual
+  / scalar audio EIG scores (evaluated on the current stored posterior with held
+  `engine.get_prior()` and last `dt`, labeled as **global sound potential EIG**
+  to distinguish counterfactual information gain while the audio source is off),
+  displaying the model-gaze EIG surface (scores in nats, not probabilities),
+  Gaussian marginal mean/std/variance, stored diagonal hidden covariance, and
+  linearized sensory signal covariance `V = J P J^T` (**excluding** observation
+  noise `R`), along with exact-pixel and `forecast`/`posterior` stage metadata.
+- **Clock and scope boundaries:** advances the live hidden-state filter timestep
+  `dt` by the nominal timer interval (`timer.interval() / 1000` s) on the first
+  frame and immediately after reset, and by monotonic frame-to-frame elapsed
+  time (`time.monotonic()`) at each subsequent prediction step
+  (`predict_visual(dt=elapsed)`), supplying the identical `dt` to autonomous
+  gaze planning and both visual and audio OU forecasts. The deterministic
+  synthetic experiment continues to use fixed `dt = 1 / stimulus.frame_rate`,
+  and the wave surface continues to step on its separate deterministic CFL
+  timestep. Fixed weights cannot learn emergent modality-specialized spatial
+  regions. This live mode makes no moving-target pursuit, noise-calibration, or
+  real-time 1080p performance claim.
 
 ## Stimulus contract
 
@@ -375,10 +408,118 @@ approximation, or a calibrated confidence interval (at default uncalibrated
 noise/model scales, the pre-evidence forecast and wave surface remain faint and
 are not claimed to provide high-contrast stimulus reconstruction). Wave-state
 uncertainty, parameter uncertainty, spatial correlations, stream-state
-likelihood information, and cross-modal/audio coupling are not propagated in
-this slice. Enabling `enable_visual_uncertainty` with an audio readout,
-cross-modal coupling, or weight learning raises an explicit `ValueError`.
-Resetting readouts also resets hidden mean and covariance.
+likelihood information, and direct cross-modal hidden couplings are not
+propagated in this slice. Enabling `enable_visual_uncertainty` with an audio
+readout requires explicit `audio_precision` opt-in (`GaussianAudioUncertainty`),
+and enabling cross-modal coupling or weight learning raises an explicit
+`ValueError`. Resetting readouts also resets hidden mean and covariance.
+
+### Common-mode temporal Gaussian audio filter and shared latent wave medium
+
+When `audio_precision` (`\lambda_a > 0`) is explicitly configured (for example via
+`python main.py --active-vision mouse --active-audio` or
+`enable_visual_uncertainty(..., audio_precision=1.0)`), `GaussianAudioUncertainty`
+maintains a temporal Gaussian belief for the audio readout alongside the visual
+filter (visualized on **Page 4** of
+[`predictive-uncertainty-math.drawio`](predictive-uncertainty-math.drawio)):
+
+1. **Freshness-gated global spectral observations:** `AudioRippleSource.observation()`
+   tracks `processor.frame_counter` (~47.5 ms STFT/mel block cadence) and returns
+   a 16-band mono magnitude spectrum `y_a in R^16` (scaled by `2 / sum(window)`
+   and `observation_gain`) **at most once per newly analyzed block**, returning
+   `None` on intermediate visual frames so the audio filter coasts via exact OU
+   propagation without re-assimilating stale spectra. Real silent blocks remain
+   valid zero-valued evidence; legacy frequency-to-position ripple forcing is
+   inactive.
+2. **Rank-`K` common-mode hidden uncertainty (why a `K x K` covariance is exact):**
+   because the audio decoder pools spatially across all `N` pixels
+   (`y_hat_a = W_v^(a) * (1 / N) * sum_r tanh(h_r^(a))`), independent per-pixel
+   priors with heterogeneous slopes `1 - tanh^2(m_r^(a)-)` would not preserve
+   homogeneous per-pixel posterior variances and would induce dense all-pixel
+   correlations. Instead, `GaussianAudioUncertainty` explicitly models a
+   **common-mode latent perturbation** shared across all pixels on top of the
+   spatially varying OU mean field:
+
+   ```text
+   h_{r,t}^(a) = m_{r,t}^(a) + xi_t,    xi_t ~ Normal(0, P_{a,t}),    P_{a,t} = Diag(v_{a,t}) in R^{K x K}
+   Cov(h_r^(a), h_s^(a)) = P_a  for all pixels r, s    (full N*K x N*K covariance Sigma_a = (1_N 1_N^T) kron P_a = U P_a U^T)
+   ```
+
+   Under `U = 1_N kron I_K`, the exact linearized action of the full `16 x N*K`
+   pooled decoder Jacobian on `U` collapses to the `16 x K` common-mode
+   Jacobian `J_bar_a = J_full * U = W_v^(a) * Diag(s_bar)`, where
+   `s_bar = (1 / N) * sum_r (1 - tanh(m_r^(a)-)^2) in R^K` is the spatial-mean
+   slope vector, and the exact `16 x 16` spectral signal covariance is
+   `V_a^- = J_bar_a * P_a^- * J_bar_a^T`.
+3. **Division-free `K x K` Woodbury conditioning and resolution invariance:**
+   factoring `P_a^- = Diag(sqrt(v_a^-))^2` with
+   `A = J_bar_a * Diag(sqrt(v_a^-)) in R^{16 x K}` gives the division-free
+   Woodbury update valid even when `v_a^-` contains zeros:
+
+   ```text
+   M_a = I_K + lambda_a * A^T * A  in R^{K x K}
+   C_a = Diag(sqrt(v_a^-)) * inverse(M_a) * Diag(sqrt(v_a^-))
+   delta_m_a = lambda_a * C_a * J_bar_a^T * (y_a - y_hat_a^-)  in R^K
+   m_r^(a)+ = m_r^(a)- + delta_m_a    (uniform common-mode shift across all pixels r)
+   v_a^+ = diag(C_a),    P_a^+ = Diag(v_a^+)
+   IG_a = 0.5 * ln det(I_16 + lambda_a * V_a^-) = 0.5 * ln det(M_a)
+   ```
+
+   Because `s_bar` and `y_hat_a^-` are spatial means (`(1 / N) * sum_r`),
+   `delta_m_a`, `v_a^+`, `y_hat_a^-`, and `IG_a` are strictly invariant to image
+   resolution when a spatial state is replicated across a finer grid
+   (`test_common_mode_audio_matches_dense_low_rank_posterior_and_replication_invariance`).
+   By contrast, ordinary predictive coding (`infer_joint`) scales the pooled
+   audio state step by `N` (`1 / N` in the pooling Jacobian times `N` in the
+   total-energy convention), leaving an `O(1)` hidden step with `O(1 / N)`
+   per-pixel sensitivity so `delta_y_hat_a` scales as `O(1)`; that ordinary-PC
+   scaling is left unchanged as an existing limitation outside this Gaussian
+   slice.
+4. **Synchronous pre-evidence canvas feedback and shared latent medium:**
+   the wave canvas `c` acts as a **shared deterministic latent medium**—a
+   persistent dynamical substrate into which sensor-specific projections read
+   and write—not a literal 2D acoustic map or calibrated sound localizer. Both
+   visual and audio branches forecast from the same pre-evidence canvas `c^-`
+   and identical `dt`, and during `correct_from_observations()` both branches
+   evaluate their canvas feedback derivatives `1 - tanh(c^-)^2` on the
+   **untouched pre-evidence canvas `c^-`** before summing
+   `delta_c = delta_c^(v) + delta_c^(a)` into the wave buffers (preventing branch-order
+   bias when the native OpenGL visual kernel updates `model.canvas` in place).
+   Sharing the wave medium does not infer cross-modal posterior covariance or
+   physical sound-source locations, visual gaze selection remains purely visual
+   conditional on `c`, and fixed weights do not learn emergent
+   modality-specialized spatial regions (which would require a future learnable
+   conditional model rather than ad-hoc switch-entropy channels).
+5. **Native execution and bounded `belief_snapshot()` contract:** on OpenGL,
+   `GaussianAudioUncertainty` advances `audio_hidden` and reduces spatial mean
+   slopes on the GPU, downloading only bounded `(H,)` mean slopes, `(H,)`
+   variances, and `(16,)` spectral predictions for the tiny `K x K` host
+   Woodbury solve (not a wholly GPU-resident matrix inverse, and never a
+   full-grid CPU fallback). `GaussianSensoryUncertainty.belief_snapshot(gaze)`
+   (`VisualBeliefSnapshot`) and `GaussianAudioUncertainty.belief_snapshot()`
+   (`AudioBeliefSnapshot`) return bounded host arrays (`(H,)` hidden mean and
+   diagonal variance, `(3,)`/`(3, 3)` RGB or `(16,)`/`(16, 16)` spectral mean and
+   linearized signal covariance `V = J P J^T` **excluding** observation noise
+   `R = lambda^-1 I`, plus `stage in {"forecast", "posterior"}` and pixel/gaze or
+   precision metadata), gathering only the single nearest-gaze pixel `(2 * H,)`
+   on OpenGL.
+
+**Future direction—shared learned graph vs. current two-branch baseline:**
+in a prospective shared learned graph, designated camera and audio sensory
+nodes would be clamped only while their modality is actually observed—observation
+availability selects which evidence constraints are active, whereas a missing or
+unobserved modality is unclamped (not a zero-valued image or silent spectrum)—and
+free internal nodes could specialize from temporal and cross-modal correlations.
+The current architecture (fixed weights in temporal Gaussian mode, separate
+visual and audio hidden branches coupled only through deterministic feedback to
+the shared wave canvas) does **not** implement that model. Moreover, a dense
+all-to-all graph over raw 1080p pixels would scale quadratically, and neither
+dense connectivity nor modality-switch entropy (`<= 2` bits for two independent
+binary gates, or `<= 1` bit when exactly one modality is active) is sufficient
+by itself to force spatially segregated modality regions without an explicit
+inductive bias or structural objective. Defining a bounded sensory-feature /
+patch-plus-latent graph and its learning objective remains an open design step
+outside this baseline.
 
 This is not an independent coverage tracker: changing the decoder or hidden
 mean changes the projected uncertainty. However, a wrong but saturated
