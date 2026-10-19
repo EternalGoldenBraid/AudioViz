@@ -317,10 +317,11 @@ conflated:
    `max_side = 64`) introduced integer-step and boundary-cell quadrature bias
    larger than the `O(1e-3)` interior variance-depletion margin, reversing the
    true candidate ranking (at the identical post-240-step covariance state,
-   unweighted `48 x 64` scored center `5.727252` above left `5.723267` by
-   `-0.003985`, whereas exact full-grid `120 x 160` scored left `5.836790` above
-   center `5.834804` by `+0.001986` and pixel-area-weighted `48 x 64` scored
-   left `5.836767` above center `5.834881` by `+0.001886`). `_pixel_area_weights`
+   unweighted `48 x 64` scored center `5.727252` vs. left `5.723267` with a
+   left-minus-center margin of `-0.003985`, whereas exact full-grid `120 x 160`
+   scored left `5.836790` vs. center `5.834804` with a left-minus-center margin
+   of `+0.001986` and pixel-area-weighted `48 x 64` scored left `5.836767` vs.
+   center `5.834881` with a left-minus-center margin of `+0.001886`). `_pixel_area_weights`
    now weights each sampled row/column by its Voronoi cell width over
    `[-0.5, size - 0.5]` (`e_0 = -0.5`, `e_N = size - 0.5`, midpoint interior
    edges `e_i = 0.5 * (r_{i-1} + r_i)`, `w_{ij} = w_row[i] * w_col[j]`),
@@ -352,7 +353,7 @@ conflated:
 
 **Architectural rule and next-step boundary:** (1) spatial quadrature
 action-ranking error must be checked against candidate margins and a full-grid
-reference (now enforced for bounded pixel-area quadrature), and (2) numerical
+reference (covered by a full-grid ranking regression), and (2) numerical
 optimizer step sizes must not silently define probabilistic transition
 dynamics—any subsequent model slice must explicitly choose between a memoryless
 static conditional prior and a temporal conditional model whose retention rate
@@ -368,7 +369,8 @@ missed. NumPy/CuPy keep covariance on their own backend. OpenGL updates
 covariance in GLSL and projects bounded samples (packing row/column indices and
 pixel-area weights in the cached index buffer) through the actual decoder
 before reducing candidate scores, downloading only the small score grid.
-Scoring runs at preview cadence (at most 10 Hz), not per settling step.
+Advisory scoring runs at preview cadence (at most 10 Hz); autonomous policy
+scoring runs each model step before capture (neither runs per settling step).
 Neither stimulus truth, seeds, raw images nor error-energy statistics enter
 the information objective directly; observed information reaches it through
 the model's inferred beliefs. The ground-truth overlay is evaluator-only.
