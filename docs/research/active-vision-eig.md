@@ -85,3 +85,34 @@ Each workstream should be a separate issue or implementation branch, with tests 
 ## Engineering principles
 
 Minimal, modular, efficient, parsimonious and maintainable. Clear interfaces, reproducible configs, independent unit tests, and incremental experiments. Keep research claims separate from empirical observations and implementation choices.
+
+## First test-driven experiment — circular moving dot
+
+This is the **first implementation target**. Before writing new components, audit the existing repository for synthetic video sources, moving-dot generators, camera-input adapters, predictive dynamics, and test utilities; reuse existing capabilities where practical. Do not assume these features are absent or already present without checking.
+
+### Reproducible stimulus
+
+- Generate a deterministic, seed-controlled sequence of frames showing a single dot moving along a circular trajectory, with configurable center, radius, angular velocity, phase, dot size, frame rate, and duration.
+- Add an optional stochastic perturbation: a Brownian/random-walk offset around the nominal circular path. Define its increments and scale explicitly; use a fixed seed in tests. Include a zero-noise control and multiple noise levels.
+- Make the sequence available through the existing synthetic-frame interface if possible; optionally export a video file for visual inspection. Tests should consume raw frames and known ground-truth positions directly rather than relying on video codec decoding.
+- Keep the generator independent of attention and inference, so ground truth cannot leak into the agent's observation or policy.
+
+### Behavioral objective
+
+An agent sees only its attention-conditioned observations and predicts where the dot will appear. It selects *where and when* to look to reduce uncertainty about the sensory trajectory. The goal is **epistemic value**, not tracking error or reward for keeping the dot centered. A confident circular-motion hypothesis should permit intermittent checks, while uncertain dynamics or perturbations should motivate renewed sampling. Treat this as a hypothesis to test, not guaranteed behavior.
+
+For the simplest sensory-space formulation, the uncertain quantity may be the dot's future sensory position or the future image, rather than a new learned semantic latent state. The precise belief representation and EIG estimator remain design questions; do not label a prediction-error heuristic as EIG.
+
+### Test-first acceptance criteria
+
+1. **Stimulus correctness:** with zero noise, generated positions match the analytic circle within tolerance; frames and positions are reproducible for the same seed/configuration.
+2. **Perturbation correctness:** zero perturbation yields the exact baseline; nonzero seeded Brownian increments follow the documented process; trajectories stay within the defined image-handling policy (e.g., clipping or allowing off-frame positions).
+3. **Observation isolation:** the agent receives only the attention-conditioned frame; full-frame truth and exact dot coordinates are used only by the harness for evaluation.
+4. **Prediction test:** on an analytically known circular trajectory, compare predicted future positions against ground truth over multiple horizons, including without a new observation.
+5. **Attention baselines:** compare fixed fovea, random sampling, and error-greedy sampling against the proposed epistemic policy under the same observation budget.
+6. **Hypothesis tests:** measure whether the policy samples less often when the trajectory becomes predictable and increases sampling when dynamics become uncertain or change. Do not hard-code these outcomes into tests; evaluate them empirically.
+7. **Metrics:** log sampling frequency, selected gaze locations, uncertainty calibration or declared proxy, prediction error, and robustness across noise levels and random seeds.
+
+### Agent handoff
+
+Start with a repository audit and a minimal test plan. Implement the deterministic synthetic stimulus and its tests first, then add stochastic perturbations and tests. Only then integrate the attention-conditioned observation path and an explicitly defined information-seeking policy. Keep the generator, observation operator, predictive model, and policy independently testable. Do not alter the production camera pipeline unnecessarily.
