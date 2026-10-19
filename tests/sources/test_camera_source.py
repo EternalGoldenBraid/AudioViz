@@ -79,6 +79,66 @@ def test_camera_frame_source_accepts_explicit_device_path():
     assert fake_cv2.requested_device == "/dev/video0"
 
 
+def test_camera_failure_latches_until_explicit_retry_and_recovers(monkeypatch):
+    from types import SimpleNamespace
+    from audioviz.sources import camera as module
+
+    warnings = []
+    monkeypatch.setattr(module.logger, "warning", warnings.append)
+
+    class Capture:
+        def __init__(self, *, opened=True):
+            self.opened = opened
+            self.reads = 0
+            self.released = False
+
+        def isOpened(self):
+            return self.opened
+
+        def read(self):
+            self.reads += 1
+            return (True, np.full((2, 3, 3), 255, dtype=np.uint8)) if self.reads == 1 else (False, None)
+
+        def release(self):
+            self.released = True
+
+    failed_open, disconnected, recovered = Capture(opened=False), Capture(), Capture()
+    available = iter((failed_open, disconnected, recovered))
+    opened = []
+
+    def open_capture(index):
+        opened.append(index)
+        return next(available)
+
+    source = CameraFrameSource(
+        resolution=(2, 3), camera_index="/dev/video2", enabled=True,
+        cv2_loader=lambda: SimpleNamespace(VideoCapture=open_capture),
+    )
+    assert source.excitation() is None
+    assert failed_open.released and "cannot open" in source.status
+    for _ in range(5):
+        assert source.excitation() is None
+    assert opened == ["/dev/video2"] and len(warnings) == 1
+
+    source.set_enabled(False)
+    assert source.status == "disabled"
+    source.set_enabled(True)
+    np.testing.assert_array_equal(source.excitation(), np.ones((2, 3, 3)))
+    assert source.status == "receiving"
+    assert source.excitation() is None
+    assert disconnected.released and "off/on to retry" in source.status
+    for _ in range(5):
+        assert source.excitation() is None
+    assert disconnected.reads == 2 and len(warnings) == 2
+
+    source.set_enabled(False)
+    source.set_enabled(True)
+    np.testing.assert_array_equal(source.excitation(), np.ones((2, 3, 3)))
+    assert recovered.reads == 1 and source.error is None
+    source.close()
+    assert recovered.released
+
+
 @pytest.mark.parametrize("kind", ("rgb", "rgba", "gray", "float"))
 def test_gpu_camera_preprocessing_matches_cpu(cupy_backend, kind):
     cp = cupy_backend

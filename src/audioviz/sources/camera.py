@@ -23,6 +23,10 @@ def load_cv2():
     return cv2
 
 
+class CameraUnavailableError(RuntimeError):
+    pass
+
+
 class CameraFrameSource:
     scene_mapping = SourceSceneMapping("camera", "Camera", "rgb", "sensory")
 
@@ -46,10 +50,21 @@ class CameraFrameSource:
         self.cv2_loader = cv2_loader
         self.backend = backend
         self.frame_mapper = frame_mapper
+        self.error: str | None = None
+        self._has_frame = False
+
+    @property
+    def status(self) -> str:
+        if not self.enabled:
+            return "disabled"
+        if self.error is not None:
+            return self.error
+        return "receiving" if self._has_frame else "waiting for first frame"
 
     def set_enabled(self, enabled: bool) -> None:
         if enabled:
-            self.ensure_open()
+            if self.error is not None:
+                self.close()
         self.enabled = bool(enabled)
 
     def set_gain(self, gain: float) -> None:
@@ -64,18 +79,36 @@ class CameraFrameSource:
         if not capture.isOpened():
             capture.release()
             self.capture = None
-            raise RuntimeError(f"Failed to open camera source index {self.camera_index}")
+            self.error = (
+                f"Camera {self.camera_index}: cannot open device. "
+                "Toggle Camera Frame off/on to retry."
+            )
+            raise CameraUnavailableError(f"Failed to open camera source index {self.camera_index}")
         self.capture = capture
+        self.error = None
 
     def excitation(self) -> np.ndarray | None:
-        if not self.enabled:
+        if not self.enabled or self.error is not None:
             return None
-        self.ensure_open()
+        try:
+            self.ensure_open()
+        except CameraUnavailableError:
+            logger.warning(self.error)
+            return None
         if self.capture is None:
             return None
         ok, frame = self.capture.read()
         if not ok or frame is None:
+            self.error = (
+                f"Camera {self.camera_index}: no frame. "
+                "Toggle Camera Frame off/on to retry."
+            )
+            self.capture.release()
+            self.capture = None
+            self._has_frame = False
+            logger.warning(self.error)
             return None
+        self._has_frame = True
         if self.frame_mapper is not None:
             return self.frame_mapper(frame, gain=self.gain)
         return self.frame_to_excitation_grid(
@@ -89,6 +122,8 @@ class CameraFrameSource:
         if self.capture is not None:
             self.capture.release()
             self.capture = None
+        self.error = None
+        self._has_frame = False
 
     @staticmethod
     def frame_to_excitation_grid(
