@@ -13,7 +13,7 @@ Open [the editable mathematics diagram](predictive-uncertainty-math.drawio)
 in the VS Code draw.io extension or draw.io desktop. Its three pages cover
 terms/distributions, forecast/conditioning, and the sensory information
 objective. The diagram describes the implementation at code snapshot
-`46a7f7a`, including its approximation boundaries.
+`eb35320`, including its approximation boundaries.
 
 Each blue code label is a clickable `vscode://file/...:line:column` link into
 this checkout at `/home/nicklas/Projects/AudioViz`. These local links work
@@ -23,22 +23,21 @@ are the portable index. Function names remain useful if line numbers move.
 
 | Mathematical responsibility | Implementation |
 | --- | --- |
-| Existing hidden-mean prediction | [`PredictiveCodingRGBReadout.predict`](../src/audioviz/readouts/predictive_coding.py#L139-L145) |
-| Predicted sensory mean | [`_capture_prediction`](../src/audioviz/readouts/predictive_coding.py#L147-L156), [`_predict_observation`](../src/audioviz/readouts/predictive_coding.py#L332-L333) |
-| Equivalent native mean transition | [`OpenGLPredictiveModel._advance`](../src/audioviz/readouts/opengl_predictive.py#L271-L299) |
-| Hidden covariance initialization and assumptions | [`GaussianSensoryUncertainty.__init__`](../src/audioviz/readouts/gaussian_uncertainty.py#L21-L51) |
-| Forecast covariance and freeze pre-evidence mean | [`GaussianSensoryUncertainty.predict`](../src/audioviz/readouts/gaussian_uncertainty.py#L78-L99) |
-| Decoder Jacobian and RGB covariance components | [`_jacobian` / `_components`](../src/audioviz/readouts/gaussian_uncertainty.py#L101-L109) |
-| Gaussian conditioning and hidden-diagonal projection | [`GaussianSensoryUncertainty.condition`](../src/audioviz/readouts/gaussian_uncertainty.py#L111-L159) |
+| Known canvas projection & ordinary PC mean prediction (when Gaussian filter is off) | [`PredictiveCodingRGBReadout.predict`](../src/audioviz/readouts/predictive_coding.py#L139-L145), [`OpenGLPredictiveModel._advance`](../src/audioviz/readouts/opengl_predictive.py#L271-L299) |
+| Predicted sensory mean | [`_capture_prediction`](../src/audioviz/readouts/predictive_coding.py#L147-L157), [`_predict_observation`](../src/audioviz/readouts/predictive_coding.py#L334-L335) |
+| Temporal Gaussian initialization, assumptions, and exact OU transition | [`GaussianSensoryUncertainty.__init__`](../src/audioviz/readouts/gaussian_uncertainty.py#L22-L59), [`validate_config`](../src/audioviz/readouts/gaussian_uncertainty.py#L62-L64), [`_transition`](../src/audioviz/readouts/gaussian_uncertainty.py#L66-L76) |
+| Shared OU hidden-mean / covariance forecast and frozen pre-evidence mean | [`GaussianSensoryUncertainty.predict`](../src/audioviz/readouts/gaussian_uncertainty.py#L97-L138) |
+| Decoder Jacobian and RGB covariance components | [`_jacobian` / `_components`](../src/audioviz/readouts/gaussian_uncertainty.py#L140-L148) |
+| Joint frozen-affine Gaussian conditioning, hidden-diagonal projection, and deterministic canvas feedback | [`GaussianSensoryUncertainty.condition`](../src/audioviz/readouts/gaussian_uncertainty.py#L150-L210), [`_condition_native`](../src/audioviz/readouts/gaussian_uncertainty.py#L212-L284), [`_finish_inference`](../src/audioviz/readouts/predictive_coding.py#L184-L269), [`_diagnostics`](../src/audioviz/readouts/opengl_predictive.py#L561-L604) |
 | Gaze-conditioned scalar precision | [`GaussianSpatialPrecision.field`](../src/audioviz/readouts/spatial_precision.py#L40-L58) |
 | Normalized Gaussian measurement likelihood | [`negative_log_likelihood`](../src/audioviz/readouts/spatial_precision.py#L60-L75) |
-| Planning forecast, RGB log-determinant, and pixel-area quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L179-L290), [`_pixel_area_weights`](../src/audioviz/readouts/gaussian_uncertainty.py#L293-L298) |
-| Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L242-L287) |
+| Planning forecast, RGB log-determinant, and pixel-area quadrature | [`expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L309-L419), [`_pixel_area_weights`](../src/audioviz/readouts/gaussian_uncertainty.py#L422-L427) |
+| Native moments and candidate-score reduction | [GLSL inside `expected_information_gain`](../src/audioviz/readouts/gaussian_uncertainty.py#L364-L414) |
 | Greedy tie/flat-score handling and policy selection | [`has_gaze_preference`](../src/audioviz/sources/gaze.py#L6-L7), [`information_gaze`](../src/audioviz/sources/gaze.py#L10-L23), [`GazePolicy.select`](../src/audioviz/sources/gaze.py#L37-L50) |
-| Prediction, pre-capture gaze selection, and conditioning lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L175-L181), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L183-L197), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L242-L248) |
-| Gaze-mode controls, responsive preview reflow, advisory cue, hypothetical sampling, and finite-run restart | [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L196-L208), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L210-L234), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L252-L299), [`_after_frame` / `refresh_previews` / `_restart`](../src/audioviz/visualization/active_vision_experiment.py#L318-L386) |
-| Headless fixed/random/autonomous evaluation and metrics | [`GazeFrameMetrics` / `GazeRunResult`](../src/audioviz/offline/active_vision.py#L22-L38), [`run_gaze_comparison`](../src/audioviz/offline/active_vision.py#L75-L162) |
-| Dense Gaussian mathematical reference and quadrature ranking oracle | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L48-L80), [`test_bounded_gain_preserves_full_grid_action_ranking_after_repeated_center_observations`](../tests/readouts/test_gaussian_uncertainty.py#L154-L184) |
+| Opt-in temporal Gaussian wiring, pre-capture gaze selection, and conditioning lifecycle | [`predict_visual`](../src/audioviz/sources/orchestrator.py#L175-L180), [`_select_visual_gaze`](../src/audioviz/sources/orchestrator.py#L182-L196), [`enable_visual_uncertainty`](../src/audioviz/sources/orchestrator.py#L198-L217), [`correct_from_observations`](../src/audioviz/sources/orchestrator.py#L246-L257) |
+| Gaze-mode controls, responsive preview reflow, advisory cue, hypothetical sampling, and finite-run restart | [`resizeEvent`](../src/audioviz/visualization/active_vision_experiment.py#L198-L210), [`_change_gaze_mode` / `_update_precision`](../src/audioviz/visualization/active_vision_experiment.py#L212-L236), [`_update_advisory_marker`](../src/audioviz/visualization/active_vision_experiment.py#L254-L301), [`_after_frame` / `refresh_previews` / `_restart`](../src/audioviz/visualization/active_vision_experiment.py#L320-L388), [`main`](../src/audioviz/visualization/active_vision_experiment.py#L397-L433) |
+| Headless fixed/random/autonomous evaluation and metrics | [`GazeFrameMetrics` / `GazeRunResult`](../src/audioviz/offline/active_vision.py#L22-L38), [`run_gaze_comparison`](../src/audioviz/offline/active_vision.py#L75-L164), [`main`](../src/audioviz/offline/active_vision.py#L167-L226) |
+| Dense/scalar affine references, OU partition invariance, native parity, and quadrature ranking oracle | [`test_model_transition_and_frozen_decoder_match_dense_gaussian_reference`](../tests/readouts/test_gaussian_uncertainty.py#L51-L104), [`test_bounded_gain_preserves_full_grid_action_ranking_after_repeated_center_observations`](../tests/readouts/test_gaussian_uncertainty.py#L181-L212), [`test_temporal_posterior_and_scores_match_scalar_affine_oracle_independently_of_solver`](../tests/readouts/test_gaussian_uncertainty.py#L216-L279), [`test_temporal_mean_and_covariance_match_exact_ou_independently_of_step_partition`](../tests/readouts/test_gaussian_long_run.py#L10-L38), [`test_shader_uncertainty_matches_gaussian_reference_and_downloads_only_gain_grid`](../tests/readouts/test_opengl_predictive.py#L219-L292) |
 
 In the diagram, `lambda` is the scalar precision field called `Pi(r)` below;
 the RGB precision matrix is `lambda * I_3`. `m` is the hidden point estimate
@@ -113,7 +112,8 @@ most 10 Hz and have a maximum side of 256 pixels (the committed
 ```bash
 uv run python -m audioviz.visualization.active_vision_experiment \
   --backend opengl --resolution 240 320 --fps 30 --duration 20 \
-  --brownian-scale 3 --seed 7 --sigma 0.15 --baseline 0.01 --peak 1
+  --brownian-scale 3 --seed 7 --sigma 0.15 --baseline 0.01 --peak 1 \
+  --memory-time-constant 0.333333
 ```
 
 The frame clock advances by `1 / fps` for every generated frame, independent
@@ -217,7 +217,8 @@ scoring:
   `Pi(r) = 1` assigns `R(r) = I_3` everywhere by unit-precision convention,
   not because deterministic pixels inherently have unit variance.
 - When `Observe` is off (`sample=False`), `Pi(r) = 0` everywhere (unobserved;
-  not inverted, and posterior covariance remains `P_posterior = P_prior`).
+  not inverted, and posterior mean/covariance remain `m_posterior = m_prior`,
+  `P_posterior = P_prior`).
 
 ## Advisory Gaussian belief
 
@@ -226,69 +227,114 @@ interpretation: the predicted image is its conditional mean, and observation
 covariance is `R = diag(1 / Pi)` over observed dimensions. The existing energy
 statistics are not predictive covariance.
 
-The advisory estimator adds a **model-linked, conditional Gaussian covariance
-filter**. Each pixel has a diagonal hidden-state covariance `P`, stored in
-float32 on the inference backend. Its transition is the derivative of the
-actual uncoupled prediction step:
+The experiment opts into a **conditional temporal Gaussian filter**
+(`GaussianSensoryUncertainty`) via
+`source_orchestrator.enable_visual_uncertainty(dt=1 / fps, initial_variance=1.0, process_variance=0.01, memory_time_constant=1 / 3)`.
+Ordinary predictive-coding entrypoints (`visual_uncertainty is None`) keep their
+existing multi-step `infer_joint` mean-settling behavior unchanged and incur no
+covariance-update cost. When enabled, each pixel has a hidden mean `m` (stored
+in `readout.hidden`) and diagonal hidden-state covariance `P = Diag(v)` (stored
+in float32 on the inference backend) governed by an exact Ornstein-Uhlenbeck
+(OU) transition with physical memory time constant `tau`
+(`--memory-time-constant`, default `1 / 3` stimulus seconds, completely
+independent of the predictive-coding solver `inference_rate` and
+`inference_steps`):
 
 ```text
-m_next = (1 - inference_rate) * m + inference_rate * W_canvas * tanh(canvas)
-F = (1 - inference_rate) * I
-P_prior = F * P_posterior * F^T + q * dt * I
-J = W_visual * Diag(1 - tanh(m_next)^2)
+rho = exp(-dt / tau)
+Q(dt) = 0.5 * D * tau * (1 - exp(-2 * dt / tau))
+m_prior = rho * m_posterior + (1 - rho) * W_canvas * tanh(canvas)
+P_prior = rho^2 * P_posterior + Q(dt) * I
+y_prior = W_visual * tanh(m_prior)
+J = W_visual * Diag(1 - tanh(m_prior)^2)
 V_sensory = J * P_prior * J^T
 ```
 
-The full local `3 x 3` RGB covariance is retained for information scoring;
-RGB correlations induced by the decoder are not discarded. Given an
-observation with precision `Pi`, Gaussian conditioning gives:
+The full local `3 x 3` RGB covariance `V_sensory` is retained for information
+scoring; RGB correlations induced by the decoder are not discarded. Given an
+observation `Y` with scalar precision `Pi`, one frozen-affine Extended Kalman
+Filter (EKF) update conditions **both** the hidden mean and covariance jointly,
+projects the posterior covariance onto its diagonal, and returns deterministic
+observer feedback for the next frame's known wave input:
 
 ```text
-C = P_prior - Pi * P_prior * J^T * inverse(I + Pi * V_sensory) * J * P_prior
+S = I_3 + Pi * V_sensory
+delta_m = Pi * P_prior * J^T * inverse(S) * (Y - y_prior)
+m_posterior = m_prior + delta_m
+C = P_prior - Pi * P_prior * J^T * inverse(S) * J * P_prior
 v_posterior = diag(C)
 P_posterior = Diag(v_posterior)
-IG(action) = 0.5 * sum_pixels(log(det(I + Pi(action) * V_sensory)))
+delta_canvas = canvas_rate * (1 - tanh(canvas)^2) * (W_canvas^T * delta_m)
+IG(action) = 0.5 * sum_pixels(log(det(I_3 + Pi(action) * V_sensory)))
 ```
 
-Here `q` is the scalar `process_variance`. The information-gain expression
-uses ideal conditioning of the local Gaussian **before** discarding hidden
-correlations; it is not the entropy difference of the diagonally projected
-stored beliefs. The log-determinant form also supports rank-deficient
-positive-semidefinite sensory covariance.
+Here `D` is the scalar diffusion intensity `process_variance` (default `0.01` in
+hidden-state variance per stimulus second), `tau` is `memory_time_constant`
+(default `1 / 3` s), and `initial_variance` `v_0` (default `1.0`) is configured
+independently of the stationary unobserved prior variance
+`v_inf = 0.5 * D * tau ≈ 0.001667`. Under this exact held-drive OU transition,
+multi-step unobserved propagation is invariant to how elapsed time is
+partitioned into steps `dt` (`test_gaussian_long_run.py`). For a linear
+decoder (`W_visual * h`), `(m_posterior, C)` is the exact one-step conditional
+Gaussian posterior (and for the nonlinear `W_visual * tanh(h)` decoder, it is
+the exact posterior of the frozen-affine likelihood linearized once at
+`m_prior` before current evidence), whereas the stored
+`P_posterior = Diag(diag(C))` is a diagonal projection that drops cross-channel
+hidden correlations induced by mixed `W_visual` (an identity decoder is exact
+for the diagonal entropy oracle because `C` is already diagonal there). The
+information-gain expression `0.5 * log(det(I_3 + Pi * V_sensory))` is the exact
+sensory/hidden entropy reduction under the full local posterior covariance `C`
+**before** discarding off-diagonal hidden correlations; it is generally not the
+entropy difference of the diagonally projected stored beliefs `P_posterior`.
+The log-determinant form also supports rank-deficient positive-semidefinite
+sensory covariance.
 
-Conditioning uses the decoder Jacobian frozen **before** the current evidence,
-once per observation, not once per settling iteration. Hidden cross-channel
-posterior correlations are discarded when retaining the diagonal. The next
-forecast and its sensory covariance use the current model states and actual
-decoder weights, so decoder sensitivity and saturation affect advice.
-This objective targets sensory-state information, not hidden-state entropy.
+Conditioning uses the decoder Jacobian frozen at `m_prior` once per
+observation, bypassing `infer_joint` entirely so predictive-coding
+`inference_steps` and `inference_rate` are unused (and displayed as read-only
+unused fields in the GUI when temporal Gaussian inference is active). Hidden
+cross-channel posterior correlations in `C` are discarded when retaining
+`v_posterior = diag(C)` (note that for a mixed decoder `W_visual`,
+`diag(inverse(P_prior^-1 + Pi * J^T * J))` is given by the Woodbury projection
+above, not the elementwise inverse of the precision diagonal). The canvas
+correction `delta_canvas` is deterministic observer feedback from the observed
+hidden innovation `delta_m` (zero when unobserved or `Observe` is off) for the
+subsequent known input `canvas`, not a Gaussian posterior over wave states. When
+diagnostics are enabled, the two-point `inference_energy` trajectory records the
+frozen-affine objective before and after `delta_m`, `hidden_error` stores the
+prior-whitened innovation `delta_m / sqrt(v_prior)` (`0` where `v_prior == 0`),
+`visual_error` stores the post-update linearized residual
+`(Y - y_prior) - J * delta_m`, and the categorical `stream_state` factor is
+omitted (`None`). The next forecast and its sensory covariance use the updated
+model states and actual decoder weights, so decoder sensitivity and saturation
+affect advice. This objective targets sensory-state information, not
+hidden-state entropy.
 
-`--initial-variance` defaults to `1` (identity hidden covariance);
-`--process-variance` defaults to `0.01` in hidden-state variance per stimulus
-second. Both are configured assumptions, not learned noise estimates. The
-source orchestrator advances covariance with `dt = 1 / fps` during actual
-prediction/conditioning, independently of preview rendering. Missing or
-skipped observations apply the transition and process uncertainty without
-conditioning. Variance can shrink under a contracting transition even without
-an observation. With **Observe** off, advice still evaluates the hypothetical
-next observation; the status says sampling is paused.
+`--initial-variance` (`1.0`), `--process-variance` (`0.01`), and
+`--memory-time-constant` (`1 / 3` s) are configured experimental assumptions,
+not learned or calibrated noise estimates. The source orchestrator advances
+mean and covariance with `dt = 1 / fps` during actual prediction/conditioning,
+independently of preview rendering. Missing or skipped observations (`Observe`
+off) apply the OU transition without conditioning (`delta_m = 0`,
+`delta_canvas = 0`, `m_posterior = m_prior`, `P_posterior = P_prior`). Variance
+relaxes toward `v_inf = 0.5 * D * tau` under `rho < 1` even without an
+observation. With **Observe** off, advice still evaluates the hypothetical next
+observation; the status says sampling is paused.
 
 **Scope of the approximation:** the wave canvas and fixed weights are treated
-as known point estimates. Planning holds the current canvas fixed for one
-prediction step; it does not simulate a future wave trajectory. The covariance
-filter is locally linearized around the existing model's mean estimates; the
-predictive-coding mean solver is unchanged. This is not the exact joint
-posterior of that nonlinear solver, a Hessian-based Laplace calculation, or a
-calibrated confidence interval. Wave-state uncertainty, parameter uncertainty,
-spatial correlations, stream-state likelihood information, and cross-modal
-coupling uncertainty are not propagated in this slice. Enabling learning or
-cross-modal coupling while this filter is active raises an explicit error.
-Resetting readouts also resets covariance.
-
-The experiment opts in through
-`source_orchestrator.enable_visual_uncertainty(dt=1 / fps, ...)`.
-Other application entrypoints keep their existing mean-only inference
-behavior and incur no covariance-update cost.
+as known point estimates. Advisory UI scoring holds the current corrected canvas
+fixed for one hypothetical step, whereas autonomous policy scoring in
+`predict_visual` evaluates the actual next wave prior after `engine.propagate`;
+neither simulates a multi-step future wave trajectory. This conditional filter
+is not a joint wave-plus-hidden posterior, an iterated nonlinear MAP + Laplace
+approximation, or a calibrated confidence interval (at default uncalibrated
+noise/model scales, the pre-evidence forecast and wave surface remain faint and
+are not claimed to provide high-contrast stimulus reconstruction). Wave-state
+uncertainty, parameter uncertainty, spatial correlations, stream-state
+likelihood information, and cross-modal/audio coupling are not propagated in
+this slice. Enabling `enable_visual_uncertainty` with an audio readout,
+cross-modal coupling, or weight learning raises an explicit `ValueError`.
+Resetting readouts also resets hidden mean and covariance.
 
 This is not an independent coverage tracker: changing the decoder or hidden
 mean changes the projected uncertainty. However, a wrong but saturated
@@ -297,68 +343,83 @@ propagation remain necessary before interpreting these scores as trustworthy
 real-camera confidence.
 
 **Mid-run stationary autonomous gaze—pixel-area quadrature fix vs. conditional-model contraction:**
-in a live `1200`-frame (`40` s) native OpenGL run with stimulus time still
-advancing, the historical unweighted `preview_indices` (`48 x 64`) scorer moved
-autonomous gaze across early frames and then stopped changing after frame `38`
-(`~1.27` s), remaining at `(0.5, 0.5)` without numerical divergence or stopped
-timers. Investigation separated two distinct mechanisms that must not be
-conflated:
+in a historical `1200`-frame (`40` s) native OpenGL run prior to `46a7f7a` and
+`e751ee4` with stimulus time still advancing, the unweighted `preview_indices`
+(`48 x 64`) scorer moved autonomous gaze across early frames and then stopped
+changing after frame `38` (`~1.27` s), remaining at `(0.5, 0.5)` without
+numerical divergence or stopped timers. Investigation separated two distinct
+mechanisms that were addressed in two sequential slices:
 
-1. **Immediate cause of the frame-38 freeze (quadrature ranking error, now fixed in `46a7f7a`):**
+1. **Immediate cause of the historical frame-38 freeze (quadrature ranking error, fixed in `46a7f7a`):**
    because the wave canvas is treated as a known point estimate (`Var(c) = 0`),
-   the uncoupled hidden transition contracts variance by `(1 - inference_rate)^2`
-   each frame even on unobserved pixels, approaching the no-evidence floor
-   `P_inf = (q * dt) / (1 - (1 - inference_rate)^2) ≈ 0.001754` (at default
-   `inference_rate = 0.1`, `q = 0.01`, `dt = 1 / 30`), while border clipping on
-   `120 x 160` gives higher scalar precision mass at the center (`~2225.99`)
-   than at a corner (`~723.75`). However, `P_inf` and border clipping alone do
+   the uncoupled hidden transition contracts variance each frame even on
+   unobserved pixels—historically approaching
+   `P_inf = (q * dt) / (1 - (1 - inference_rate)^2) ≈ 0.001754` under the pre-OU
+   `(1 - inference_rate)^2` sidecar, and now approaching the physical OU floor
+   `v_inf = 0.5 * D * tau ≈ 0.001667`—while border clipping on `120 x 160` gives
+   higher scalar precision mass at the center (`~2225.99`) than at a corner
+   (`~723.75`). However, the no-evidence floor and border clipping alone do
    **not** freeze gaze among interior candidates whose unclipped masses are
    nearly tied: unweighted endpoint-inclusive `preview_indices` (`48 x 64`,
    `max_side = 64`) introduced integer-step and boundary-cell quadrature bias
    larger than the `O(1e-3)` interior variance-depletion margin, reversing the
-   true candidate ranking (at the identical post-240-step covariance state,
-   unweighted `48 x 64` scored center `5.727252` vs. left `5.723267` with a
-   left-minus-center margin of `-0.003985`, whereas exact full-grid `120 x 160`
+   true candidate ranking (at the identical post-240-step historical covariance
+   state, unweighted `48 x 64` scored center `5.727252` vs. left `5.723267` with
+   a left-minus-center margin of `-0.003985`, whereas exact full-grid `120 x 160`
    scored left `5.836790` vs. center `5.834804` with a left-minus-center margin
    of `+0.001986` and pixel-area-weighted `48 x 64` scored left `5.836767` vs.
-   center `5.834881` with a left-minus-center margin of `+0.001886`). `_pixel_area_weights`
-   now weights each sampled row/column by its Voronoi cell width over
-   `[-0.5, size - 0.5]` (`e_0 = -0.5`, `e_N = size - 0.5`, midpoint interior
-   edges `e_i = 0.5 * (r_{i-1} + r_i)`, `w_{ij} = w_row[i] * w_col[j]`),
-   eliminating the frame-38 freeze across NumPy, CuPy, and OpenGL while holding
-   all model and covariance parameters unchanged:
+   center `5.834881` with a left-minus-center margin of `+0.001886`).
+   `_pixel_area_weights` weights each sampled row/column by its Voronoi cell
+   width over `[-0.5, size - 0.5]` (`e_0 = -0.5`, `e_N = size - 0.5`, midpoint
+   interior edges `e_i = 0.5 * (r_{i-1} + r_i)`, `w_{ij} = w_row[i] * w_col[j]`),
+   eliminating the frame-38 freeze across NumPy, CuPy, and OpenGL:
 
-   | Native OpenGL scoring quadrature (`120 x 160`, `1200` frames / `40` s) | Last gaze change | Distinct gazes in final `1` s | Final mean hidden variance | Mean forecast MSE |
+   | Historical pre-OU quadrature ablation (`120 x 160`, `1200` frames / `40` s, native OpenGL) | Last gaze change | Distinct gazes in final `1` s | Final mean hidden variance | Mean forecast MSE |
    | --- | --- | --- | --- | --- |
    | Historical unweighted `48 x 64` baseline (pre-`46a7f7a`) | Frame `38` (`1.27` s) | `1` (locked at `(0.5, 0.5)`) | `0.00175343` | `0.00093626` |
-   | Current production pixel-area-weighted `48 x 64` (`46a7f7a`) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093164` |
-   | Exact full-grid `120 x 160` reference (`max_side = 160`) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093177` |
+   | Pixel-area-weighted `48 x 64` on pre-OU sidecar (`46a7f7a`) | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093164` |
+   | Exact full-grid `120 x 160` reference on pre-OU sidecar | Frame `1200` (`40.0` s) | `2` (interior alternation) | `0.00175343` | `0.00093177` |
 
    Sub-sampled area-weighted quadrature still aliases narrow footprints or
    rapidly varying nonlinear integrands, and the resulting interior alternation
    is **not** scene-wide exploration or moving-dot pursuit; greedy one-step
    information-seeking gaze is not globally guaranteed to keep moving across all
    parameter regimes.
-2. **Deeper sidecar / solver-parameter inconsistency (still open):** `inference_rate`
-   (`alpha`) is reused both as the inner gradient-descent step size in
-   `infer_joint` and as the per-frame covariance contraction factor
-   `(1 - alpha)^2`, while the predictive-coding mean objective keeps fixed unit
-   prior precision `I` on `hidden - W_canvas * tanh(canvas)` rather than
-   weighting by `(P_prior)^-1` (and one frame executes a single CFL acoustic
-   wave step `~1.3e-5` s vs. `1 / 30` s stimulus `dt`). In a fixed-canvas
-   converged-mean oracle across `alpha in {0.05, 0.10, 0.20}`, the converged
-   hidden mean is identical to `1e-14` (`0.0996676844244`), whereas the sidecar
-   posterior variance shifts nearly fourfold (`0.00330819`, `0.00173870`, and
-   `0.000923584`).
+2. **Historical sidecar / solver-parameter inconsistency (resolved within the conditional temporal Gaussian mode in `e751ee4`):**
+   prior to `e751ee4`, `inference_rate` (`alpha`) was reused both as the inner
+   gradient-descent step size in `infer_joint` and as the per-frame covariance
+   contraction factor `(1 - alpha)^2`, while the predictive-coding mean
+   objective kept fixed unit prior precision `I` on
+   `hidden - W_canvas * tanh(canvas)` rather than weighting by `(P_prior)^-1`
+   (and one frame executes a single CFL acoustic wave step `~1.3e-5` s vs.
+   `1 / 30` s stimulus `dt`). In a historical fixed-canvas converged-mean oracle
+   across `alpha in {0.05, 0.10, 0.20}`, the converged hidden mean was identical
+   to `1e-14` (`0.0996676844244`), whereas the sidecar posterior variance shifted
+   nearly fourfold (`0.00330819`, `0.00173870`, and `0.000923584`). In `e751ee4`,
+   `GaussianSensoryUncertainty` replaces that split with a single physical OU
+   time constant `tau = memory_time_constant` and one joint frozen-affine EKF
+   update, making posterior means, variances, canvas corrections, and IG scores
+   bitwise invariant to `inference_rate` and `inference_steps`
+   (`test_temporal_posterior_and_scores_match_scalar_affine_oracle_independently_of_solver`).
+   Because wave-canvas uncertainty (`Var(c) = 0`), parameter uncertainty, and
+   multi-step action lookahead remain unmodeled and `tau`, `D`, and `v_0` are
+   uncalibrated, autonomous gaze under the consistent temporal Gaussian filter
+   continues to alternate between the two interior candidates `(0.4167, 0.5)`
+   and `(0.5833, 0.5)` through frame `1200` (with `40` s native OpenGL
+   `autonomous` / `fixed` / `random` final mean variance `0.00166576` /
+   `0.00166576` / `0.00166598`, mean forecast MSE `0.00094218` / `0.00094215` /
+   `0.00094234`, and cumulative expected gain `18308.58` / `15917.09` /
+   `14433.17` nats) rather than tracking the moving dot or reducing image
+   forecast MSE.
 
-**Architectural rule and next-step boundary:** (1) spatial quadrature
+**Architectural rules and open boundaries:** (1) spatial quadrature
 action-ranking error must be checked against candidate margins and a full-grid
 reference (covered by a full-grid ranking regression), and (2) numerical
 optimizer step sizes must not silently define probabilistic transition
-dynamics—any subsequent model slice must explicitly choose between a memoryless
-static conditional prior and a temporal conditional model whose retention rate
-is decoupled from solver `inference_rate` and whose prior covariance is shared
-by both mean and covariance updates.
+dynamics—temporal retention is governed by `--memory-time-constant` (`tau`) and
+shared across mean and covariance updates. Propagating wave-state uncertainty,
+calibrating physical noise/memory parameters, and designing non-myopic or
+hysteretic gaze policies remain open extensions outside this slice.
 
 Scores use a fixed `9 x 13` candidate grid and nearest-neighbor spatial
 quadrature with maximum side 64 weighted by represented pixel area (`w_{ij} =
