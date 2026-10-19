@@ -1,6 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 import numpy as np
+
+from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
+
+
+@dataclass(frozen=True)
+class ActiveVisionConfig:
+    mode: str = "mouse"
+    precision: GaussianSpatialPrecision = field(default_factory=GaussianSpatialPrecision)
+    initial_variance: float = 1.0
+    process_variance: float = .01
+    memory_time_constant: float = 1/3
+
+    def __post_init__(self):
+        if self.mode not in ("mouse", "autonomous", "full"):
+            raise ValueError("gaze mode must be mouse, autonomous or full")
 
 
 def has_gaze_preference(scores: np.ndarray) -> bool:

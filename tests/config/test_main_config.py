@@ -1,6 +1,7 @@
 from copy import deepcopy
 import importlib.util
 from pathlib import Path
+import pytest
 
 
 def _load_main_module():
@@ -55,3 +56,75 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
     )
     config["transforms"]["prediction_error"]["inference"]["cross_modal_enabled"] = True
     assert main.build_ripple_visualizer_config(config)["source_orchestrator_config"].visual_pathway.cross_modal_enabled
+
+
+def test_active_vision_config_requires_explicit_camera_only_ripple():
+    main = _load_main_module()
+    config = deepcopy(main.RIPPLE_CONFIG)
+    assert main.build_ripple_visualizer_config(config)["active_vision"] is None
+    config["active_vision"].update(enabled=True, mode="autonomous", memory_time_constant=.7)
+    with pytest.raises(ValueError, match="audio"):
+        main.build_ripple_visualizer_config(config)
+    config["sources"]["audio"]["enabled"] = False
+    cfg = main.build_ripple_visualizer_config(config)["active_vision"]
+    assert cfg.mode == "autonomous" and cfg.memory_time_constant == .7
+    assert cfg.precision.gaze == (.5, .5)
+
+
+@pytest.mark.parametrize("mode", (None, "mouse", "autonomous", "full"))
+def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, monkeypatch, mode):
+    main = _load_main_module()
+    original_app, original_ripple = deepcopy(main.APP_CONFIG), deepcopy(main.RIPPLE_CONFIG)
+    created, starts = [], []
+
+    class Processor:
+        def process_pending_audio(self):
+            pass
+
+        def start(self):
+            starts.append(True)
+            return True
+
+        def stop(self):
+            pass
+
+    processor = Processor()
+
+    def create_audio(config):
+        assert mode is None, "camera-only startup must not initialize audio or select devices"
+        return processor, dict(cmap=None, norm=None, waveform_plot_duration=.5), 50
+
+    class Window:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+
+        def setWindowTitle(self, title):
+            pass
+
+        def resize(self, *size):
+            pass
+
+        def show(self):
+            pass
+
+    monkeypatch.setattr(main, "_create_audio_processor", create_audio)
+    monkeypatch.setattr(main, "RippleWaveVisualizer", Window)
+    monkeypatch.setattr(main, "SpectrogramVisualizer", Window)
+    monkeypatch.setattr(main.QtWidgets.QApplication, "exec", lambda self: 0)
+    monkeypatch.setattr(main.signal, "signal", lambda *args: None)
+    old_style = qapp.styleSheet()
+    try:
+        with pytest.raises(SystemExit) as stopped:
+            main.main([] if mode is None else ["--active-vision", mode])
+        assert stopped.value.code == 0
+        ripple = next(value for value in created if "source_orchestrator_config" in value)
+        assert ripple["processor"] is (processor if mode is None else None)
+        assert starts == ([True] if mode is None else [])
+        if mode is not None:
+            assert len(created) == 1
+            assert ripple["active_vision"].mode == mode
+            assert ripple["source_orchestrator_config"].camera_frame.enabled
+            assert not ripple["source_orchestrator_config"].audio.enabled
+        assert main.APP_CONFIG == original_app and main.RIPPLE_CONFIG == original_ripple
+    finally:
+        qapp.setStyleSheet(old_style)

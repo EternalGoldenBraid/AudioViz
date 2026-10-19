@@ -1,5 +1,7 @@
 import sys
 import signal
+import argparse
+from copy import deepcopy
 from pathlib import Path
 from typing import Union, Optional, Dict
 
@@ -25,7 +27,8 @@ from audioviz.sources import (
 from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
-from audioviz.readouts import PredictiveCodingConfig
+from audioviz.readouts import GaussianSpatialPrecision, PredictiveCodingConfig
+from audioviz.sources.gaze import ActiveVisionConfig
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 
 from audioviz.utils.guitar_profiles import GuitarProfile  
@@ -74,6 +77,17 @@ AUDIO_CONFIG = {
 }
 
 RIPPLE_CONFIG = {
+    "active_vision": {
+        "enabled": False,
+        "mode": "mouse",
+        "gaze": (0.5, 0.5),
+        "sigma": 0.15,
+        "baseline": 0.01,
+        "peak": 1.0,
+        "initial_variance": 1.0,
+        "process_variance": 0.01,
+        "memory_time_constant": 1/3,
+    },
     "field": {
         "n_sources": 5,
         # "plane_size_m": (500.0, 500.0),
@@ -184,6 +198,20 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     prediction_error_inference = prediction_error["inference"]
     prediction_error_learning = prediction_error["learning"]
     backend = renderer["backend"]
+    gaze = config.get("active_vision", {})
+    active_vision = None
+    if gaze.get("enabled", False):
+        if audio["enabled"]:
+            raise ValueError("Active vision requires ripple audio to be disabled")
+        active_vision = ActiveVisionConfig(
+            mode=gaze["mode"],
+            precision=GaussianSpatialPrecision(
+                gaze=tuple(gaze["gaze"]), sigma=gaze["sigma"], baseline=gaze["baseline"], peak=gaze["peak"],
+            ),
+            initial_variance=gaze["initial_variance"],
+            process_variance=gaze["process_variance"],
+            memory_time_constant=gaze["memory_time_constant"],
+        )
 
     return {
         **config["field"],
@@ -245,6 +273,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
         "rgb_canvas_enabled": renderer["rgb_canvas_enabled"],
         "auto_color_activation_threshold": renderer["auto_color_activation_threshold"],
         "auto_color_floor": renderer["auto_color_floor"],
+        "active_vision": active_vision,
     }
 
 
@@ -262,7 +291,7 @@ def configure_audio_source_processor(processor: AudioProcessor, config: Dict) ->
     processor.set_num_top_frequencies(int(peak_picking["top_k_count"]))
 
 
-def main():
+def _create_audio_processor(ripple_config):
     # --- Config Phase ---
 
     is_streaming = APP_CONFIG["is_streaming"]
@@ -335,9 +364,6 @@ def main():
     
     # --- Run Phase ---
     
-    app = QtWidgets.QApplication([])
-    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
-    
     # Audio processor
     processor = AudioProcessor(
         sr=int(sr),
@@ -355,19 +381,48 @@ def main():
         io_blocksize=io_config["io_blocksize"],
         number_top_k_frequencies=n_fft // 2,
     )
-    configure_audio_source_processor(processor, RIPPLE_CONFIG)
+    configure_audio_source_processor(processor, ripple_config)
+    return processor, plotting_config, (io_config["io_blocksize"]/sr)*1000
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Audio Ripple main application")
+    parser.add_argument(
+        "--active-vision", choices=("mouse", "autonomous", "full"),
+        help="Camera-only session with shared gaze controls; audio windows and audio devices are disabled.",
+    )
+    args = parser.parse_args(argv)
+    app_config, source_config = deepcopy(APP_CONFIG), deepcopy(RIPPLE_CONFIG)
+    if args.active_vision is not None:
+        source_config["active_vision"].update(enabled=True, mode=args.active_vision)
+        source_config["sources"]["audio"]["enabled"] = False
+        source_config["sources"]["camera_frame"]["enabled"] = True
+        for name in ("spectrogram", "helix"):
+            app_config["windows"][name]["enabled"] = False
+        app_config["windows"]["ripples"]["enabled"] = True
+        logger.info("Active vision: camera-only session; audio windows and audio device initialization disabled.")
+    windows = app_config["windows"]
+    ripple_config = build_ripple_visualizer_config(source_config) if windows["ripples"]["enabled"] else None
+    camera_only = (
+        ripple_config is not None and ripple_config["active_vision"] is not None
+        and not windows["spectrogram"]["enabled"] and not windows["helix"]["enabled"]
+    )
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+    processor = None
+    plotting_config = None
+    if not camera_only:
+        processor, plotting_config, block_duration_ms = _create_audio_processor(source_config)
     
-    # Create a processing timer
-    block_duration_ms = (io_config["io_blocksize"] / sr) * 1000
-    processing_timer = QtCore.QTimer()
-    # processing_timer.setInterval(20)  # e.g., 50 Hz
-    processing_timer.setInterval(int(block_duration_ms*(1 - 1e-3))) 
-    processing_timer.timeout.connect(processor.process_pending_audio)
-    processing_timer.start()
+        processing_timer = QtCore.QTimer()
+        processing_timer.setInterval(int(block_duration_ms*(1 - 1e-3)))
+        processing_timer.timeout.connect(processor.process_pending_audio)
+        processing_timer.start()
     
     # Visualizer
-    spectrogram_window_config = APP_CONFIG["windows"]["spectrogram"]
+    spectrogram_window_config = windows["spectrogram"]
     if spectrogram_window_config["enabled"]:
+        assert processor is not None and plotting_config is not None
         visualizer = SpectrogramVisualizer(
             processor=processor,
             cmap=plotting_config["cmap"],
@@ -379,7 +434,7 @@ def main():
         visualizer.show()
     
     # Create Pitch Helix Visualizer
-    helix_window_config = APP_CONFIG["windows"]["helix"]
+    helix_window_config = windows["helix"]
     if helix_window_config["enabled"]:
         standard_guitar = GuitarProfile(
             open_strings=[82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
@@ -400,11 +455,10 @@ def main():
         helix_window.show()
     
     # Create Ripple Wave Visualizer
-    ripples_window_config = APP_CONFIG["windows"]["ripples"]
+    ripples_window_config = windows["ripples"]
     if ripples_window_config["enabled"]:
-        ripple_config = build_ripple_visualizer_config(RIPPLE_CONFIG)
         ripple_window = RippleWaveVisualizer(
-            processor=processor,
+            processor=None if ripple_config["active_vision"] is not None else processor,
             **ripple_config
         )
         ripple_window.setWindowTitle(ripples_window_config["title"])
@@ -412,19 +466,22 @@ def main():
         ripple_window.show()
     
     # Start audio
-    processor_success = processor.start()
-    if not processor_success:
-        logger.error("Failed to start audio processing. Exiting.")
-        return
+    if processor is not None:
+        processor_success = processor.start()
+        if not processor_success:
+            logger.error("Failed to start audio processing. Exiting.")
+            return
     
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-    app.aboutToQuit.connect(processor.stop)
+    if processor is not None:
+        app.aboutToQuit.connect(processor.stop)
     
     try:
         sys.exit(app.exec())
     except KeyboardInterrupt:
         print("Exiting...")
-        processor.stop()
+        if processor is not None:
+            processor.stop()
         app.quit()
 
 if __name__ == "__main__":

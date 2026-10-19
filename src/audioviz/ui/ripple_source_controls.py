@@ -92,11 +92,11 @@ class RippleSourceControlBinding:
             learning_controls = tuple(
                 replace(
                     control, kind="text", default="Unused: one Gaussian update per frame",
-                    tooltip="Temporal memory is set independently by --memory-time-constant.",
+                    tooltip="Temporal memory is configured independently of PC solver settings.",
                 ) if control.key in ("inference_steps", "inference_rate") else
                 replace(
                     control, kind="text", default="Fixed for temporal Gaussian inference",
-                    tooltip="Parameter uncertainty is not propagated in this experiment.",
+                    tooltip="Parameter uncertainty is not propagated in temporal Gaussian mode.",
                 ) if control.key == "learning_enabled" else control
                 for control in learning_controls
             )
@@ -149,7 +149,10 @@ class RippleSourceControlBinding:
                 key="pose",
                 label="Pose Graph",
                 enabled=visualizer.use_pose_sources,
-                available=not (visualizer.use_gpu or visualizer.use_shader),
+                available=(
+                    not (visualizer.use_gpu or visualizer.use_shader)
+                    and visualizer.source_orchestrator.visual_uncertainty is None
+                ),
             ),
         )
 

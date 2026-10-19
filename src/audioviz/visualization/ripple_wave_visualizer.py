@@ -6,6 +6,9 @@ from PyQt5 import QtCore, QtWidgets
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources import RippleSourceOrchestrator, RippleSourceOrchestratorConfig
+from audioviz.sources.gaze import ActiveVisionConfig, GazePolicy
+from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
+from audioviz.ui.gaze_controls import GazeControls
 from audioviz.sources.pose import (
     PoseFrameSource,
     PoseGraphExtractor,
@@ -132,12 +135,24 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_extractor: PoseGraphExtractor | None = None,
                  pose_capture=None,
                  camera_capture=None,
+                 active_vision: ActiveVisionConfig | None = None,
                  **kwargs):
         if source_orchestrator_config is None:
             source_orchestrator_config = RippleSourceOrchestratorConfig()
         if pose_config is None:
             pose_config = RipplePoseConfig()
+        if active_vision is not None:
+            GaussianSensoryUncertainty.validate_config(source_orchestrator_config.visual_pathway)
+            if processor is not None or source_orchestrator_config.audio.enabled:
+                raise ValueError("Active vision requires a camera-only ripple window (no audio processor or audio drive)")
+            if pose_config.enabled:
+                raise ValueError("Active vision does not support pose-medium coupling")
+            if not source_orchestrator_config.prediction_error.enabled or "camera_frame" not in source_orchestrator_config.prediction_error.inputs:
+                raise ValueError("Active vision requires camera prediction-error inference")
         super().__init__(processor, **kwargs)
+        self.active_vision_config = active_vision
+        self.gaze_controls = None
+        self._gaze_last_prediction_time = None
 
         self.processor = processor
         self.n_sources = n_sources
@@ -221,7 +236,16 @@ class RippleWaveVisualizer(VisualizerBase):
             camera_capture=camera_capture,
         )
         self.source_orchestrator.set_base_amplitude(self.base_amplitude)
-        self.visual_prediction = None if self.use_shader else self.source_orchestrator.visual_readout.predict(
+        if active_vision is not None:
+            self.source_orchestrator.update_pathway_config(spatial_precision=active_vision.precision)
+            self.source_orchestrator.enable_visual_uncertainty(
+                dt=self.timer.interval()/1000,
+                initial_variance=active_vision.initial_variance,
+                process_variance=active_vision.process_variance,
+                memory_time_constant=active_vision.memory_time_constant,
+            )
+            self._gaze_precision = active_vision.precision
+        self.visual_prediction = None if self.use_shader or active_vision is not None else self.source_orchestrator.visual_readout.predict(
             self.engine.get_field()
         )
 
@@ -255,6 +279,27 @@ class RippleWaveVisualizer(VisualizerBase):
         else:
             layout.addWidget(self.renderer.widget)
 
+        if active_vision is not None:
+            self.gaze_controls = GazeControls(active_vision.precision, mode=active_vision.mode, parent=self)
+            layout.insertWidget(0, self.gaze_controls)
+            assumptions = QtWidgets.QLabel(
+                f"Active vision: camera only; memory {active_vision.memory_time_constant:g} s. "
+                "Mouse gaze follows the wave image; camera/prediction previews are under Show Predictions. "
+                "Assigned noise and fixed weights; not calibrated confidence or dot pursuit."
+            )
+            assumptions.setWordWrap(True)
+            layout.insertWidget(1, assumptions)
+            layout.setStretchFactor(self.renderer.widget, 1)
+            self.gaze_controls.precision_changed.connect(self._update_gaze_precision)
+            self.gaze_controls.mode_changed.connect(self._change_gaze_mode)
+            self._change_gaze_mode()
+            self.renderer.widget.setMouseTracking(True)
+            if isinstance(self.renderer, NumpyImageRenderer):
+                self.renderer.widget.viewport().setMouseTracking(True)
+                self.renderer.widget.scene().sigMouseMoved.connect(self._move_image_gaze)
+            else:
+                self.renderer.widget.installEventFilter(self)
+
         controls_button = QtWidgets.QPushButton("Show Controls")
         controls_button.clicked.connect(self.toggle_controls)
         layout.addWidget(controls_button)
@@ -269,6 +314,48 @@ class RippleWaveVisualizer(VisualizerBase):
         self.frame_rate = FrameRateDisplay(self)
         self.renderer.frame_presented.connect(self.frame_rate.record_frame)
         layout.addWidget(self.frame_rate)
+
+    def _change_gaze_mode(self):
+        self.source_orchestrator.gaze_policy = (
+            GazePolicy() if self.gaze_controls.autonomous_gaze.isChecked() else None
+        )
+        self._update_gaze_precision()
+
+    def _update_gaze_precision(self):
+        self._gaze_precision = self.gaze_controls.gaze_precision(self._gaze_precision)
+        self.source_orchestrator.update_pathway_config(
+            spatial_precision=self.gaze_controls.observation_precision(self._gaze_precision),
+        )
+
+    def _set_mouse_gaze(self, x, y):
+        if self.gaze_controls is None or not self.gaze_controls.follow_mouse.isChecked():
+            return
+        self.gaze_controls.display_gaze((float(np.clip(x, 0, 1)), float(np.clip(y, 0, 1))))
+        self._update_gaze_precision()
+
+    def _move_image_gaze(self, scene_position):
+        image = self.renderer.image_item
+        point = image.mapFromScene(scene_position)
+        bounds = image.boundingRect()
+        if bounds.contains(point):
+            self._set_mouse_gaze(
+                (point.x()-.5)/max(bounds.width()-1, 1),
+                (point.y()-.5)/max(bounds.height()-1, 1),
+            )
+
+    def eventFilter(self, watched, event):
+        if watched is self.renderer.widget and event.type() == QtCore.QEvent.MouseMove:
+            width, height = watched.width(), watched.height()
+            rows, cols = self.resolution
+            scale = min(width/cols, height/rows)
+            rect = QtCore.QRectF((width-cols*scale)/2, (height-rows*scale)/2, cols*scale, rows*scale)
+            point = event.localPos()
+            if scale > 0 and rect.contains(point):
+                self._set_mouse_gaze(
+                    ((point.x()-rect.left())/scale-.5)/max(cols-1, 1),
+                    ((point.y()-rect.top())/scale-.5)/max(rows-1, 1),
+                )
+        return super().eventFilter(watched, event)
 
     def _update_speed(self, val: float):
         self.speed = val
@@ -320,6 +407,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _sync_after_reset(self) -> None:
         self.time = self.engine.time
+        self._gaze_last_prediction_time = None
         self.source_orchestrator.reset_readouts()
         if self.prediction_scene is not None:
             self.prediction_scene.clear()
@@ -431,6 +519,8 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _set_pose_sources_enabled(self, enabled: bool) -> None:
         if enabled:
+            if self.source_orchestrator.visual_uncertainty is not None:
+                raise ValueError("Temporal Gaussian inference does not support pose-medium coupling")
             if self.use_gpu or self.use_shader:
                 raise NotImplementedError(
                     "Pose-medium coupling currently requires the CPU ripple backend."
@@ -564,8 +654,20 @@ class RippleWaveVisualizer(VisualizerBase):
         )
         audio_readout = self.source_orchestrator.audio_readout
         self.engine.propagate(drive_grid)
-        self.visual_prediction = self.source_orchestrator.predict_visual()
+        if self.active_vision_config is not None:
+            now = time.monotonic()
+            elapsed = (
+                self.timer.interval()/1000 if self._gaze_last_prediction_time is None
+                else now-self._gaze_last_prediction_time
+            )
+            self.visual_prediction = self.source_orchestrator.predict_visual(dt=elapsed)
+            self._gaze_last_prediction_time = now
+        else:
+            self.visual_prediction = self.source_orchestrator.predict_visual()
         self.source_orchestrator.correct_from_observations()
+        if self.gaze_controls is not None and self.gaze_controls.autonomous_gaze.isChecked():
+            self._gaze_precision = self.source_orchestrator.visual_readout.config.spatial_precision
+            self.gaze_controls.display_gaze(self._gaze_precision.gaze)
         if self.prediction_scene is not None:
             if self.source_orchestrator.visual_observation is None:
                 self.prediction_scene.invalidate_evidence("camera")
@@ -610,6 +712,7 @@ class RippleWaveVisualizer(VisualizerBase):
              self.audio_source.recent_observation(), self.audio_source.enabled),
         ):
             mapping = source.scene_mapping
+            has_stream_state_factor = readout is not None and orchestrator.visual_uncertainty is None
             sources.append(SourceScenePreview(
                 mapping=mapping, enabled=enabled,
                 observation=mapping.sample(observation, max_side=max_side) if observation is not None else None,
@@ -625,8 +728,8 @@ class RippleWaveVisualizer(VisualizerBase):
                 recurrent_parent=(
                     "audio" if mapping.key == "camera" else "camera"
                 ) if orchestrator.visual_readout.config.cross_modal_enabled else None,
-                stream_state=source.enabled if readout is not None else None,
-                stream_state_prediction=readout.stream_state_prediction if readout is not None else None,
+                stream_state=source.enabled if has_stream_state_factor else None,
+                stream_state_prediction=readout.stream_state_prediction if has_stream_state_factor else None,
             ))
         sources.append(SourceScenePreview(
             mapping=self.synthetic_source.scene_mapping,

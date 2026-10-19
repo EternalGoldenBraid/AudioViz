@@ -172,7 +172,11 @@ class RippleSourceOrchestrator:
         )
         return None if grid is None else self._to_canvas_grid(grid)
 
-    def predict_visual(self) -> np.ndarray:
+    def predict_visual(self, *, dt: float | None = None) -> np.ndarray:
+        if self.visual_uncertainty is not None and dt is not None:
+            if not np.isfinite(dt) or dt <= 0:
+                raise ValueError("visual uncertainty requires a finite, positive timestep")
+            self._uncertainty_dt = float(dt)
         if self.gaze_policy is not None:
             self._select_visual_gaze(self.gaze_policy)
         if self.visual_uncertainty is not None:
@@ -198,7 +202,7 @@ class RippleSourceOrchestrator:
     def enable_visual_uncertainty(
         self, *, dt, initial_variance=1.0, process_variance=0.01, memory_time_constant=1/3,
     ):
-        """Opt into shared temporal Gaussian inference for the visual-only experiment."""
+        """Opt into shared temporal Gaussian inference for a visual-only model."""
         if not np.isfinite(dt) or dt <= 0:
             raise ValueError("visual uncertainty requires a finite, positive timestep")
         if self.shader_model is None and not isinstance(self.visual_readout, PredictiveCodingRGBReadout):
@@ -206,7 +210,7 @@ class RippleSourceOrchestrator:
         if self.visual_uncertainty is not None:
             raise RuntimeError("Visual uncertainty is already enabled")
         if self.audio_readout is not None:
-            raise ValueError("Temporal Gaussian visual inference requires a visual-only experiment")
+            raise ValueError("Temporal Gaussian visual inference requires a visual-only model")
         self.visual_uncertainty = GaussianSensoryUncertainty(
             self.visual_readout, initial_variance=initial_variance, process_variance=process_variance,
             memory_time_constant=memory_time_constant,
