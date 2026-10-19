@@ -32,6 +32,22 @@ def test_experiment_delivers_stimulus_updates_gaze_skips_and_stops(qapp, request
     try:
         widget.show()
         qapp.processEvents()
+        widget.resize(640, 1100)
+        qapp.processEvents()
+        assert widget._preview_columns == 1
+        for index, plot in enumerate(widget._preview_plots):
+            assert widget.previews.ci.items[plot] == [(index, 0)]
+            viewport_bounds = widget.previews.viewport().rect().adjusted(-1, -1, 1, 1)
+            assert viewport_bounds.contains(
+                widget.previews.mapFromScene(plot.sceneBoundingRect()).boundingRect(),
+            )
+        widget.resize(1180, 860)
+        qapp.processEvents()
+        assert widget._preview_columns == 3
+        assert all(
+            widget.previews.ci.items[plot] == [(0, index)]
+            for index, plot in enumerate(widget._preview_plots)
+        )
         widget.visualizer.update_visualization()
         widget._after_frame()
         widget.refresh_previews()

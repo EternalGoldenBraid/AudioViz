@@ -89,6 +89,7 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         )
         advice.addWidget(self.information_toggle)
         self.information_status = QtWidgets.QLabel("Waiting for uncertainty estimate")
+        self.information_status.setWordWrap(True)
         advice.addWidget(self.information_status)
         advice.addStretch()
         layout.addLayout(advice)
@@ -124,7 +125,9 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         field_plot.addItem(self.precision_image)
         self.gaze_marker = pg.ScatterPlotItem(symbol="+", size=18, pen=pg.mkPen("w", width=2))
         field_plot.addItem(self.gaze_marker)
-        self.prediction_image, _ = self._image_panel("Prediction before current evidence", 2)
+        self.prediction_image, prediction_plot = self._image_panel("Prediction before current evidence", 2)
+        self._preview_plots = (self.truth_plot, field_plot, prediction_plot)
+        self._preview_columns = 3
         layout.addWidget(self.previews, 1)
 
         self.visualizer = RippleWaveVisualizer(
@@ -182,6 +185,20 @@ class ActiveVisionExperiment(QtWidgets.QWidget):
         image = pg.ImageItem(axisOrder="row-major")
         plot.addItem(image)
         return image, plot
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, "_preview_plots"):
+            return
+        columns = 3 if self.width() >= 1000 else 1
+        if columns == self._preview_columns:
+            return
+        for plot in self._preview_plots:
+            self.previews.removeItem(plot)
+        for index, plot in enumerate(self._preview_plots):
+            self.previews.addItem(plot, row=index // columns, col=index % columns)
+        self.previews.setMinimumHeight(220 if columns == 3 else 450)
+        self._preview_columns = columns
 
     def _change_gaze_mode(self):
         self.information_scores = None
