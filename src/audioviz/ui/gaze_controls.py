@@ -46,6 +46,7 @@ class GazeControls(QtWidgets.QWidget):
         modes.addStretch()
         layout.addLayout(modes)
         parameters = QtWidgets.QFormLayout()
+        self.parameter_form = parameters
         parameters.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
         self.sigma = pg.SpinBox(value=precision.sigma, bounds=(np.nextafter(0., 1.), None), step=.01)
         self.baseline = pg.SpinBox(value=precision.baseline, bounds=(0, None), step=.01)
@@ -68,6 +69,15 @@ class GazeControls(QtWidgets.QWidget):
         self.observe.toggled.connect(self.precision_changed)
         self.gaze_modes.buttonToggled.connect(lambda _button, checked: self._mode_changed() if checked else None)
         self._mode_changed()
+
+    def use_hard_clamps(self):
+        for control in (self.baseline, self.peak):
+            control.hide()
+            self.parameter_form.labelForField(control).hide()
+        self.sigma.setToolTip(
+            "Clamp the nearest RGB sample and sample centers within one sigma. "
+            "Full canvas clamps every compact RGB sample; assigned precision is not used."
+        )
 
     @staticmethod
     def _coordinate(value):

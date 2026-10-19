@@ -88,6 +88,7 @@ RIPPLE_CONFIG = {
         "process_variance": 0.01,
         "memory_time_constant": 1/3,
         "audio_precision": None,
+        "shared_sensory_graph": False,
     },
     "field": {
         "n_sources": 5,
@@ -214,6 +215,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             process_variance=gaze["process_variance"],
             memory_time_constant=gaze["memory_time_constant"],
             audio_precision=audio_precision,
+            shared_sensory_graph=gaze.get("shared_sensory_graph", False),
         )
 
     return {
@@ -398,17 +400,29 @@ def main(argv=None):
         "--active-audio", action="store_true",
         help="Opt into common-mode temporal Gaussian audio inference alongside --active-vision.",
     )
+    parser.add_argument(
+        "--shared-sensory-graph", action="store_true",
+        help="Use one compact learned sensory/latent graph with hard evidence clamps; requires --active-vision.",
+    )
     args = parser.parse_args(argv)
     if args.active_audio and args.active_vision is None:
         parser.error("--active-audio requires --active-vision")
+    if args.shared_sensory_graph and args.active_vision is None:
+        parser.error("--shared-sensory-graph requires --active-vision")
     app_config, source_config = deepcopy(APP_CONFIG), deepcopy(RIPPLE_CONFIG)
     if args.active_vision is not None:
         source_config["active_vision"].update(enabled=True, mode=args.active_vision)
+        if args.shared_sensory_graph:
+            source_config["active_vision"]["shared_sensory_graph"] = True
         if args.active_audio:
             if source_config["active_vision"].get("audio_precision") is None:
                 source_config["active_vision"]["audio_precision"] = 1.0
             source_config["sources"]["audio"]["enabled"] = True
-            logger.info("Active vision + audio: temporal Gaussian visual and common-mode audio inference enabled.")
+            logger.info(
+                "Active vision + audio: shared learned graph enabled."
+                if source_config["active_vision"].get("shared_sensory_graph", False) else
+                "Active vision + audio: temporal Gaussian visual and common-mode audio inference enabled."
+            )
         else:
             source_config["sources"]["audio"]["enabled"] = False
             logger.info("Active vision: camera-only session; audio windows and audio device initialization disabled.")
@@ -416,6 +430,8 @@ def main(argv=None):
         for name in ("spectrogram", "helix"):
             app_config["windows"][name]["enabled"] = False
         app_config["windows"]["ripples"]["enabled"] = True
+        if source_config["active_vision"].get("shared_sensory_graph", False):
+            logger.info("Shared sensory graph: compact joint Gaussian learning with camera/audio evidence clamps.")
     windows = app_config["windows"]
     ripple_config = build_ripple_visualizer_config(source_config) if windows["ripples"]["enabled"] else None
     camera_only = (

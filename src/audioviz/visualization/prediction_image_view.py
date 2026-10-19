@@ -21,6 +21,7 @@ class PredictionImageView(QtWidgets.QWidget):
         self._attention_precision = None
         self._attention_scores = None
         self._attention_available = False
+        self._attention_samples = ()
         for key in ("canvas", "prediction", "observation"):
             plot = pg.PlotWidget()
             plot.setAspectLocked(True)
@@ -91,10 +92,11 @@ class PredictionImageView(QtWidgets.QWidget):
             self.attention_overlays[key].shape = values.shape[:2]
             self.images[key].setImage(_canvas_to_rgb(values, limit=1.0), autoLevels=False, levels=(0, 255))
 
-    def set_attention(self, precision, scores, *, available=False):
+    def set_attention(self, precision, scores, *, available=False, sample_points=()):
         self._attention_precision = precision
         self._attention_scores = scores
         self._attention_available = available
+        self._attention_samples = sample_points
         self._refresh_attention()
 
     def _refresh_attention(self):
@@ -102,6 +104,7 @@ class PredictionImageView(QtWidgets.QWidget):
             overlay.set_attention(
                 self._attention_precision if self.images[key].image is not None else None,
                 self._attention_scores, available=self._attention_available,
+                sample_points=self._attention_samples,
             )
 
     def clear_preview(self) -> None:

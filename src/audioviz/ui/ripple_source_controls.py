@@ -30,6 +30,7 @@ class RippleSourceControlBinding:
         visualizer = self.visualizer
         sections: list[ControlPanelSection] = []
         controls = visualizer.audio_source.controls()
+        graph = visualizer.source_orchestrator.sensory_graph
         audio_model = visualizer.source_orchestrator.audio_uncertainty
         if audio_model is not None:
             controls = (*controls, SourceControl(
@@ -44,6 +45,12 @@ class RippleSourceControlBinding:
                     "Zero disables audio conditioning; it is not silent evidence or an input gain. "
                     "This is a model assumption, not calibrated microphone confidence."
                 ),
+            ))
+        if graph is not None:
+            controls = (*controls, SourceControl(
+                key="audio_geometry", label="Observation Support", kind="text",
+                default=f"{graph.audio_nodes} nodes in the joint graph. Disabled/stale input leaves them unclamped.",
+                tooltip="Fresh spectra clamp global audio nodes; no microphone direction is measured.",
             ))
         sections.append(
             ControlPanelSection(
@@ -94,7 +101,7 @@ class RippleSourceControlBinding:
             )
         )
         pathway_config = visualizer.source_orchestrator.visual_readout.config
-        uncertainty_active = visualizer.source_orchestrator.visual_uncertainty is not None
+        uncertainty_active = visualizer.source_orchestrator.has_temporal_beliefs
         learning_controls = PredictionLearningControls(
             enabled=pathway_config.learning_enabled,
             inference_steps=pathway_config.inference_steps,
@@ -113,7 +120,38 @@ class RippleSourceControlBinding:
                 )
             ),
         ).get_controls()
-        if uncertainty_active:
+        if graph is not None:
+            learning_controls = (
+                SourceControl(
+                    key="graph_size", label="Shared Graph", kind="text",
+                    default=f"{graph.total_nodes} fully connected sensory/latent nodes; dense joint covariance.",
+                ),
+                SourceControl(
+                    key="graph_backend", label="Graph Backend", kind="text",
+                    default=(
+                        "CPU joint solve; GPU pixels; at most 48 RGB values gathered."
+                        if visualizer.use_shader else
+                        "CuPy GPU joint solve and pixels." if visualizer.use_gpu else
+                        "NumPy CPU joint solve and pixels."
+                    ),
+                ),
+                SourceControl(
+                    key="learning_enabled", label="Learn Joint Graph", kind="toggle",
+                    default=graph.learning_enabled,
+                    tooltip="Learn joint mean/covariance from fresh clamped values with masked online Gaussian moment updates.",
+                ),
+                SourceControl(
+                    key="learning_rate", label="Graph Learning Rate", default=graph.learning_rate,
+                    minimum=0, maximum=1, step=.005,
+                    tooltip="Per-evidence-update mixing rate. Zero freezes learned graph parameters, not inference.",
+                ),
+                SourceControl(
+                    key="canvas_rate", label="Canvas Feedback Rate", default=pathway_config.canvas_rate,
+                    minimum=0, maximum=max(1, pathway_config.canvas_rate), step=.01,
+                    tooltip="Scale the interpolated joint sensory innovation fed into the deterministic wave display.",
+                ),
+            )
+        elif uncertainty_active:
             learning_controls = tuple(
                 replace(
                     control, kind="text", default="Unused: one Gaussian update per frame",
@@ -137,7 +175,9 @@ class RippleSourceControlBinding:
         sections.append(
             ControlPanelSection(
                 key="learning-dynamics",
-                title="Temporal Sensory Beliefs" if uncertainty_active else "Sensory Inference and Learning",
+                title="Shared Sensory Graph" if graph is not None else (
+                    "Temporal Sensory Beliefs" if uncertainty_active else "Sensory Inference and Learning"
+                ),
                 controls=learning_controls,
                 expanded=True,
             )
@@ -185,7 +225,7 @@ class RippleSourceControlBinding:
                 enabled=visualizer.use_pose_sources,
                 available=(
                     not (visualizer.use_gpu or visualizer.use_shader)
-                    and visualizer.source_orchestrator.visual_uncertainty is None
+                    and not visualizer.source_orchestrator.has_temporal_beliefs
                 ),
             ),
         )
@@ -319,6 +359,13 @@ class RippleSourceControlBinding:
         value: ControlValue,
     ) -> None:
         readout = self.visualizer.source_orchestrator
+        if readout.sensory_graph is not None:
+            if control_key == "learning_enabled":
+                readout.sensory_graph.set_learning(enabled=bool(value))
+                return
+            if control_key == "learning_rate":
+                readout.sensory_graph.set_learning(rate=float(value))
+                return
         if control_key == "inference_steps":
             readout.update_pathway_config(inference_steps=int(value))
             return

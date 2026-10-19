@@ -5,6 +5,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
 from audioviz.visualization.attention_overlay import preferred_gain_position
+from audioviz.readouts.shared_sensory_graph import SharedGraphSnapshot
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class BeliefDiagnosticsFrame:
     audio: dict[str, np.ndarray] | None = None
     visual_location: str = ""
     audio_gain: float | None = None
+    joint: SharedGraphSnapshot | None = None
 
 
 class BeliefDiagnosticsView(QtWidgets.QWidget):
@@ -38,6 +40,8 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
             "No wave covariance or audiovisual cross-covariance is inferred. Not calibrated confidence."
         )
         definition.setWordWrap(True)
+        self.definition = definition
+        self._separate_definition = definition.text()
         layout.addWidget(definition)
         self.status = QtWidgets.QLabel("Waiting for the first model forecast.")
         self.status.setWordWrap(True)
@@ -53,6 +57,8 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
             "Observe off still previews potential evidence. Pixel-area quadrature is approximate."
         )
         explanation.setWordWrap(True)
+        self.gain_explanation = explanation
+        self._separate_gain_explanation = explanation.text()
         attention_layout.addWidget(explanation)
         self.gain_status = QtWidgets.QLabel()
         self.gain_status.setWordWrap(True)
@@ -76,6 +82,8 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         self.tabs.addTab(attention, "Attention / EIG")
 
         self.belief_tables = {}
+        self.belief_descriptions = {}
+        self.covariance_tabs = {}
         for key, title, description in (
             ("visual", "Vision", "Nearest image pixel to gaze. Marginals are N(mean, variance)."),
             ("audio", "Sound", "One common auditory perturbation N(0, P), shared across pixels. This is not sound direction."),
@@ -84,6 +92,7 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
             page_layout = QtWidgets.QVBoxLayout(page)
             label = QtWidgets.QLabel(description)
             label.setWordWrap(True)
+            self.belief_descriptions[key] = (label, description)
             page_layout.addWidget(label)
             sensory_mean = QtWidgets.QLabel()
             sensory_mean.setWordWrap(True)
@@ -96,12 +105,35 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
             covariances.addTab(hidden_covariance, "Stored hidden covariance")
             covariances.addTab(sensory_covariance, "Linearized sensory covariance")
             page_layout.addWidget(covariances, 1)
+            self.covariance_tabs[key] = covariances
             self.belief_tables[key] = (marginals, hidden_covariance, sensory_covariance, sensory_mean)
             self.tabs.addTab(page, title)
         self.tabs.setTabEnabled(2, False)
+        joint_page = QtWidgets.QWidget()
+        joint_layout = QtWidgets.QVBoxLayout(joint_page)
+        self.joint_status = QtWidgets.QLabel()
+        self.joint_status.setWordWrap(True)
+        joint_layout.addWidget(self.joint_status)
+        self.joint_tabs = QtWidgets.QTabWidget()
+        self.joint_tables = []
+        for title, columns in (
+            ("Nodes / clamps", ("Node", "Clamped", "Evidence", "Mean", "Variance")),
+            ("Posterior covariance", ()),
+            ("Learned covariance", ()),
+            ("Learned precision / couplings", ()),
+        ):
+            table = self._table(columns)
+            self.joint_tables.append(table)
+            self.joint_tabs.addTab(table, title)
+        joint_layout.addWidget(self.joint_tabs, 1)
+        self.tabs.addTab(joint_page, "Joint Graph")
+        self.tabs.setTabEnabled(3, False)
+        self.tabs.currentChanged.connect(lambda _: self.refresh())
+        self.joint_tabs.currentChanged.connect(lambda _: self.refresh())
         energy = QtWidgets.QPushButton("Open energy / weight diagnostics")
         energy.clicked.connect(self.open_energy_requested)
         layout.addWidget(energy)
+        self.energy_button = energy
         self.refresh_timer = QtCore.QTimer(self)
         self.refresh_timer.setInterval(100)
         self.refresh_timer.timeout.connect(self.refresh)
@@ -123,9 +155,12 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         table.setVerticalHeaderLabels([str(index) for index in range(values.shape[0])])
         for row in range(values.shape[0]):
             for col in range(values.shape[1]):
-                item = QtWidgets.QTableWidgetItem(f"{values[row, col]:.6g}")
-                item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-                table.setItem(row, col, item)
+                item = table.item(row, col)
+                if item is None:
+                    item = QtWidgets.QTableWidgetItem()
+                    item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                    table.setItem(row, col, item)
+                item.setText(f"{values[row, col]:.6g}")
 
     def refresh(self):
         if not self.isVisible() or self.isMinimized():
@@ -135,6 +170,22 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
             self.clear()
             return
         self.latest = frame
+        shared = frame.joint is not None
+        self.definition.setText(
+            "One fully connected learned Gaussian sensory/latent graph. "
+            "Posterior covariance is joint, including cross-modal terms; clamped rows have zero variance by assumption. "
+            "This idealized hard clamp is not calibrated physical certainty. No wave covariance or sound direction is inferred."
+            if shared else self._separate_definition
+        )
+        self.gain_explanation.setText(
+            "Expected information gain about shared FREE HIDDEN nodes from hypothetical sensory clamps, in nats. "
+            "Hard-clamping a continuous variable has infinite information about that same variable; it is NOT the target here. "
+            "RGB nodes sample a compact grid; the score map is not an action-probability distribution."
+            if shared else self._separate_gain_explanation
+        )
+        self.tabs.setTabEnabled(3, shared)
+        self.energy_button.setEnabled(not shared)
+        self.energy_button.setToolTip("Joint graph weights and full covariance are in Joint Graph." if shared else "")
         self.status.setText(
             f"{frame.visual_location} | prospective held-canvas step {frame.dt:.6g} s | "
             f"visual sampling {'on' if frame.sampling else 'off'} | refresh at most 10 Hz"
@@ -165,6 +216,16 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         )
         self.tabs.setTabEnabled(2, frame.audio is not None)
         for key, belief in (("visual", frame.visual), ("audio", frame.audio)):
+            label, description = self.belief_descriptions[key]
+            label.setText(
+                "The same shared free hidden belief is shown in both sensory tabs. "
+                + ("RGB statistics refer to the nearest compact input sample." if key == "visual" else
+                   "Audio statistics refer to the global spectral nodes, not a located source.")
+                if shared else description
+            )
+            self.covariance_tabs[key].setTabText(
+                1, "Joint sensory covariance" if shared else "Linearized sensory covariance",
+            )
             tables = self.belief_tables[key]
             if belief is None:
                 for table in tables[:3]:
@@ -173,10 +234,58 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
                 continue
             mean, variance = belief["mean"], belief["variance"]
             self._set_matrix(tables[0], np.column_stack((mean, np.sqrt(variance), variance)), columns=["Mean", "Std. dev.", "Variance"])
-            self._set_matrix(tables[1], np.diag(variance))
+            self._set_matrix(tables[1], belief["covariance"] if "covariance" in belief else np.diag(variance))
             self._set_matrix(tables[2], belief["sensory_covariance"])
             values = ", ".join(f"{value:.5g}" for value in belief["sensory_mean"])
             tables[3].setText(f"Decoded sensory mean: [{values}]")
+        if shared:
+            self._refresh_joint(frame.joint)
+
+    def _refresh_joint(self, joint):
+        clamped = joint["clamped"]
+        hidden = slice(*joint["hidden_slice"])
+        covariance = joint["covariance"][hidden, hidden]
+        sign, logdet = np.linalg.slogdet(covariance)
+        if sign <= 0:
+            raise FloatingPointError("Free hidden covariance must be positive definite")
+        entropy = .5*(covariance.shape[0]*(1+np.log(2*np.pi))+logdet)
+        self.joint_status.setText(
+            f"{len(joint['mean'])} nodes | {np.count_nonzero(clamped)} clamped | "
+            f"learning {'on' if joint['learning_enabled'] else 'frozen'}, rate {joint['learning_rate']:.4g}, "
+            f"{joint['updates']} updates | free hidden differential entropy {entropy:.6g} nats. "
+            "Node indices are input ports / free units, not assigned spatial territories. "
+            "Precision off-diagonals encode conditional couplings."
+        )
+        if self.tabs.currentIndex() != 3:
+            return
+        index = self.joint_tabs.currentIndex()
+        table = self.joint_tables[index]
+        if index:
+            key = ("covariance", "learned_covariance", "learned_precision")[index-1]
+            self._set_matrix(table, joint[key])
+            return
+        table.setRowCount(len(joint["mean"]))
+        cols = joint["visual_shape"][1]
+        for node, mean in enumerate(joint["mean"]):
+            if node < joint["audio_slice"][0]:
+                pixel, channel = divmod(node, 3)
+                row, col = divmod(pixel, cols)
+                label = f"V({row},{col},{'RGB'[channel]})"
+            elif node < joint["hidden_slice"][0]:
+                label = f"A[{node-joint['audio_slice'][0]}]"
+            else:
+                label = f"H[{node-joint['hidden_slice'][0]}]"
+            values = (
+                label, "yes" if clamped[node] else "free",
+                f"{joint['evidence'][node]:.6g}" if clamped[node] else "",
+                f"{mean:.6g}", f"{joint['variance'][node]:.6g}",
+            )
+            for col, text in enumerate(values):
+                item = table.item(node, col)
+                if item is None:
+                    item = QtWidgets.QTableWidgetItem()
+                    table.setItem(node, col, item)
+                item.setText(text)
 
     def _hover_gain(self, position):
         if self.latest is None:
@@ -200,6 +309,10 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         self.status.setText("Waiting for the first model forecast.")
         self.candidate_status.clear()
         self.tabs.setTabEnabled(2, False)
+        self.tabs.setTabEnabled(3, False)
+        self.joint_status.clear()
+        for table in self.joint_tables:
+            table.setRowCount(0)
         for tables in self.belief_tables.values():
             for table in tables[:3]:
                 table.setRowCount(0)

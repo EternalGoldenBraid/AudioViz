@@ -38,6 +38,7 @@ class AttentionOverlay(QtWidgets.QWidget):
         self.shape = shape
         self.precision: GaussianSpatialPrecision | None = None
         self.target: tuple[float, float] | None = None
+        self.sample_points: tuple[tuple[float, float], ...] = ()
         self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground)
         self.setGeometry(parent.rect())
@@ -54,9 +55,10 @@ class AttentionOverlay(QtWidgets.QWidget):
 
     def set_attention(
         self, precision: GaussianSpatialPrecision | None, scores: np.ndarray | None = None,
-        *, available: bool = False,
+        *, available: bool = False, sample_points: tuple[tuple[float, float], ...] = (),
     ) -> None:
         self.precision = precision
+        self.sample_points = sample_points
         self.target = (
             preferred_gain_position(scores, precision.gaze)
             if precision is not None and precision.peak > 0 and available and scores is not None else None
@@ -109,11 +111,23 @@ class AttentionOverlay(QtWidgets.QWidget):
             "Model gaze / 1-sigma fovea"
             if self.precision.peak > 0 else "Full-canvas attention"
         )
+        if self.sample_points:
+            painter.setPen(QtGui.QPen(QtCore.Qt.black, 2))
+            painter.setBrush(QtGui.QColor(80, 225, 255))
+            for point in self.sample_points:
+                painter.drawEllipse(position(point), 4, 4)
+            caption += " | dots: RGB sampling nodes"
         if not self.precision.sample:
             caption += " | vision not sampled"
         if self.target is not None:
             caption += " | arrow: potential visual gain"
-        text_rect = QtCore.QRectF(rect.left()+8, rect.top()+8, max(0, rect.width()-16), 44)
+        text_bounds = QtCore.QRectF(0, 0, max(0, rect.width()-28), max(0, rect.height()-22))
+        text_height = painter.boundingRect(text_bounds, QtCore.Qt.TextWordWrap, caption).height()
+        text_top = (
+            rect.bottom()-text_height-14
+            if self.precision.gaze[1] < .5 else rect.top()+8
+        )
+        text_rect = QtCore.QRectF(rect.left()+8, text_top, max(0, rect.width()-16), text_height+6)
         painter.fillRect(text_rect, QtGui.QColor(0, 0, 0, 180))
         painter.setPen(QtCore.Qt.white)
         painter.drawText(text_rect.adjusted(6, 3, -6, -3), QtCore.Qt.TextWordWrap, caption)

@@ -76,8 +76,10 @@ def test_active_vision_config_requires_explicit_camera_only_ripple():
     assert cfg.audio_precision is None
 
 
-@pytest.mark.parametrize("mode", (None, "mouse", "autonomous", "full"))
-def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, monkeypatch, mode):
+@pytest.mark.parametrize("mode,shared", (
+    (None, False), ("mouse", False), ("autonomous", False), ("full", False), ("autonomous", True),
+))
+def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, monkeypatch, mode, shared):
     main = _load_main_module()
     original_app, original_ripple = deepcopy(main.APP_CONFIG), deepcopy(main.RIPPLE_CONFIG)
     created, starts = [], []
@@ -120,7 +122,7 @@ def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, mon
     old_style = qapp.styleSheet()
     try:
         with pytest.raises(SystemExit) as stopped:
-            main.main([] if mode is None else ["--active-vision", mode])
+            main.main(([] if mode is None else ["--active-vision", mode]) + (["--shared-sensory-graph"] if shared else []))
         assert stopped.value.code == 0
         ripple = next(value for value in created if "source_orchestrator_config" in value)
         assert ripple["processor"] is (processor if mode is None else None)
@@ -128,6 +130,7 @@ def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, mon
         if mode is not None:
             assert len(created) == 1
             assert ripple["active_vision"].mode == mode
+            assert ripple["active_vision"].shared_sensory_graph is shared
             assert ripple["source_orchestrator_config"].camera_frame.enabled
             assert not ripple["source_orchestrator_config"].audio.enabled
         assert main.APP_CONFIG == original_app and main.RIPPLE_CONFIG == original_ripple
@@ -135,10 +138,13 @@ def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, mon
         qapp.setStyleSheet(old_style)
 
 
-def test_main_active_audio_requires_active_vision_and_routes_processor_to_ripple(qapp, monkeypatch):
+@pytest.mark.parametrize("shared", (False, True))
+def test_main_active_audio_requires_active_vision_and_routes_processor_to_ripple(qapp, monkeypatch, shared):
     main = _load_main_module()
     with pytest.raises(SystemExit):
         main.main(["--active-audio"])
+    with pytest.raises(SystemExit):
+        main.main(["--shared-sensory-graph"])
 
     created, starts = [], []
 
@@ -179,7 +185,7 @@ def test_main_active_audio_requires_active_vision_and_routes_processor_to_ripple
     old_style = qapp.styleSheet()
     try:
         with pytest.raises(SystemExit) as stopped:
-            main.main(["--active-vision", "autonomous", "--active-audio"])
+            main.main(["--active-vision", "autonomous", "--active-audio"] + (["--shared-sensory-graph"] if shared else []))
         assert stopped.value.code == 0
         assert len(created) == 1
         ripple = created[0]
@@ -187,6 +193,7 @@ def test_main_active_audio_requires_active_vision_and_routes_processor_to_ripple
         assert starts == [True]
         assert ripple["active_vision"].mode == "autonomous"
         assert ripple["active_vision"].audio_precision == pytest.approx(1.0)
+        assert ripple["active_vision"].shared_sensory_graph is shared
         assert ripple["source_orchestrator_config"].audio.enabled is True
         assert ripple["source_orchestrator_config"].camera_frame.enabled is True
     finally:

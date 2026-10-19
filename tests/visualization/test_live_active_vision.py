@@ -14,6 +14,7 @@ from audioviz.sources import (
 from audioviz.sources.gaze import ActiveVisionConfig, GazePolicy
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 from audioviz.utils.spatial_preview import spatial_preview
+from audioviz.utils.array_backend import to_numpy
 from audioviz.visualization import ripple_wave_visualizer as module
 
 
@@ -300,6 +301,120 @@ def test_panel_keeps_global_sound_and_visual_observation_independent(qapp, reque
         panel.reset_button.click()
         assert widget.visual_prediction is None
         assert widget.source_orchestrator.audio_prediction is None
+    finally:
+        widget.close()
+        qapp.processEvents()
+        widget.deleteLater()
+        qapp.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+
+
+@pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
+def test_shared_graph_clamps_only_fresh_enabled_inputs_and_keeps_joint_learning(qapp, request, monkeypatch, backend):
+    if backend == "cupy":
+        request.getfixturevalue("cupy_backend")
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("Native widget requires a window-system context")
+    now = [10.]
+    monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
+    processor = FakeAudioProcessor()
+    stimulus = CircularDotSource(CircularDotConfig(resolution=(12, 16), radius=3, duration=2))
+    widget = module.RippleWaveVisualizer(
+        processor=processor, resolution=(12, 16), plane_size_m=(1, 1),
+        use_shader=backend == "opengl", use_gpu=backend == "cupy",
+        camera_capture=CircularDotCapture(stimulus), source_orchestrator_config=source_config(),
+        active_vision=ActiveVisionConfig(mode="full", audio_precision=1, shared_sensory_graph=True),
+    )
+    widget.timer.stop()
+
+    def advance():
+        now[0] += .05
+        widget.update_visualization()
+
+    try:
+        widget.resize(1000, 800)
+        widget.show()
+        qapp.processEvents()
+        processor.push_spectrum(.4)
+        advance()
+        source = widget.source_orchestrator
+        graph = source.sensory_graph
+        assert graph.total_nodes == 72
+        assert source.visual_uncertainty is None and source.audio_uncertainty is None
+        assert source.hidden_coupling is None
+        assert source.visual_readout.hidden.shape == (1, 1, 8)
+        if backend == "opengl":
+            assert source.shader_model.hidden._handle is None
+        assert widget.renderer.prepare_frame()
+        observed = to_numpy(source.graph_io.sample(source.visual_observation)).ravel()
+        np.testing.assert_allclose(to_numpy(graph.mean[graph.visual_slice]), observed)
+        np.testing.assert_allclose(to_numpy(graph.mean[graph.audio_slice]), widget.audio_source.recent_observation())
+        assert np.count_nonzero(to_numpy(graph.clamped)) == 64
+        assert graph.updates == 1
+        samples = np.arange(48, dtype=np.float32).reshape(4, 4, 3)/47
+        rendered = spatial_preview(source.graph_io.render(source.engine.backend.asarray(samples)), max_side=16)
+        rows, cols = source.graph_io.sample_rows, source.graph_io.sample_cols
+        np.testing.assert_allclose(rendered[rows[:, None], cols[None, :]], samples, atol=1e-7)
+        expected = np.empty((12, 16, 3))
+        for channel in range(3):
+            horizontal = np.array([np.interp(np.arange(16), cols, values[:, channel]) for values in samples])
+            for col in range(16):
+                expected[:, col, channel] = np.interp(np.arange(12), rows, horizontal[:, col])
+        np.testing.assert_allclose(rendered, expected, atol=2e-7)
+        source.graph_io.render(graph.visual_prediction)
+
+        widget.controls_button.click()
+        qapp.processEvents()
+        panel, controls = widget.control_panel, widget.gaze_controls
+        assert not controls.baseline.isVisible() and not controls.peak.isVisible()
+        controls.observe.setChecked(False)
+        panel.source_toggle_checkboxes["audio"].click()
+        learned = to_numpy(graph.learned_covariance).copy()
+        advance()
+        assert not to_numpy(graph.clamped).any()
+        assert graph.updates == 1
+        np.testing.assert_array_equal(to_numpy(graph.learned_covariance), learned)
+        assert np.any(to_numpy(graph.mean[graph.audio_slice]) != 0)
+
+        panel.source_toggle_checkboxes["audio"].click()
+        processor.push_spectrum(0.)
+        advance()
+        np.testing.assert_array_equal(to_numpy(graph.mean[graph.audio_slice]), np.zeros(16))
+        assert np.count_nonzero(to_numpy(graph.clamped)) == 16
+        assert graph.updates == 2
+        advance()
+        assert not to_numpy(graph.clamped).any() and graph.updates == 2
+
+        panel.source_control_widgets[("learning-dynamics", "learning_enabled")].click()
+        assert not graph.learning_enabled
+        panel.source_control_widgets[("learning-dynamics", "learning_rate")].setValue(.1)
+        assert graph.learning_rate == .1
+        widget.set_model_diagnostics_visible(True)
+        now[0] += .11
+        widget.belief_diagnostics.refresh()
+        view = widget.belief_diagnostics
+        assert view.latest.joint["covariance"].shape == (72, 72)
+        np.testing.assert_array_equal(view.latest.visual["mean"], view.latest.audio["mean"])
+        assert view.tabs.isTabEnabled(3) and not view.energy_button.isEnabled()
+        view.tabs.setCurrentIndex(3)
+        view.refresh()
+        assert view.joint_tables[0].rowCount() == 72
+        assert "free" == view.joint_tables[0].item(0, 1).text()
+
+        widget.set_prediction_scene_visible(True)
+        scene = widget.prediction_scene
+        assert scene.layout_selector.currentData() == "comparison"
+        assert not scene.layout_selector.model().item(scene.layout_selector.findData("3d")).isEnabled()
+        controls.observe.setChecked(True)
+        advance()
+        camera = next(item for item in scene.sources if item.mapping.key == "camera")
+        assert camera.prediction.shape == (12, 16, 3)
+        assert camera.stream_state is None and camera.hidden is None
+        learned = to_numpy(graph.learned_covariance).copy()
+        updates = graph.updates
+        panel.reset_button.click()
+        assert widget.visual_prediction is None and not to_numpy(graph.clamped).any()
+        np.testing.assert_array_equal(to_numpy(graph.learned_covariance), learned)
+        assert graph.updates == updates
     finally:
         widget.close()
         qapp.processEvents()
