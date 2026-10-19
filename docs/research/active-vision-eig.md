@@ -3,6 +3,25 @@
 Status: research proposal — not an implementation specification.
 Planning branch: `research/active-vision-eig`
 
+## Literature and conceptual grounding for coding agents
+
+**Read before implementing an EIG policy.** The experiment is motivated by active inference, not by generic saliency detection or reward-based tracking. These sources provide context; they are **not** a requirement to reproduce any particular published architecture.
+
+1. **Friston, Adams, Perrinet & Breakspear (2012), [Perceptions as Hypotheses: Saccades as Experiments](https://doi.org/10.3389/fpsyg.2012.00151)** — **start here**. Directly relevant to the circular-dot thought experiment: eye movements as active tests of perceptual hypotheses, and selecting informative future observations. [Open full text](https://pmc.ncbi.nlm.nih.gov/articles/PMC3361132/).
+2. **Parr, Pezzulo & Friston (2022), [Active Inference: The Free Energy Principle in Mind, Brain, and Behavior](https://direct.mit.edu/books/oa-monograph/5299/Active-InferenceThe-Free-Energy-Principle-in-Mind)** — open-access foundational treatment. See especially the overview, generative models, and chapters on designing active inference models and discrete/continuous time.
+3. **Lanillos et al. (2021), [Active Inference in Robotics and Artificial Agents: Survey and Challenges](https://arxiv.org/abs/2112.01871)** — engineering-oriented survey of state estimation, action, planning, and learning under active inference; useful for implementation alternatives and limitations.
+4. **Van de Maele et al. (2021), [Active Vision for Robot Manipulators Using the Free Energy Principle](https://doi.org/10.3389/fnbot.2021.642780)** — concrete active-viewpoint selection with learned generative models and expected free energy. Includes an instrumental reaching task; **our first experiment deliberately omits instrumental utility**.
+5. **Millidge et al. (2021), [Whence the Expected Free Energy?](https://direct.mit.edu/neco/article/33/2/447/95645/Whence-the-Expected-Free-Energy)** — theoretical caution about deriving and interpreting expected free energy. Useful when deciding what objective we actually optimize.
+
+### Interpretation guardrails
+
+- The initial sensory-space mutual-information objective is **our deliberately simplified epistemic-only design choice**, not a claim that all active inference formulations operate only on sensory states.
+- Expected information gain is an expectation over **possible future observations before observing them**, not the realized prediction error afterward.
+- Confirming a hypothesis may be useful, but if every plausible hypothesis predicts the same observation, that observation has little expected information gain. Prefer measurements that discriminate uncertain alternatives.
+- To allow sparse verification, define an observation budget or sampling cost, and include a **skip observation** action; otherwise an information-seeking agent may simply sample at every step.
+- The dot generator's full trajectory and random seed are for the evaluator only. The agent must never use ground truth to choose its gaze.
+- Agents should document which equations come from the literature and which approximations or modeling choices are specific to AudioViz.
+
 ## Motivation
 
 AudioViz currently explores predictive coding over visual and audio inputs. We want to investigate whether a predictive model can **actively select what to observe** instead of passively consuming uniformly precise camera frames.
