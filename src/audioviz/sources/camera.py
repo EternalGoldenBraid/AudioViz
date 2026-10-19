@@ -36,6 +36,7 @@ class CameraFrameSource:
         capture=None,
         cv2_loader: Callable = load_cv2,
         backend: ModuleType = np,
+        frame_mapper: Callable | None = None,
     ) -> None:
         self.resolution = tuple(int(value) for value in resolution)
         self.camera_index = camera_index
@@ -44,6 +45,7 @@ class CameraFrameSource:
         self.capture = capture
         self.cv2_loader = cv2_loader
         self.backend = backend
+        self.frame_mapper = frame_mapper
 
     def set_enabled(self, enabled: bool) -> None:
         if enabled:
@@ -74,6 +76,8 @@ class CameraFrameSource:
         ok, frame = self.capture.read()
         if not ok or frame is None:
             return None
+        if self.frame_mapper is not None:
+            return self.frame_mapper(frame, gain=self.gain)
         return self.frame_to_excitation_grid(
             frame,
             resolution=self.resolution,

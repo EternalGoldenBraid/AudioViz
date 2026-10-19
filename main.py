@@ -153,6 +153,7 @@ RIPPLE_CONFIG = {
             "enabled": True,
             "inputs": ("camera_frame",),
             "inference": {
+                "dtype": "float32",
                 "hidden_channels": 6,
                 "steps": 8,
                 "hidden_rate": 0.1,

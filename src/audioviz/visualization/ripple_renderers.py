@@ -13,6 +13,7 @@ FIELD_VERTEX_SHADER_SOURCE = """
 #version 330 core
 
 out vec2 field_uv;
+uniform vec2 field_scale;
 
 void main() {
     vec2 positions[4] = vec2[](
@@ -30,7 +31,7 @@ void main() {
 
     vec2 position = positions[gl_VertexID];
     field_uv = tex_coords[gl_VertexID];
-    gl_Position = vec4(position, 0.0, 1.0);
+    gl_Position = vec4(position * field_scale, 0.0, 1.0);
 }
 """
 
@@ -42,20 +43,22 @@ in vec2 field_uv;
 out vec4 fragment_color;
 
 uniform sampler2D field_texture;
-uniform float value_scale;
+uniform sampler2D color_texture;
+uniform float display_limit;
+uniform bool rgb_enabled;
+uniform int field_channels;
 
 void main() {
-    float wave_value = texture(field_texture, field_uv).r;
-    float signed_level = atan(wave_value * value_scale) / 1.57079632679;
-
-    vec3 negative_color = vec3(0.05, 0.18, 0.75);
-    vec3 neutral_color = vec3(0.015, 0.015, 0.02);
-    vec3 positive_color = vec3(1.0, 0.48, 0.06);
-
-    vec3 color = signed_level >= 0.0
-        ? mix(neutral_color, positive_color, signed_level)
-        : mix(neutral_color, negative_color, -signed_level);
-
+    vec3 value = texture(field_texture, vec2(field_uv.x, 1.0-field_uv.y)).rgb;
+    if(field_channels==1)value=vec3(value.r);
+    vec3 color;
+    if(rgb_enabled) {
+        color=clamp(value/display_limit,0.0,1.0);
+    } else {
+        float mean_value=(value.r+value.g+value.b)/3.0;
+        float level=clamp(0.5+0.5*mean_value/display_limit,0.0,1.0);
+        color=texture(color_texture,vec2(level,0.5)).rgb;
+    }
     fragment_color = vec4(color, 1.0);
 }
 """
@@ -339,15 +342,112 @@ def _draw_overlay_segment(
 class OpenGLFieldRenderer:
     """Render shader-owned ripple textures without NumPy readback."""
 
-    def __init__(self, *, value_scale: float = 0.08):
+    def __init__(
+        self, *, value_scale: float = 0.08, rgb_canvas_enabled=False,
+        auto_level_floor=.1, auto_level_activation_threshold=.1,
+    ):
+        if auto_level_floor < 0 or auto_level_activation_threshold < 0:
+            raise ValueError("OpenGL display floor and activation threshold must be non-negative")
         self.widget = OpenGLFieldWidget(value_scale=value_scale)
+        self.widget.rgb_enabled = bool(rgb_canvas_enabled)
+        self._auto = True
+        self._pending = True
+        self._floor = float(auto_level_floor)
+        self._threshold = float(auto_level_activation_threshold)
+        self._histogram = None
+
+    def set_rgb_canvas_enabled(self, enabled):
+        self.widget.rgb_enabled = bool(enabled)
+        self._pending = True
+
+    def set_auto_percentile_levels(self, enabled):
+        self._auto = bool(enabled)
+        self._pending = True
+
+    def set_auto_level_floor(self, value):
+        if value < 0:
+            raise ValueError("auto_level_floor must be non-negative")
+        self._floor = float(value)
+
+    def set_auto_level_activation_threshold(self, value):
+        if value < 0:
+            raise ValueError("activation threshold must be non-negative")
+        self._threshold = float(value)
+
+    def reset_view(self):
+        self._pending = True
 
     def prepare_frame(self) -> bool:
         return self.widget.prepare_frame()
 
     def render(self, field_source: OpenGLFieldSource) -> None:
+        if self._auto or self._pending:
+            percentile = 98. if self._auto else 100.
+            limit = self._native_percentile(field_source.get_field(), percentile)
+            if self._auto:
+                self.widget.display_limit = (
+                    max(self._floor, 1e-9) if limit is None or limit < self._threshold else max(limit, 1e-9)
+                )
+            elif limit is not None and limit > 0:
+                self.widget.display_limit = limit
+            self._pending = False
         self.widget.set_field_source(field_source)
         self.widget.update()
+
+    def _native_percentile(self, field, percentile):
+        """Exact positive-float order statistic via four radix histogram passes."""
+        from audioviz.utils.opengl_compute import GLArray
+
+        if self._histogram is None:
+            self._histogram = GLArray(field.device, (256,))
+        rgb = self.widget.rgb_enabled
+        channels = field.shape[-1]
+        count = field.size if rgb else field.size // channels
+        body = """
+        layout(std430,binding=0) readonly buffer Field {float values[];};
+        layout(std430,binding=1) buffer Histogram {uint histogram[];};
+        uniform int count,rgb_mode,shift,prefix,field_channels;
+        void main(){
+            int i=int(gl_GlobalInvocationID.x);if(i>=count)return;
+            float v=abs(rgb_mode==1 || field_channels==1?values[i]:
+                (values[i*3]+values[i*3+1]+values[i*3+2])/3.0);
+            if(v==0.0 || isnan(v) || isinf(v))return;
+            uint bits=floatBitsToUint(v);
+            uint mask=shift==24?0u:(0xffffffffu<<(uint(shift)+8u));
+            if((bits&mask)!=uint(prefix))return;
+            atomicAdd(histogram[(bits>>uint(shift))&255u],1u);
+        }"""
+
+        def histogram(shift, prefix):
+            self._histogram.fill(0)
+            field.device.run(
+                body, [field, self._histogram], count, count=count,
+                rgb_mode=int(rgb), shift=shift, prefix=int(prefix), field_channels=channels,
+            )
+            return self._histogram.download().view(np.uint32).astype(np.int64)
+
+        first = histogram(24, 0)
+        total = int(first.sum())
+        if total == 0:
+            return None
+        position = (total - 1) * percentile / 100.
+        ranks = (int(np.floor(position)), int(np.ceil(position)))
+        selected = []
+        cache = {(24, 0): first}
+        for rank in ranks:
+            prefix = 0
+            for shift in (24, 16, 8, 0):
+                key = shift, prefix
+                if key not in cache:
+                    cache[key] = histogram(shift, prefix)
+                counts = cache[key]
+                cumulative = counts.cumsum()
+                bucket = int(np.searchsorted(cumulative, rank, side="right"))
+                if bucket:
+                    rank -= int(cumulative[bucket - 1])
+                prefix |= bucket << shift
+            selected.append(float(np.array(prefix, dtype=np.uint32).view(np.float32)))
+        return selected[0] + (selected[1] - selected[0]) * (position - ranks[0])
 
 
 class OpenGLFieldWidget(QtWidgets.QOpenGLWidget):
@@ -360,10 +460,13 @@ class OpenGLFieldWidget(QtWidgets.QOpenGLWidget):
         self.setFormat(surface_format)
 
         self.value_scale = value_scale
+        self.display_limit = 1.0 / value_scale
+        self.rgb_enabled = False
         self._field_source: Optional[OpenGLFieldSource] = None
         self._gl = None
         self._program = None
         self._vertex_array = None
+        self._color_texture = None
 
     def prepare_frame(self) -> bool:
         if self.context() is None:
@@ -383,13 +486,22 @@ class OpenGLFieldWidget(QtWidgets.QOpenGLWidget):
             fragment_source=FIELD_FRAGMENT_SHADER_SOURCE,
         )
         self._vertex_array = self._create_vertex_array()
+        self.context().aboutToBeDestroyed.connect(self.cleanup)
+        self._color_texture = int(gl.glGenTextures(1))
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self._color_texture)
+        colors = (cm.get_cmap("inferno")(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB8, 256, 1, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, colors)
 
     def paintGL(self) -> None:
         gl = self._gl
         if gl is None or self._program is None:
             return
 
-        gl.glViewport(0, 0, self.width(), self.height())
+        ratio = self.devicePixelRatioF()
+        gl.glViewport(0, 0, round(self.width() * ratio), round(self.height() * ratio))
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
@@ -407,15 +519,40 @@ class OpenGLFieldWidget(QtWidgets.QOpenGLWidget):
             texture_unit,
         )
         gl.glUniform1f(
-            gl.glGetUniformLocation(self._program, "value_scale"),
-            float(self.value_scale),
+            gl.glGetUniformLocation(self._program, "display_limit"),
+            float(self.display_limit),
         )
+        gl.glUniform1i(gl.glGetUniformLocation(self._program, "rgb_enabled"), int(self.rgb_enabled))
+        shape = self._field_source.get_opengl_field_shape()
+        aspect = shape[1] / shape[0]
+        view_aspect = self.width() / max(1, self.height())
+        scale_x, scale_y = (
+            (1., view_aspect / aspect) if view_aspect < aspect else (aspect / view_aspect, 1.)
+        )
+        gl.glUniform2f(gl.glGetUniformLocation(self._program, "field_scale"), scale_x, scale_y)
+        gl.glUniform1i(
+            gl.glGetUniformLocation(self._program, "field_channels"), shape[2] if len(shape) == 3 else 1,
+        )
+        gl.glActiveTexture(gl.GL_TEXTURE1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self._color_texture)
+        gl.glUniform1i(gl.glGetUniformLocation(self._program, "color_texture"), 1)
 
         gl.glBindVertexArray(self._vertex_array)
         vertex_count = 4
         gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, vertex_count)
         gl.glBindVertexArray(0)
         gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+    def cleanup(self):
+        if self._program is None:
+            return
+        self.makeCurrent()
+        if self._field_source is not None:
+            self._field_source.propagator.close()
+        self._gl.glDeleteProgram(self._program)
+        self._gl.glDeleteVertexArrays(1, [self._vertex_array])
+        self._gl.glDeleteTextures([self._color_texture])
+        self._program = None
 
     def _compile_program(self, *, vertex_source: str, fragment_source: str) -> int:
         gl = self._gl

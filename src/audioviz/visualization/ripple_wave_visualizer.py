@@ -158,10 +158,6 @@ class RippleWaveVisualizer(VisualizerBase):
             raise NotImplementedError(
                 "Pose-medium coupling currently requires the CPU ripple backend."
             )
-        if source_orchestrator_config.camera_frame.enabled and self.use_shader:
-            raise NotImplementedError(
-                "Camera-frame source currently requires the CPU/GPU ripple backend."
-            )
 
         self.plane_size_m = plane_size_m
         self.resolution = resolution
@@ -224,12 +220,16 @@ class RippleWaveVisualizer(VisualizerBase):
             camera_capture=camera_capture,
         )
         self.source_orchestrator.set_base_amplitude(self.base_amplitude)
-        self.visual_prediction = self.source_orchestrator.visual_readout.predict(
+        self.visual_prediction = None if self.use_shader else self.source_orchestrator.visual_readout.predict(
             self.engine.get_field()
         )
 
         self.renderer = (
-            OpenGLFieldRenderer() if self.use_shader else NumpyImageRenderer(
+            OpenGLFieldRenderer(
+                rgb_canvas_enabled=self.rgb_canvas_enabled,
+                auto_level_floor=self.auto_color_floor,
+                auto_level_activation_threshold=self.auto_color_activation_threshold,
+            ) if self.use_shader else NumpyImageRenderer(
                 rgb_canvas_enabled=self.rgb_canvas_enabled,
                 auto_level_floor=self.auto_color_floor,
                 auto_level_activation_threshold=self.auto_color_activation_threshold,
@@ -259,12 +259,10 @@ class RippleWaveVisualizer(VisualizerBase):
         layout.addWidget(controls_button)
         self.diagnostics_button = QtWidgets.QPushButton("Show Inference / Learning Plots")
         self.diagnostics_button.setCheckable(True)
-        self.diagnostics_button.setEnabled(not self.use_shader)
         self.diagnostics_button.toggled.connect(self.set_prediction_diagnostics_visible)
         layout.addWidget(self.diagnostics_button)
         self.scene_button = QtWidgets.QPushButton("Show Predictions / 3D Scene")
         self.scene_button.setCheckable(True)
-        self.scene_button.setEnabled(not self.use_shader)
         self.scene_button.toggled.connect(self.set_prediction_scene_visible)
         layout.addWidget(self.scene_button)
 
@@ -328,7 +326,7 @@ class RippleWaveVisualizer(VisualizerBase):
         reset_view = getattr(self.renderer, "reset_view", None)
         if callable(reset_view):
             reset_view()
-        self.visual_prediction = self.source_orchestrator.visual_readout.predict(
+        self.visual_prediction = None if self.use_shader else self.source_orchestrator.visual_readout.predict(
             self.engine.get_field()
         )
         if self.renderer.prepare_frame():
@@ -353,8 +351,6 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def set_prediction_scene_visible(self, visible: bool) -> None:
         if visible:
-            if self.use_shader:
-                raise NotImplementedError("The multimodal 3D scene requires an array-backed CPU/GPU canvas.")
             if self.prediction_scene is None:
                 self.prediction_scene = PredictionSceneWindow(self)
                 self.prediction_scene.visibility_changed.connect(self._set_diagnostics_collection)
@@ -728,6 +724,9 @@ class RippleWaveVisualizer(VisualizerBase):
             self.prediction_diagnostics.close()
         self.close_pose_sources()
         self.close_camera_source()
+        if self.use_shader and self.renderer.prepare_frame():
+            self.engine.propagator.close()
+            self.renderer.widget.cleanup()
         super().closeEvent(event)
 
     def set_learning_overlay_enabled(self, enabled: bool) -> None:

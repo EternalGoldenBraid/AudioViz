@@ -66,44 +66,46 @@ class RippleSourceControlBinding:
                 empty_message="No pose-specific controls are available yet.",
             )
         )
-        transform_config = visualizer.prediction_error_transform.config
-        if transform_config.enabled or visualizer.audio_source.processor is not None or not visualizer.use_shader:
-            pathway_config = visualizer.source_orchestrator.visual_readout.config
+        pathway_config = visualizer.source_orchestrator.visual_readout.config
+        sections.append(
+            ControlPanelSection(
+                key="learning-dynamics",
+                title="Sensory Inference and Learning",
+                controls=PredictionLearningControls(
+                    enabled=pathway_config.learning_enabled,
+                    inference_steps=pathway_config.inference_steps,
+                    inference_rate=pathway_config.inference_rate,
+                    canvas_rate=pathway_config.canvas_rate,
+                    learning_rate=pathway_config.learning_rate,
+                    weight_decay=pathway_config.weight_decay,
+                    weight_clip=pathway_config.weight_clip,
+                    gradient_clip=pathway_config.gradient_clip,
+                    cross_modal_enabled=pathway_config.cross_modal_enabled,
+                    cross_modal_available=(
+                        visualizer.source_orchestrator.hidden_coupling is not None
+                        or (
+                            visualizer.source_orchestrator.shader_model is not None
+                            and visualizer.source_orchestrator.audio_readout is not None
+                        )
+                    ),
+                ).get_controls(),
+                expanded=True,
+            )
+        )
+        if not visualizer.use_shader:
             sections.append(
                 ControlPanelSection(
-                    key="learning-dynamics",
-                    title="Sensory Inference and Learning",
-                    controls=PredictionLearningControls(
-                        enabled=pathway_config.learning_enabled,
-                        inference_steps=pathway_config.inference_steps,
-                        inference_rate=pathway_config.inference_rate,
-                        canvas_rate=pathway_config.canvas_rate,
-                        learning_rate=pathway_config.learning_rate,
-                        weight_decay=pathway_config.weight_decay,
-                        weight_clip=pathway_config.weight_clip,
-                        gradient_clip=pathway_config.gradient_clip,
-                        cross_modal_enabled=pathway_config.cross_modal_enabled,
-                        cross_modal_available=(
-                            visualizer.source_orchestrator.hidden_coupling is not None and not visualizer.use_shader
-                        ),
+                    key="learning-overlay",
+                    title="Substrate Conductances (Fixed)",
+                    controls=PredictionOverlayControls(
+                        enabled=visualizer.show_learning_overlay,
+                        stride=visualizer.learning_overlay_stride,
+                        threshold=visualizer.learning_overlay_threshold,
+                        scale=visualizer.learning_overlay_scale,
                     ).get_controls(),
-                    expanded=True,
+                    expanded=visualizer.show_learning_overlay,
                 )
             )
-            if not visualizer.use_shader:
-                sections.append(
-                    ControlPanelSection(
-                        key="learning-overlay",
-                        title="Substrate Conductances (Fixed)",
-                        controls=PredictionOverlayControls(
-                            enabled=visualizer.show_learning_overlay,
-                            stride=visualizer.learning_overlay_stride,
-                            threshold=visualizer.learning_overlay_threshold,
-                            scale=visualizer.learning_overlay_scale,
-                        ).get_controls(),
-                        expanded=visualizer.show_learning_overlay,
-                    )
-                )
         return tuple(sections)
 
     def build_toggles(self) -> tuple[SourceToggle, ...]:
@@ -119,13 +121,13 @@ class RippleSourceControlBinding:
                 key="audio",
                 label="Audio",
                 enabled=visualizer.use_audio_source,
-                available=visualizer.audio_source.processor is not None and not visualizer.use_shader,
+                available=visualizer.audio_source.processor is not None,
             ),
             SourceToggle(
                 key="camera",
                 label="Camera Frame",
                 enabled=visualizer.use_camera_source,
-                available=not visualizer.use_shader,
+                available=True,
             ),
             SourceToggle(
                 key="pose",
@@ -161,15 +163,9 @@ class RippleSourceControlBinding:
             visualizer.use_synthetic = enabled
             return
         if source_key == "audio":
-            if enabled and visualizer.use_shader:
-                raise NotImplementedError("Audio predictive inference requires the CPU/GPU ripple backend.")
             visualizer.audio_source.set_enabled(enabled)
             return
         if source_key == "camera":
-            if enabled and visualizer.use_shader:
-                raise NotImplementedError(
-                    "Camera-frame source currently requires the CPU/GPU ripple backend."
-                )
             visualizer.camera_source.set_enabled(enabled)
             return
         if source_key == "pose":
