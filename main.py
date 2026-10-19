@@ -87,6 +87,7 @@ RIPPLE_CONFIG = {
         "initial_variance": 1.0,
         "process_variance": 0.01,
         "memory_time_constant": 1/3,
+        "audio_precision": None,
     },
     "field": {
         "n_sources": 5,
@@ -201,8 +202,9 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     gaze = config.get("active_vision", {})
     active_vision = None
     if gaze.get("enabled", False):
-        if audio["enabled"]:
-            raise ValueError("Active vision requires ripple audio to be disabled")
+        audio_precision = gaze.get("audio_precision")
+        if audio["enabled"] and audio_precision is None:
+            raise ValueError("Active vision requires ripple audio to be disabled unless audio_precision is configured")
         active_vision = ActiveVisionConfig(
             mode=gaze["mode"],
             precision=GaussianSpatialPrecision(
@@ -211,6 +213,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             initial_variance=gaze["initial_variance"],
             process_variance=gaze["process_variance"],
             memory_time_constant=gaze["memory_time_constant"],
+            audio_precision=audio_precision,
         )
 
     return {
@@ -389,22 +392,35 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Audio Ripple main application")
     parser.add_argument(
         "--active-vision", choices=("mouse", "autonomous", "full"),
-        help="Camera-only session with shared gaze controls; audio windows and audio devices are disabled.",
+        help="Camera-only session with shared gaze controls; audio windows and audio devices are disabled unless --active-audio is passed.",
+    )
+    parser.add_argument(
+        "--active-audio", action="store_true",
+        help="Opt into common-mode temporal Gaussian audio inference alongside --active-vision.",
     )
     args = parser.parse_args(argv)
+    if args.active_audio and args.active_vision is None:
+        parser.error("--active-audio requires --active-vision")
     app_config, source_config = deepcopy(APP_CONFIG), deepcopy(RIPPLE_CONFIG)
     if args.active_vision is not None:
         source_config["active_vision"].update(enabled=True, mode=args.active_vision)
-        source_config["sources"]["audio"]["enabled"] = False
+        if args.active_audio:
+            if source_config["active_vision"].get("audio_precision") is None:
+                source_config["active_vision"]["audio_precision"] = 1.0
+            source_config["sources"]["audio"]["enabled"] = True
+            logger.info("Active vision + audio: temporal Gaussian visual and common-mode audio inference enabled.")
+        else:
+            source_config["sources"]["audio"]["enabled"] = False
+            logger.info("Active vision: camera-only session; audio windows and audio device initialization disabled.")
         source_config["sources"]["camera_frame"]["enabled"] = True
         for name in ("spectrogram", "helix"):
             app_config["windows"][name]["enabled"] = False
         app_config["windows"]["ripples"]["enabled"] = True
-        logger.info("Active vision: camera-only session; audio windows and audio device initialization disabled.")
     windows = app_config["windows"]
     ripple_config = build_ripple_visualizer_config(source_config) if windows["ripples"]["enabled"] else None
     camera_only = (
         ripple_config is not None and ripple_config["active_vision"] is not None
+        and ripple_config["active_vision"].audio_precision is None
         and not windows["spectrogram"]["enabled"] and not windows["helix"]["enabled"]
     )
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -457,8 +473,12 @@ def main(argv=None):
     # Create Ripple Wave Visualizer
     ripples_window_config = windows["ripples"]
     if ripples_window_config["enabled"]:
+        active_vision = ripple_config["active_vision"]
+        ripple_processor = (
+            processor if active_vision is None or active_vision.audio_precision is not None else None
+        )
         ripple_window = RippleWaveVisualizer(
-            processor=None if ripple_config["active_vision"] is not None else processor,
+            processor=ripple_processor,
             **ripple_config
         )
         ripple_window.setWindowTitle(ripples_window_config["title"])
