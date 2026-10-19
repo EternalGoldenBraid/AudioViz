@@ -57,8 +57,8 @@
         <mxCell id="filter-cov-freeze" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="filter-cov" target="filter-freeze" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="filter-freeze-condition" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6c8ebf;strokeWidth=2;endArrow=block;exitX=0.5;exitY=1;entryX=0.76744;entryY=0;" edge="1" source="filter-freeze" target="filter-condition" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
         <mxCell id="filter-evidence-condition" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#9673a6;strokeWidth=2;endArrow=block;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="filter-evidence" target="filter-condition" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="filter-memory" value="next frame: m+, P+" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=block;dashed=1;fontSize=14;fontColor=#3b6330;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" edge="1" source="filter-condition" target="filter-cov" parent="1">
-          <mxGeometry relative="1" x="0.5" y="-15" as="geometry"><Array as="points"><mxPoint x="1400" y="685"/><mxPoint x="1400" y="150"/><mxPoint x="700" y="150"/></Array></mxGeometry>
+        <mxCell id="filter-memory" value="next frame: m+, P+" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#82b366;strokeWidth=2;endArrow=block;dashed=1;fontSize=14;fontColor=#3b6330;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" edge="1" source="filter-condition" target="filter-mean" parent="1">
+          <mxGeometry relative="1" x="0.35" y="-15" as="geometry"><Array as="points"><mxPoint x="1400" y="685"/><mxPoint x="1400" y="150"/><mxPoint x="240" y="150"/></Array></mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>
