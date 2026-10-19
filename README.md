@@ -55,6 +55,13 @@ to opt into the common-mode temporal Gaussian audio filter alongside active visi
 ```bash
 python main.py --active-vision mouse --active-audio
 ```
+Add `--shared-sensory-graph` (or set `RIPPLE_CONFIG["active_vision"]["shared_sensory_graph"] = True`;
+requires `--active-vision`, with `--active-audio` optional) to opt into a
+compact **fully connected learned Gaussian sensory/latent graph** with exact
+hard evidence clamps instead of the fixed-weight two-branch filter:
+```bash
+python main.py --active-vision mouse --active-audio --shared-sensory-graph
+```
 Without `--active-audio`, the explicit camera-only profile skips audio
 device/hardware initialization, disables the spectrogram and pitch-helix windows
 and ripple audio, and enables camera/ripple with the shared `GazeControls` panel
@@ -64,18 +71,30 @@ temporal Gaussian filter. Passing `--active-audio` initializes audio capture and
 routes freshness-gated 16-band spectral observations through
 `GaussianAudioUncertainty` into the shared deterministic wave medium (without
 claiming physical sound localization or learned modality-specialized regions).
+When `--shared-sensory-graph` is enabled, a single compact joint Gaussian graph
+(`SharedSensoryGraph`: at most `4 x 4` RGB visual ports = 48 nodes, 16 spectral
+audio nodes, and 8 free internal hidden units = 72 nodes, `<= 96` max) maintains
+one persistent joint belief `N(m, P)` and a learned SPD population distribution
+`N(mu, C)` updated by regularized masked online Gaussian moment/EM matching
+only on actively observed sensory coordinates (missing/disabled modalities stay
+unclamped rather than zero-clamped, assigned-precision spinboxes are hidden in
+favor of `1-sigma` foveal / full-canvas hard clamps, and prospective EIG targets
+finite mutual information about the free internal hidden units `H` rather than
+infinite all-state hard-clamp self-information).
 The canvas toolbar provides **Controls**, **Predictions**, and **Diagnostics**
 (`BeliefDiagnosticsView`, polling bounded `10 Hz` host snapshots of hidden
-mean/variance and linearized sensory signal covariance `J P J^T` without
-observation noise, plus prospective visual/audio EIG). Failed camera opens or
+mean/variance, linearized sensory signal covariance `J P J^T` without
+observation noise or the 72-node **Joint Graph** posterior/learned covariance and
+precision matrices, plus prospective visual/audio EIG). Failed camera opens or
 reads latch cleanly without per-frame hardware retry loops until **Camera
 Frame** is toggled off and on. Ordinary `python main.py` remains unchanged.
 
 For the deterministic synthetic circular-dot stimulus, conditional Gaussian
 information-gain heatmap, mouse/autonomous/full-canvas gaze modes, common-mode
-audio filter equations, and headless policy comparison, see
+audio filter equations, opt-in shared learned sensory/latent graph, and headless
+policy comparison, see
 [the active-vision and audio uncertainty documentation](docs/active-vision-experiment.md)
-and [the editable four-page predictive-uncertainty mathematics diagram](docs/predictive-uncertainty-math.drawio).
+and [the editable five-page predictive-uncertainty mathematics diagram](docs/predictive-uncertainty-math.drawio).
 Both run on OpenGL, NumPy, or CuPy without a physical camera or microphone.
 
 For live streaming, the first run prompts for audio devices and stores the
