@@ -309,3 +309,20 @@ def test_posterior_and_diagnostics_share_configured_or_explicit_likelihood(reque
         assert readout.diagnostics.visual.mean == pytest.approx(
             .5*np.mean(pi*(to_numpy(observation)-delta)**2), abs=1e-7,
         )
+
+
+@pytest.mark.parametrize("backend_name", ("numpy", "cupy"))
+@pytest.mark.parametrize("memory,blend,variance", ((1e20, 2e-21, 1.008), (1e-30, 1, 2e-32)))
+def test_extreme_memory_preserves_brownian_diffusion_or_instantaneous_relaxation(
+    request, backend_name, memory, blend, variance,
+):
+    xp = np if backend_name == "numpy" else request.getfixturevalue("cupy_backend")
+    readout = identity_readout((1, 1), backend=xp)
+    model = GaussianSensoryUncertainty(
+        readout, backend=xp, memory_time_constant=memory, process_variance=.04,
+    )
+    prior = xp.asarray([[[.1, -.2, .3]]], dtype=xp.float32)
+    model.predict(prior, dt=.2)
+    model.condition(None)
+    np.testing.assert_allclose(to_numpy(readout.hidden), blend*np.tanh(to_numpy(prior)), rtol=2e-6)
+    np.testing.assert_allclose(to_numpy(model.variance), variance, rtol=2e-6)

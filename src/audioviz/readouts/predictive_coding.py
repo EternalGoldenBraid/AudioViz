@@ -144,12 +144,12 @@ class PredictiveCodingRGBReadout:
         self.hidden += self.config.inference_rate * (predicted_hidden - self.hidden)
         return self._capture_prediction()
 
-    def _capture_prediction(self) -> np.ndarray:
+    def _capture_prediction(self, *, include_stream_state: bool = True) -> np.ndarray:
         self.diagnostics = None
         self._preview_prediction = None
         activity = self.backend.tanh(self.hidden)
         prediction = self._predict_observation(activity)
-        self.stream_state_prediction = self.predict_stream_state(activity)
+        self.stream_state_prediction = self.predict_stream_state(activity) if include_stream_state else None
         self._require_finite(self.hidden, prediction)
         if self.spatial_preview_enabled:
             self._preview_prediction = self._preview_observation(prediction)

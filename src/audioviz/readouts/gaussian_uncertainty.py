@@ -108,8 +108,7 @@ class GaussianSensoryUncertainty:
             self.readout.hidden[:] = retention*self.readout.hidden + blend*drive
             self.variance[:] = factor * self.variance + increment
             self._frozen_hidden[:] = self.readout.hidden
-            self.prediction = self.readout._capture_prediction()
-            self.readout.stream_state_prediction = None
+            self.prediction = self.readout._capture_prediction(include_stream_state=False)
         else:
             model = self.readout.model
             model._copy_prior(prior)

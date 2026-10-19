@@ -78,10 +78,11 @@ def test_policy_runs_before_current_camera_frame_and_freezes_when_observations_p
     orchestrator, stimulus, capture = _orchestrator(7)
 
     def ordinary_pc(*args, **kwargs):
-        pytest.fail("temporal Gaussian frames must not run ordinary PC prediction or inference")
+        pytest.fail("temporal Gaussian frames must not run ordinary PC or its categorical head")
 
     monkeypatch.setattr(orchestrator.visual_readout, "predict", ordinary_pc)
     monkeypatch.setattr(orchestrator.visual_readout, "infer", ordinary_pc)
+    monkeypatch.setattr(orchestrator.visual_readout, "predict_stream_state", ordinary_pc)
     scores = np.zeros((3, 5), dtype=np.float32)
     scores[1, 3] = 2
     calls = []
