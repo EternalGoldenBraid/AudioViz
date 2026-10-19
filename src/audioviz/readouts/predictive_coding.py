@@ -184,6 +184,7 @@ class PredictiveCodingRGBReadout:
     def _finish_inference(
         self, canvas: np.ndarray, observed: np.ndarray | None, inference_energy: list[float],
         *, hidden_error: np.ndarray | None = None, learn: bool = True,
+        visual_error: np.ndarray | None = None,
         cross_weights: np.ndarray | None = None,
         cross_parent_means: tuple[float, ...] = (),
         cross_update_norm: float = 0.0,
@@ -194,7 +195,7 @@ class PredictiveCodingRGBReadout:
             self.hidden - project_channels(xp.tanh(canvas), self.canvas_weights.T)
             if hidden_error is None else hidden_error
         )
-        self.visual_error = (
+        self.visual_error = visual_error if visual_error is not None else (
             xp.zeros_like(self.visual_error) if observed is None
             else observed - self._predict_observation(xp.tanh(self.hidden))
         )

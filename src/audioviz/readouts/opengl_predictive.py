@@ -351,23 +351,7 @@ class OpenGLPredictiveModel:
         self.states = states
         for value, shape, offset in ((image, self.shape, 0), (spectrum, (AUDIO_SPECTRAL_BANDS,), 3 * self.pixels)):
             if value is not None:
-                target = GLArrayView(self.evidence, shape, offset)
-                if isinstance(value, GLArray):
-                    if value.shape != shape or value.device is not self.device:
-                        raise ValueError(f"Shader evidence must have shape {shape} on its own context")
-                    self._validate(value)
-                    self.device.run(
-                        """layout(std430,binding=0) readonly buffer Input {float values[];};
-                        layout(std430,binding=1) writeonly buffer Evidence {float evidence[];};
-                        uniform int count,offset;
-                        void main(){int i=int(gl_GlobalInvocationID.x);if(i<count)evidence[offset+i]=values[i];}""",
-                        [value, self.evidence], value.size, count=value.size, offset=offset,
-                    )
-                else:
-                    value = np.asarray(value, dtype=np.float32)
-                    if value.shape != shape or not np.all(np.isfinite(value)):
-                        raise ValueError(f"Shader evidence must be finite and have shape {shape}")
-                    target.upload(value)
+                self._upload_evidence(value, shape, offset)
         collect = any(b.diagnostics_enabled for b in self.branches)
         self._trajectory = []
         for _ in range(self.config.inference_steps):
@@ -397,6 +381,26 @@ class OpenGLPredictiveModel:
         )
         self._validate(self.correction)
         return self.correction
+
+    def _upload_evidence(self, value, shape, offset):
+        target = GLArrayView(self.evidence, shape, offset)
+        if isinstance(value, GLArray):
+            if value.shape != shape or value.device is not self.device:
+                raise ValueError(f"Shader evidence must have shape {shape} on its own context")
+            self._validate(value)
+            self.device.run(
+                """layout(std430,binding=0) readonly buffer Input {float values[];};
+                layout(std430,binding=1) writeonly buffer Evidence {float evidence[];};
+                uniform int count,offset;
+                void main(){int i=int(gl_GlobalInvocationID.x);if(i<count)evidence[offset+i]=values[i];}""",
+                [value, self.evidence], value.size, count=value.size, offset=offset,
+            )
+        else:
+            value = np.asarray(value, dtype=np.float32)
+            if value.shape != shape or not np.all(np.isfinite(value)):
+                raise ValueError(f"Shader evidence must be finite and have shape {shape}")
+            target.upload(value)
+        return target
 
     def preprocess_camera(self, frame, *, gain=1.):
         values = np.asarray(frame)
@@ -555,7 +559,7 @@ class OpenGLPredictiveModel:
         return float(total)
 
     def _diagnostics(self, before, stream_predictions):
-        after = self.weights.download()
+        after = self.weights.download() if before is not None else None
         for branch in self.branches:
             if not branch.diagnostics_enabled:
                 continue
@@ -581,7 +585,8 @@ class OpenGLPredictiveModel:
                 observation_means=tuple(float(x) for x in observation_means),
                 canvas_weights=copy_weights(cw), visual_weights=copy_weights(vw),
                 learning_enabled=self.config.learning_enabled, learning_rate=self.config.learning_rate,
-                weight_update_norm=float(np.linalg.norm(after[start:end]-before[start:end])),
+                weight_update_norm=float(np.linalg.norm(after[start:end]-before[start:end]))
+                if before is not None else 0.0,
                 spatial=SensoryPreview(
                     branch.hidden.preview(),
                     prediction.preview() if b == 0 else copy_weights(prediction.download()),
@@ -595,7 +600,7 @@ class OpenGLPredictiveModel:
                     self.states[b], float(stream_predictions[b]),
                     float(.5*(float(self.states[b])-stream_predictions[b])**2),
                     copy_weights(sw), float(bias[0]),
-                ),
+                ) if stream_predictions is not None else None,
             )
 
     def _final_sensory_means(self, branch):
