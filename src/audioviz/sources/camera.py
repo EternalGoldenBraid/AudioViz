@@ -75,7 +75,15 @@ class CameraFrameSource:
             return
         cv2 = self.cv2_loader()
         logger.info("Opening camera source: {}", self.camera_index)
-        capture = cv2.VideoCapture(self.camera_index)
+        linux_device = (
+            isinstance(self.camera_index, str)
+            and self.camera_index.startswith("/dev/video")
+            and self.camera_index.removeprefix("/dev/video").isdecimal()
+        )
+        capture = (
+            cv2.VideoCapture(self.camera_index, cv2.CAP_V4L2)
+            if linux_device else cv2.VideoCapture(self.camera_index)
+        )
         if not capture.isOpened():
             capture.release()
             self.capture = None

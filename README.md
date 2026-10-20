@@ -98,6 +98,8 @@ covariance, generative weight matrices, prediction errors, canvas gradient and
 settling-energy trajectory, plus prospective visual/audio EIG). Failed camera opens or
 reads latch cleanly without per-frame hardware retry loops until **Camera
 Frame** is toggled off and on. Ordinary `python main.py` remains unchanged.
+Explicit Linux `/dev/videoN` camera paths use OpenCV's V4L2 backend, keeping
+camera controls available instead of automatically selecting a file backend.
 
 For the deterministic synthetic circular-dot stimulus, conditional Gaussian
 information-gain heatmap, mouse/autonomous/full-canvas gaze modes, common-mode

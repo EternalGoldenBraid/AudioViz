@@ -16,12 +16,16 @@ class _FailedCameraCapture:
 
 
 class _FakeCv2:
+    CAP_V4L2 = 200
+
     def __init__(self):
         self.capture = _FailedCameraCapture()
         self.requested_device = None
+        self.requested_backend = None
 
-    def VideoCapture(self, camera_index):
+    def VideoCapture(self, camera_index, backend=None):
         self.requested_device = camera_index
+        self.requested_backend = backend
         return self.capture
 
 
@@ -65,18 +69,25 @@ def test_camera_frame_source_releases_failed_capture():
     assert source.capture is None
 
 
-def test_camera_frame_source_accepts_explicit_device_path():
+@pytest.mark.parametrize("device,backend", (
+    ("/dev/video0", _FakeCv2.CAP_V4L2),
+    ("/dev/video12", _FakeCv2.CAP_V4L2),
+    (0, None),
+    ("clip.mp4", None),
+))
+def test_camera_frame_source_selects_device_backend_without_forcing_video_files(device, backend):
     fake_cv2 = _FakeCv2()
     source = CameraFrameSource(
         resolution=(6, 8),
-        camera_index="/dev/video0",
+        camera_index=device,
         cv2_loader=lambda: fake_cv2,
     )
 
-    with pytest.raises(RuntimeError, match="/dev/video0"):
+    with pytest.raises(RuntimeError, match="Failed to open camera source"):
         source.ensure_open()
 
-    assert fake_cv2.requested_device == "/dev/video0"
+    assert fake_cv2.requested_device == device
+    assert fake_cv2.requested_backend == backend
 
 
 def test_camera_failure_latches_until_explicit_retry_and_recovers(monkeypatch):
@@ -106,13 +117,14 @@ def test_camera_failure_latches_until_explicit_retry_and_recovers(monkeypatch):
     available = iter((failed_open, disconnected, recovered))
     opened = []
 
-    def open_capture(index):
+    def open_capture(index, backend):
+        assert backend == _FakeCv2.CAP_V4L2
         opened.append(index)
         return next(available)
 
     source = CameraFrameSource(
         resolution=(2, 3), camera_index="/dev/video2", enabled=True,
-        cv2_loader=lambda: SimpleNamespace(VideoCapture=open_capture),
+        cv2_loader=lambda: SimpleNamespace(VideoCapture=open_capture, CAP_V4L2=_FakeCv2.CAP_V4L2),
     )
     assert source.excitation() is None
     assert failed_open.released and "cannot open" in source.status
