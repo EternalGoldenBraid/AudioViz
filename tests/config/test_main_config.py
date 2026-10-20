@@ -65,11 +65,17 @@ def test_invalid_model_sizes_fail_before_hardware_initialization(field, value, m
         main.build_ripple_visualizer_config(config)
 
 
-@pytest.mark.parametrize("audio,spectrogram", ((False, False), (True, False), (False, True)))
+@pytest.mark.parametrize("audio,spectrogram", ((None, None), (False, False), (True, False), (False, True)))
 def test_unflagged_startup_uses_foveal_model_and_explicit_audio_settings(qapp, monkeypatch, audio, spectrogram):
     main = _load_main_module()
-    main.RIPPLE_CONFIG["sources"]["audio"]["enabled"] = audio
-    main.APP_CONFIG["windows"]["spectrogram"]["enabled"] = spectrogram
+    if audio is None:
+        assert not main.RIPPLE_CONFIG["sources"]["audio"]["enabled"]
+        assert not main.APP_CONFIG["windows"]["spectrogram"]["enabled"]
+        assert not main.APP_CONFIG["windows"]["helix"]["enabled"]
+        audio = spectrogram = False
+    else:
+        main.RIPPLE_CONFIG["sources"]["audio"]["enabled"] = audio
+        main.APP_CONFIG["windows"]["spectrogram"]["enabled"] = spectrogram
     main.APP_CONFIG["windows"]["helix"]["enabled"] = False
     original_app, original_ripple = deepcopy(main.APP_CONFIG), deepcopy(main.RIPPLE_CONFIG)
     created, starts = [], []

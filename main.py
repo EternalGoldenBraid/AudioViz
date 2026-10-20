@@ -39,8 +39,8 @@ APP_CONFIG = {
     "is_streaming": True,
     "windows": {
         "spectrogram": {
-            "enabled": True,
-            # "enabled": False,
+            # "enabled": True,
+            "enabled": False,
             "title": "Audio Visualizer",
             "size": (800, 600),
         },
@@ -116,8 +116,7 @@ RIPPLE_CONFIG = {
             "frequency": 20.0,
         },
         "audio": {
-            # "enabled": False,
-            "enabled": True,
+            "enabled": False,
             "signal_gate_threshold": 0.60,
             "drive_amplitude": 0.05,
             "peak_picking": {
