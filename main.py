@@ -398,11 +398,11 @@ def main(argv=None):
     )
     parser.add_argument(
         "--active-audio", action="store_true",
-        help="Opt into common-mode temporal Gaussian audio inference alongside --active-vision.",
+        help="Enable audio evidence alongside --active-vision (common-mode filter or shared PC when selected).",
     )
     parser.add_argument(
         "--shared-sensory-graph", action="store_true",
-        help="Use one compact learned sensory/latent graph with hard evidence clamps; requires --active-vision.",
+        help="Use shared predictive coding: canvas root, dense hidden network, sensory clamps; requires --active-vision.",
     )
     args = parser.parse_args(argv)
     if args.active_audio and args.active_vision is None:
@@ -419,7 +419,7 @@ def main(argv=None):
                 source_config["active_vision"]["audio_precision"] = 1.0
             source_config["sources"]["audio"]["enabled"] = True
             logger.info(
-                "Active vision + audio: shared learned graph enabled."
+                "Active vision + audio: shared generative predictive coding enabled."
                 if source_config["active_vision"].get("shared_sensory_graph", False) else
                 "Active vision + audio: temporal Gaussian visual and common-mode audio inference enabled."
             )
@@ -431,7 +431,7 @@ def main(argv=None):
             app_config["windows"][name]["enabled"] = False
         app_config["windows"]["ripples"]["enabled"] = True
         if source_config["active_vision"].get("shared_sensory_graph", False):
-            logger.info("Shared sensory graph: compact joint Gaussian learning with camera/audio evidence clamps.")
+            logger.info("Shared predictive coding: canvas root -> dense shared hidden -> camera/audio predictions; errors update the root.")
     windows = app_config["windows"]
     ripple_config = build_ripple_visualizer_config(source_config) if windows["ripples"]["enabled"] else None
     camera_only = (

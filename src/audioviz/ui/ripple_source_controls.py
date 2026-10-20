@@ -124,32 +124,34 @@ class RippleSourceControlBinding:
             learning_controls = (
                 SourceControl(
                     key="graph_size", label="Shared Graph", kind="text",
-                    default=f"{graph.total_nodes} fully connected sensory/latent nodes; dense joint covariance.",
+                    default=(
+                        f"{graph.visual_nodes} canvas root ports -> {graph.hidden_nodes} dense recurrent hidden "
+                        f"-> {graph.visual_nodes} RGB + {graph.audio_nodes} audio terminals."
+                    ),
                 ),
                 SourceControl(
                     key="graph_backend", label="Graph Backend", kind="text",
                     default=(
-                        "CPU joint solve; GPU pixels; at most 48 RGB values gathered."
+                        "CPU float64 PC / curvature; GPU pixels; at most 48 values per gather."
                         if visualizer.use_shader else
-                        "CuPy GPU joint solve and pixels." if visualizer.use_gpu else
-                        "NumPy CPU joint solve and pixels."
+                        "CuPy float64 GPU PC; float32 pixels." if visualizer.use_gpu else
+                        "NumPy float64 PC; float32 pixels."
                     ),
                 ),
-                SourceControl(
-                    key="learning_enabled", label="Learn Joint Graph", kind="toggle",
-                    default=graph.learning_enabled,
-                    tooltip="Learn joint mean/covariance from fresh clamped values with masked online Gaussian moment updates.",
-                ),
-                SourceControl(
-                    key="learning_rate", label="Graph Learning Rate", default=graph.learning_rate,
-                    minimum=0, maximum=1, step=.005,
-                    tooltip="Per-evidence-update mixing rate. Zero freezes learned graph parameters, not inference.",
-                ),
-                SourceControl(
-                    key="canvas_rate", label="Canvas Feedback Rate", default=pathway_config.canvas_rate,
-                    minimum=0, maximum=max(1, pathway_config.canvas_rate), step=.01,
-                    tooltip="Scale the interpolated joint sensory innovation fed into the deterministic wave display.",
-                ),
+            ) + tuple(
+                replace(
+                    control, label="Canvas Error Feedback Rate",
+                    tooltip="Scale the negative root-energy gradient once. Sampling's adjoint scatters it to canvas ports; waves propagate it.",
+                ) if control.key == "canvas_rate" else
+                replace(
+                    control, label="Learn Generative Weights",
+                    tooltip="Update generative weights from this model's residual energy after clamped-evidence inference. Missing inputs are not training targets.",
+                ) if control.key == "learning_enabled" else
+                replace(
+                    control,
+                    tooltip="Maximum hidden settling steps in the generative residual energy; weights remain fixed during inference.",
+                ) if control.key == "inference_steps" else control
+                for control in learning_controls if control.key != "cross_modal_enabled"
             )
         elif uncertainty_active:
             learning_controls = tuple(
@@ -175,7 +177,7 @@ class RippleSourceControlBinding:
         sections.append(
             ControlPanelSection(
                 key="learning-dynamics",
-                title="Shared Sensory Graph" if graph is not None else (
+                title="Shared Predictive Coding" if graph is not None else (
                     "Temporal Sensory Beliefs" if uncertainty_active else "Sensory Inference and Learning"
                 ),
                 controls=learning_controls,
@@ -359,13 +361,6 @@ class RippleSourceControlBinding:
         value: ControlValue,
     ) -> None:
         readout = self.visualizer.source_orchestrator
-        if readout.sensory_graph is not None:
-            if control_key == "learning_enabled":
-                readout.sensory_graph.set_learning(enabled=bool(value))
-                return
-            if control_key == "learning_rate":
-                readout.sensory_graph.set_learning(rate=float(value))
-                return
         if control_key == "inference_steps":
             readout.update_pathway_config(inference_steps=int(value))
             return

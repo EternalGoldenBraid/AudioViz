@@ -5,7 +5,7 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5 import QtCore, QtWidgets
 from audioviz.visualization.attention_overlay import preferred_gain_position
-from audioviz.readouts.shared_sensory_graph import SharedGraphSnapshot
+from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingSnapshot
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,7 @@ class BeliefDiagnosticsFrame:
     audio: dict[str, np.ndarray] | None = None
     visual_location: str = ""
     audio_gain: float | None = None
-    joint: SharedGraphSnapshot | None = None
+    joint: SharedPredictiveCodingSnapshot | None = None
 
 
 class BeliefDiagnosticsView(QtWidgets.QWidget):
@@ -117,10 +117,15 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         self.joint_tabs = QtWidgets.QTabWidget()
         self.joint_tables = []
         for title, columns in (
-            ("Nodes / clamps", ("Node", "Clamped", "Evidence", "Mean", "Variance")),
-            ("Posterior covariance", ()),
-            ("Learned covariance", ()),
-            ("Learned precision / couplings", ()),
+            ("States / clamps", ("Node", "Clamped", "Evidence", "State", "Local variance")),
+            ("Local GN covariance", ()),
+            ("Canvas -> hidden", ()),
+            ("Hidden -> hidden", ()),
+            ("Hidden -> sensory", ()),
+            ("Prediction errors", ()),
+            ("Canvas gradient", ()),
+            ("Inference energy", ()),
+            ("Generative biases", ()),
         ):
             table = self._table(columns)
             self.joint_tables.append(table)
@@ -172,20 +177,21 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         self.latest = frame
         shared = frame.joint is not None
         self.definition.setText(
-            "One fully connected learned Gaussian sensory/latent graph. "
-            "Posterior covariance is joint, including cross-modal terms; clamped rows have zero variance by assumption. "
-            "This idealized hard clamp is not calibrated physical certainty. No wave covariance or sound direction is inferred."
+            "Generative predictive coding: canvas root -> dense recurrent hidden -> sensory terminals. "
+            "Inference, weight learning and canvas feedback use the same residual energy. "
+            "Covariance is a local Gauss-Newton approximation with fixed canvas/weights and assigned unit residual noise, "
+            "not an exact temporal posterior or calibrated confidence. No wave covariance or sound direction is inferred."
             if shared else self._separate_definition
         )
         self.gain_explanation.setText(
-            "Expected information gain about shared FREE HIDDEN nodes from hypothetical sensory clamps, in nats. "
-            "Hard-clamping a continuous variable has infinite information about that same variable; it is NOT the target here. "
-            "RGB nodes sample a compact grid; the score map is not an action-probability distribution."
+            "Local linearized information gain about shared hidden nodes, using the pre-evidence generative "
+            "Jacobian and unit sensory residual noise, in nats. This is a curvature-based counterfactual, "
+            "not exact nonlinear information gain. RGB terminals sample a compact grid, not all image pixels."
             if shared else self._separate_gain_explanation
         )
         self.tabs.setTabEnabled(3, shared)
         self.energy_button.setEnabled(not shared)
-        self.energy_button.setToolTip("Joint graph weights and full covariance are in Joint Graph." if shared else "")
+        self.energy_button.setToolTip("Generative weights, prediction errors and energy are in Joint Graph." if shared else "")
         self.status.setText(
             f"{frame.visual_location} | prospective held-canvas step {frame.dt:.6g} s | "
             f"visual sampling {'on' if frame.sampling else 'off'} | refresh at most 10 Hz"
@@ -218,13 +224,13 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         for key, belief in (("visual", frame.visual), ("audio", frame.audio)):
             label, description = self.belief_descriptions[key]
             label.setText(
-                "The same shared free hidden belief is shown in both sensory tabs. "
+                "Both tabs show the same shared hidden state and its local Gaussian approximation. "
                 + ("RGB statistics refer to the nearest compact input sample." if key == "visual" else
                    "Audio statistics refer to the global spectral nodes, not a located source.")
                 if shared else description
             )
             self.covariance_tabs[key].setTabText(
-                1, "Joint sensory covariance" if shared else "Linearized sensory covariance",
+                1, "Local sensory covariance" if shared else "Linearized sensory covariance",
             )
             tables = self.belief_tables[key]
             if belief is None:
@@ -233,11 +239,16 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
                 tables[3].clear()
                 continue
             mean, variance = belief["mean"], belief["variance"]
-            self._set_matrix(tables[0], np.column_stack((mean, np.sqrt(variance), variance)), columns=["Mean", "Std. dev.", "Variance"])
+            self._set_matrix(
+                tables[0], np.column_stack((mean, np.sqrt(variance), variance)),
+                columns=["Settled state" if shared else "Mean", "Std. dev.", "Variance"],
+            )
             self._set_matrix(tables[1], belief["covariance"] if "covariance" in belief else np.diag(variance))
             self._set_matrix(tables[2], belief["sensory_covariance"])
             values = ", ".join(f"{value:.5g}" for value in belief["sensory_mean"])
-            tables[3].setText(f"Decoded sensory mean: [{values}]")
+            tables[3].setText(
+                f"{'Sensory terminal state' if shared else 'Decoded sensory mean'}: [{values}]",
+            )
         if shared:
             self._refresh_joint(frame.joint)
 
@@ -247,22 +258,32 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         covariance = joint["covariance"][hidden, hidden]
         sign, logdet = np.linalg.slogdet(covariance)
         if sign <= 0:
-            raise FloatingPointError("Free hidden covariance must be positive definite")
+            raise FloatingPointError("Local hidden covariance must be positive definite")
         entropy = .5*(covariance.shape[0]*(1+np.log(2*np.pi))+logdet)
         self.joint_status.setText(
             f"{len(joint['mean'])} nodes | {np.count_nonzero(clamped)} clamped | "
             f"learning {'on' if joint['learning_enabled'] else 'frozen'}, rate {joint['learning_rate']:.4g}, "
-            f"{joint['updates']} updates | free hidden differential entropy {entropy:.6g} nats. "
-            "Node indices are input ports / free units, not assigned spatial territories. "
-            "Precision off-diagonals encode conditional couplings."
+            f"{joint['updates']} weight updates | local Gaussian hidden entropy {entropy:.6g} nats. "
+            f"Residual energy {joint['energy']:.6g}; {joint['inference_steps']} settling steps, rate {joint['inference_rate']:.4g}. "
+            "Weight rows are destinations; columns are sources. Root feedback is -dE/d(canvas), sampled-port adjoint."
         )
         if self.tabs.currentIndex() != 3:
             return
         index = self.joint_tabs.currentIndex()
         table = self.joint_tables[index]
         if index:
-            key = ("covariance", "learned_covariance", "learned_precision")[index-1]
-            self._set_matrix(table, joint[key])
+            if index <= 4:
+                key = ("covariance", "canvas_weights", "recurrent_weights", "sensory_weights")[index-1]
+                values = joint[key]
+            elif index == 5:
+                values = np.concatenate((joint["sensory_error"], joint["hidden_error"]))[:, None]
+            elif index == 6:
+                values = joint["canvas_gradient"].reshape(-1, 3)
+            elif index == 7:
+                values = np.asarray(joint["inference_energy"])[:, None]
+            else:
+                values = np.concatenate((joint["sensory_bias"], joint["hidden_bias"]))[:, None]
+            self._set_matrix(table, values)
             return
         table.setRowCount(len(joint["mean"]))
         cols = joint["visual_shape"][1]

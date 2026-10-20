@@ -318,13 +318,31 @@ def test_shared_graph_clamps_only_fresh_enabled_inputs_and_keeps_joint_learning(
     monkeypatch.setattr(module.time, "monotonic", lambda: now[0])
     processor = FakeAudioProcessor()
     stimulus = CircularDotSource(CircularDotConfig(resolution=(12, 16), radius=3, duration=2))
+    config = source_config()
+    config = replace(config, visual_pathway=replace(
+        config.visual_pathway, learning_enabled=True, learning_rate=.05,
+    ))
     widget = module.RippleWaveVisualizer(
         processor=processor, resolution=(12, 16), plane_size_m=(1, 1),
         use_shader=backend == "opengl", use_gpu=backend == "cupy",
-        camera_capture=CircularDotCapture(stimulus), source_orchestrator_config=source_config(),
+        camera_capture=CircularDotCapture(stimulus), source_orchestrator_config=config,
         active_vision=ActiveVisionConfig(mode="full", audio_precision=1, shared_sensory_graph=True),
     )
     widget.timer.stop()
+    applied = []
+    apply_correction = widget.engine.apply_observation_correction
+
+    def capture_correction(correction):
+        applied.append(spatial_preview(correction, max_side=16).copy())
+        apply_correction(correction)
+
+    monkeypatch.setattr(widget.engine, "apply_observation_correction", capture_correction)
+
+    def weights():
+        graph = widget.source_orchestrator.sensory_graph
+        return tuple(to_numpy(getattr(graph, key)).copy() for key in (
+            "canvas_weights", "recurrent_weights", "sensory_weights", "hidden_bias", "sensory_bias",
+        ))
 
     def advance():
         now[0] += .05
@@ -338,10 +356,10 @@ def test_shared_graph_clamps_only_fresh_enabled_inputs_and_keeps_joint_learning(
         advance()
         source = widget.source_orchestrator
         graph = source.sensory_graph
-        assert graph.total_nodes == 72
+        assert graph.total_nodes == 64 + config.visual_pathway.hidden_channels
         assert source.visual_uncertainty is None and source.audio_uncertainty is None
         assert source.hidden_coupling is None
-        assert source.visual_readout.hidden.shape == (1, 1, 8)
+        assert source.visual_readout.hidden.shape == (1, 1, config.visual_pathway.hidden_channels)
         if backend == "opengl":
             assert source.shader_model.hidden._handle is None
         assert widget.renderer.prepare_frame()
@@ -350,9 +368,18 @@ def test_shared_graph_clamps_only_fresh_enabled_inputs_and_keeps_joint_learning(
         np.testing.assert_allclose(to_numpy(graph.mean[graph.audio_slice]), widget.audio_source.recent_observation())
         assert np.count_nonzero(to_numpy(graph.clamped)) == 64
         assert graph.updates == 1
+        snapshot = graph.belief_snapshot()
+        assert snapshot["model"] == "predictive-coding"
+        assert np.all(np.diff(snapshot["inference_energy"]) <= 1e-10)
+        expected_feedback = np.zeros((12, 16, 3))
+        rows, cols = source.graph_io.sample_rows, source.graph_io.sample_cols
+        expected_feedback[rows[:, None], cols[None, :]] = (
+            -snapshot["canvas_gradient"].reshape(4, 4, 3)*source.visual_readout.config.canvas_rate
+        )
+        np.testing.assert_allclose(applied[-1], expected_feedback, rtol=1e-6, atol=1e-8)
+        assert np.linalg.norm(applied[-1]) > 0
         samples = np.arange(48, dtype=np.float32).reshape(4, 4, 3)/47
         rendered = spatial_preview(source.graph_io.render(source.engine.backend.asarray(samples)), max_side=16)
-        rows, cols = source.graph_io.sample_rows, source.graph_io.sample_cols
         np.testing.assert_allclose(rendered[rows[:, None], cols[None, :]], samples, atol=1e-7)
         expected = np.empty((12, 16, 3))
         for channel in range(3):
@@ -360,6 +387,11 @@ def test_shared_graph_clamps_only_fresh_enabled_inputs_and_keeps_joint_learning(
             for col in range(16):
                 expected[:, col, channel] = np.interp(np.arange(12), rows, horizontal[:, col])
         np.testing.assert_allclose(rendered, expected, atol=2e-7)
+        scattered = spatial_preview(source.graph_io.scatter(source.engine.backend.asarray(samples)), max_side=16)
+        full = np.linspace(-1, 1, 12*16*3).reshape(12, 16, 3)
+        np.testing.assert_allclose(
+            np.sum(full*scattered), np.sum(full[rows[:, None], cols[None, :]]*samples), atol=1e-7,
+        )
         source.graph_io.render(graph.visual_prediction)
 
         widget.controls_button.click()
@@ -368,11 +400,12 @@ def test_shared_graph_clamps_only_fresh_enabled_inputs_and_keeps_joint_learning(
         assert not controls.baseline.isVisible() and not controls.peak.isVisible()
         controls.observe.setChecked(False)
         panel.source_toggle_checkboxes["audio"].click()
-        learned = to_numpy(graph.learned_covariance).copy()
+        learned = weights()
         advance()
         assert not to_numpy(graph.clamped).any()
         assert graph.updates == 1
-        np.testing.assert_array_equal(to_numpy(graph.learned_covariance), learned)
+        for current, before in zip(weights(), learned):
+            np.testing.assert_array_equal(current, before)
         assert np.any(to_numpy(graph.mean[graph.audio_slice]) != 0)
 
         panel.source_toggle_checkboxes["audio"].click()
@@ -388,17 +421,26 @@ def test_shared_graph_clamps_only_fresh_enabled_inputs_and_keeps_joint_learning(
         assert not graph.learning_enabled
         panel.source_control_widgets[("learning-dynamics", "learning_rate")].setValue(.1)
         assert graph.learning_rate == .1
+        assert source.visual_readout.config.learning_rate == source.audio_readout.config.learning_rate == .1
+        panel.source_control_widgets[("learning-dynamics", "inference_steps")].setValue(12)
+        assert graph.config.inference_steps == 12
         widget.set_model_diagnostics_visible(True)
         now[0] += .11
         widget.belief_diagnostics.refresh()
         view = widget.belief_diagnostics
-        assert view.latest.joint["covariance"].shape == (72, 72)
+        assert view.latest.joint["covariance"].shape == (graph.total_nodes, graph.total_nodes)
         np.testing.assert_array_equal(view.latest.visual["mean"], view.latest.audio["mean"])
         assert view.tabs.isTabEnabled(3) and not view.energy_button.isEnabled()
+        assert "Gauss-Newton" in view.definition.text()
         view.tabs.setCurrentIndex(3)
         view.refresh()
-        assert view.joint_tables[0].rowCount() == 72
+        assert view.joint_tables[0].rowCount() == graph.total_nodes
         assert "free" == view.joint_tables[0].item(0, 1).text()
+        for index, key in ((2, "canvas_weights"), (3, "recurrent_weights"), (4, "sensory_weights")):
+            view.joint_tabs.setCurrentIndex(index)
+            view.refresh()
+            assert view.joint_tables[index].rowCount() == view.latest.joint[key].shape[0]
+        view.joint_tabs.setCurrentIndex(0)
 
         widget.set_prediction_scene_visible(True)
         scene = widget.prediction_scene
@@ -409,11 +451,12 @@ def test_shared_graph_clamps_only_fresh_enabled_inputs_and_keeps_joint_learning(
         camera = next(item for item in scene.sources if item.mapping.key == "camera")
         assert camera.prediction.shape == (12, 16, 3)
         assert camera.stream_state is None and camera.hidden is None
-        learned = to_numpy(graph.learned_covariance).copy()
+        learned = weights()
         updates = graph.updates
         panel.reset_button.click()
         assert widget.visual_prediction is None and not to_numpy(graph.clamped).any()
-        np.testing.assert_array_equal(to_numpy(graph.learned_covariance), learned)
+        for current, before in zip(weights(), learned):
+            np.testing.assert_array_equal(current, before)
         assert graph.updates == updates
     finally:
         widget.close()

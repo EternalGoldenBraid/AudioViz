@@ -327,11 +327,12 @@ class RippleWaveVisualizer(VisualizerBase):
             if active_vision.shared_sensory_graph:
                 graph = self.source_orchestrator.sensory_graph
                 self.gaze_description = (
-                    f"One learned joint graph: {graph.visual_shape[0]} x {graph.visual_shape[1]} RGB samples, "
-                    f"{graph.audio_nodes} audio nodes, {graph.hidden_nodes} shared hidden nodes. "
+                    f"Generative predictive coding: {graph.visual_nodes} canvas root ports -> "
+                    f"{graph.hidden_nodes} dense recurrent hidden -> {graph.visual_nodes} RGB / {graph.audio_nodes} audio terminals. "
                     "Observe clamps the nearest RGB sample and sample centers inside the one-sigma fovea; "
                     "full canvas clamps all RGB samples. Missing or disabled inputs stay free, not zero. "
-                    "Information gain targets shared hidden nodes. No assigned precision or guaranteed spatial specialization."
+                    "The same residual energy drives inference, weight learning and canvas error feedback. "
+                    "Information gain is local Gauss-Newton about shared hidden nodes with assigned unit residual noise, not calibrated confidence."
                 )
             self.gaze_status.setToolTip(self.gaze_description)
             layout.setStretchFactor(self.renderer.widget, 1)
@@ -427,7 +428,7 @@ class RippleWaveVisualizer(VisualizerBase):
             state = "off / unclamped" if not self.audio_source.enabled else (
                 "receiving" if self.audio_source.has_recent_observation() else "waiting / unclamped"
             )
-            audio = f" | Sound: {state} | shared learned graph"
+            audio = f" | Sound: {state} | shared predictive coding"
         self.gaze_status.setText(f"Vision: {mode} | {evidence} | {camera}{audio}")
 
     def _set_mouse_gaze(self, x, y):
@@ -635,9 +636,7 @@ class RippleWaveVisualizer(VisualizerBase):
             visual=dict(common, sensory_mean=mean[visual_nodes], sensory_covariance=covariance[visual_nodes, visual_nodes]),
             audio=dict(common, sensory_mean=mean[graph.audio_slice], sensory_covariance=covariance[graph.audio_slice, graph.audio_slice]),
             visual_location=f"RGB sample {pixel} ({joint['stage']})",
-            audio_gain=graph.information_gain(
-                np.arange(graph.audio_slice.start, graph.audio_slice.stop), dt=orchestrator._uncertainty_dt,
-            ),
+            audio_gain=graph.information_gain(np.arange(graph.audio_slice.start, graph.audio_slice.stop)),
             joint=joint,
         )
 
