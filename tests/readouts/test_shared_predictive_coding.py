@@ -24,12 +24,14 @@ def make_graph(**kwargs):
     )
 
 
-def oracle(snapshot, hidden=None, canvas=None):
+def oracle(snapshot, hidden=None, canvas=None, aperture_mask=None):
     h = snapshot["mean"][slice(*snapshot["hidden_slice"])] if hidden is None else hidden
     c = snapshot["canvas"] if canvas is None else canvas
+    ap = snapshot["aperture_mask"] if aperture_mask is None else aperture_mask
     t = np.tanh(h)
+    r = np.where(ap, np.tanh(c), 0.0)
     eh = (
-        h - snapshot["canvas_weights"] @ np.tanh(c)
+        h - snapshot["canvas_weights"] @ r
         - snapshot["recurrent_weights"] @ t - snapshot["hidden_bias"]
     )
     logits = snapshot["sensory_weights"] @ t + snapshot["sensory_bias"]
@@ -175,8 +177,9 @@ def test_hard_fresh_zero_masking_free_reconstruction_and_no_pseudo_learning():
     _, _, _, prediction, _, _ = oracle(snapshot)
     np.testing.assert_allclose(graph.mean[3:8], prediction[3:])
     np.testing.assert_array_equal(graph.sensory_error[3:], 0)
-    np.testing.assert_array_equal(graph.covariance[:3], 0)
-    np.testing.assert_array_equal(graph.covariance[:, :3], 0)
+    assert graph.covariance.shape == (3, 3)
+    np.testing.assert_array_equal(graph.variance[:3], 0)
+    np.testing.assert_array_equal(graph.sensory_covariance(slice(0, 3)), 0)
     assert graph.updates == 1
     parameters = {name: getattr(graph, name).copy() for name in PARAMETERS}
     for evidence in (
@@ -187,7 +190,8 @@ def test_hard_fresh_zero_masking_free_reconstruction_and_no_pseudo_learning():
         assert not np.any(graph.clamped)
         assert np.isnan(graph.evidence).all()
         np.testing.assert_array_equal(graph.sensory_error, 0)
-        assert np.all(np.diag(graph.covariance)[:8] > 0)
+        assert np.all(graph.variance[:8] > 1.0)
+        assert np.all(graph.variance[8:] > 0)
         for name in PARAMETERS:
             np.testing.assert_array_equal(getattr(graph, name), parameters[name])
     assert graph.updates == 1
@@ -277,10 +281,11 @@ def test_freeze_rate_zero_and_reset_preserve_all_weights_biases_and_updates():
     graph.condition()
 
 
-def test_local_gn_covariance_equals_dense_free_state_jacobian_inverse():
+def test_local_gn_covariance_is_hidden_only_with_exact_sensory_variances_and_submatrices():
     graph = make_graph()
     graph.forecast(np.linspace(-.6, .2, 6), dt=.1)
     forecast = graph.belief_snapshot()
+    prior_rgb_cov = graph.sensory_covariance(slice(0, 3), stage="prior")
     graph.condition(np.linspace(.1, .9, 6), visual_mask=np.array([[True, False]]))
     snapshot: SharedPredictiveCodingSnapshot = graph.belief_snapshot()
     for snap in (forecast, snapshot):
@@ -296,16 +301,115 @@ def test_local_gn_covariance_equals_dense_free_state_jacobian_inverse():
         indices = np.r_[free, np.arange(8, 11)]
         expected = np.zeros((11, 11))
         expected[np.ix_(indices, indices)] = dense
-        np.testing.assert_allclose(snap["covariance"], expected, atol=5e-15)
+        assert snap["covariance"].shape == (3, 3)
+        assert snap["hidden_covariance"].shape == (3, 3)
+        np.testing.assert_allclose(snap["covariance"], expected[8:, 8:], atol=5e-15)
+        np.testing.assert_allclose(snap["hidden_covariance"], expected[8:, 8:], atol=5e-15)
         np.testing.assert_allclose(snap["variance"], np.diag(expected), atol=5e-15)
-        np.testing.assert_array_equal(snap["covariance"][snap["clamped"]], 0)
+        np.testing.assert_array_equal(snap["variance"][:8][observed], 0)
+    np.testing.assert_allclose(prior_rgb_cov, graph.sensory_covariance([0, 1, 2], stage="prior"), atol=1e-15)
+    _, _, _, _, a_post, j_post = oracle(snapshot)
+    p_post = snapshot["hidden_covariance"]
+    free_j = np.where(snapshot["clamped"][:8, None], 0.0, j_post)
+    expected_sensory = free_j @ p_post @ free_j.T + np.diag((~snapshot["clamped"][:8]).astype(float))
+    np.testing.assert_allclose(graph.sensory_covariance(slice(0, 3)), expected_sensory[:3, :3], atol=5e-15)
+    np.testing.assert_allclose(graph.sensory_covariance(slice(3, 6)), expected_sensory[3:6, 3:6], atol=5e-15)
+    np.testing.assert_allclose(graph.sensory_covariance(graph.audio_slice), expected_sensory[6:8, 6:8], atol=5e-15)
+    np.testing.assert_array_equal(graph.sensory_covariance([]), np.zeros((0, 0)))
+    for bad_indices, bad_stage in (([0, 0], "current"), ([8], "current"), ([0], "invalid")):
+        with pytest.raises(ValueError):
+            graph.sensory_covariance(bad_indices, stage=bad_stage)
     np.testing.assert_array_equal(snapshot["prior_covariance"], forecast["covariance"])
+    np.testing.assert_array_equal(snapshot["prior_hidden_covariance"], forecast["hidden_covariance"])
+    np.testing.assert_array_equal(snapshot["prior_variance"], forecast["variance"])
     np.testing.assert_array_equal(snapshot["prior_mean"], forecast["mean"])
     snapshot["mean"].fill(999)
     snapshot["canvas_weights"].fill(999)
     assert np.max(graph.mean) < 999
     assert np.max(graph.canvas_weights) < 999
     assert not any(key.startswith("learned_") for key in snapshot)
+
+
+def test_inactive_aperture_slots_have_zero_root_and_weight_gradients_and_nonmutating_candidate_ig():
+    config = PredictiveCodingConfig(
+        hidden_channels=8, inference_steps=10, inference_rate=.3,
+        learning_enabled=True, learning_rate=.2, weight_decay=0.0,
+    )
+    graph = SharedPredictiveCodingGraph(
+        visual_shape=(197, 1), audio_nodes=16, hidden_nodes=8, config=config, seed=7,
+    )
+    assert graph.visual_pixels == 197
+    assert graph.visual_nodes == 591
+    assert graph.total_nodes == 615
+    assert graph.covariance.shape == (8, 8)
+    assert graph.variance.shape == (615,)
+    rng = np.random.default_rng(19)
+    canvas = rng.uniform(-.9, .9, size=(197, 1, 3))
+    aperture = np.ones((197, 1), dtype=bool)
+    aperture[120:] = False
+    before_state = graph.belief_snapshot()
+    pre_score = graph.candidate_information_gain(canvas, dt=.1, aperture_mask=aperture)
+    after_candidate = graph.belief_snapshot()
+    for key, val in before_state.items():
+        if isinstance(val, np.ndarray):
+            np.testing.assert_array_equal(after_candidate[key], val)
+        else:
+            assert after_candidate[key] == val
+    visual_pred, audio_pred = graph.forecast(canvas, dt=.1, aperture_mask=aperture)
+    assert visual_pred.shape == (197, 1, 3)
+    assert audio_pred.shape == (16,)
+    assert pre_score == pytest.approx(graph.information_gain(aperture), abs=1e-14)
+    assert graph.candidate_information_gain(canvas, dt=.1, aperture_mask=aperture) == pytest.approx(
+        pre_score, abs=1e-14,
+    )
+    assert graph.candidate_information_gain(canvas, dt=.1, aperture_mask=np.zeros((197, 1), dtype=bool)) == 0.0
+    other_canvas = rng.uniform(-.9, .9, size=(197, 3))
+    other_mask = np.zeros(197, dtype=bool)
+    other_mask[:60] = True
+    forecast_snap = graph.belief_snapshot()
+    other_score = graph.candidate_information_gain(other_canvas, dt=.1, aperture_mask=other_mask)
+    assert other_score > 0
+    batch_canvases = np.stack([canvas.reshape(197, 3), other_canvas], axis=0).reshape(1, 2, 197, 3)
+    batch_masks = np.stack([aperture.reshape(197), other_mask], axis=0).reshape(1, 2, 197)
+    batch_scores = graph.candidate_information_gains(
+        batch_canvases, dt=.1, aperture_masks=batch_masks,
+    )
+    assert batch_scores.shape == (1, 2)
+    np.testing.assert_allclose(batch_scores, [[pre_score, other_score]], atol=1e-14)
+    np.testing.assert_array_equal(
+        graph.candidate_information_gains(
+            batch_canvases, dt=.1, aperture_masks=np.zeros((1, 2, 197), dtype=bool),
+        ),
+        np.zeros((1, 2)),
+    )
+    for key, val in forecast_snap.items():
+        if isinstance(val, np.ndarray):
+            np.testing.assert_array_equal(graph.belief_snapshot()[key], val)
+        else:
+            assert graph.belief_snapshot()[key] == val
+    before_wc = graph.canvas_weights.copy()
+    visual_obs = rng.uniform(0.0, 1.0, size=(197, 1, 3))
+    direction = graph.condition(visual_obs, rng.uniform(0.0, 1.0, size=16), visual_mask=aperture)
+    assert direction.shape == (197, 1, 3)
+    np.testing.assert_array_equal(direction[120:], 0.0)
+    assert np.linalg.norm(direction[:120]) > 1e-4
+    np.testing.assert_array_equal(graph.canvas_weights[:, 120 * 3:], before_wc[:, 120 * 3:])
+    small = make_graph(config=PredictiveCodingConfig(inference_rate=.2))
+    small_ap = np.array([[True, False]])
+    small.forecast(np.linspace(-.7, .8, 6), dt=.1, aperture_mask=small_ap)
+    small.condition(np.ones((1, 2, 3)), np.array([.2, .7]), visual_mask=small_ap)
+    snap = small.belief_snapshot()
+    hidden = snap["mean"][small.hidden_slice]
+    _, gh, gc, _, _, _, _, _ = small._terms(hidden)
+    np.testing.assert_allclose(
+        gh, finite_difference(lambda h: oracle(snap, hidden=h)[0], hidden), atol=2e-10,
+    )
+    np.testing.assert_allclose(
+        gc, finite_difference(lambda c: oracle(snap, canvas=c)[0], small.canvas), atol=2e-10,
+    )
+    np.testing.assert_array_equal(gc[3:], 0.0)
+    wc_grad = small._weight_gradients(hidden)[0]
+    np.testing.assert_array_equal(wc_grad[:, 3:], 0.0)
 
 
 def test_information_gain_logdet_oracle_uses_same_prior_counterfactual_after_condition():
@@ -334,8 +438,9 @@ def test_information_gain_logdet_oracle_uses_same_prior_counterfactual_after_con
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"visual_shape": (5, 1)}, {"visual_shape": (0, 1)}, {"hidden_nodes": 0},
-    {"audio_nodes": -1}, {"hidden_nodes": 80}, {"memory_time_constant": 0},
+    {"visual_shape": (4097, 1)}, {"visual_shape": (0, 1)}, {"hidden_nodes": 0},
+    {"audio_nodes": -1}, {"audio_nodes": 257}, {"hidden_nodes": 65},
+    {"memory_time_constant": 0},
     {"config": PredictiveCodingConfig(dtype="float32")},
     {"config": PredictiveCodingConfig(cross_modal_enabled=True)},
 ])
@@ -407,9 +512,15 @@ def test_numpy_cupy_parity_for_inference_learning_gradients_curvature_and_snapsh
         root = np.linspace(-.8, .7, 6).reshape(1, 2, 3) + frame * .1
         visual = np.linspace(.1, .9, 6).reshape(1, 2, 3)
         mask = np.array([[True, frame % 2 == 0]])
-        scores, directions = [], []
+        aperture = np.array([[True, frame != 2]])
+        scores, cand_scores, directions = [], [], []
         for graph, xp in ((cpu, np), (gpu, cp)):
-            predictions = graph.forecast(xp.asarray(root), dt=.1)
+            cand_scores.append(graph.candidate_information_gain(
+                xp.asarray(root), dt=.1, aperture_mask=xp.asarray(aperture),
+            ))
+            predictions = graph.forecast(
+                xp.asarray(root), dt=.1, aperture_mask=xp.asarray(aperture),
+            )
             assert predictions[0].dtype == xp.float32
             scores.append(graph.information_gain([0, 2, 6]))
             directions.append(graph.condition(
@@ -419,6 +530,11 @@ def test_numpy_cupy_parity_for_inference_learning_gradients_curvature_and_snapsh
             assert graph.canvas.dtype == xp.float64
         np.testing.assert_allclose(directions[0], cp.asnumpy(directions[1]), atol=1e-12)
         assert scores[0] == pytest.approx(scores[1], abs=1e-13)
+        assert cand_scores[0] == pytest.approx(cand_scores[1], abs=1e-13)
+        np.testing.assert_allclose(
+            cpu.sensory_covariance(slice(0, 6)),
+            gpu.sensory_covariance(slice(0, 6)), atol=1e-12,
+        )
         cpu_snap, gpu_snap = cpu.belief_snapshot(), gpu.belief_snapshot()
         for key, expected in cpu_snap.items():
             if isinstance(expected, np.ndarray):
