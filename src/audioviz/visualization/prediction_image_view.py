@@ -103,9 +103,13 @@ class PredictionImageView(QtWidgets.QWidget):
 
     def _refresh_attention(self):
         if self._attention_hard_fovea:
-            self.panels["prediction"].setTitle("Foveal forecast (pre-evidence); outside: retained predictions")
+            self.panels["prediction"].setTitle("Prediction (outside retained)")
+            self.panels["prediction"].setToolTip(
+                "Pre-evidence forecast inside the circle. Outside the circle, the world-coordinate "
+                "prediction retains its last value; it is not freshly decoded."
+            )
             self.panels["observation"].setTitle(
-                "Camera frame (only circle observed)"
+                "Camera (circle observed)"
                 if self.images["observation"].image is not None else "Camera evidence - no current sample"
             )
         for key, overlay in self.attention_overlays.items():
