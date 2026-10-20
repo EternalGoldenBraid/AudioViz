@@ -27,6 +27,8 @@ from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
 
 class _BenchVisualizer(RippleWaveVisualizer):
+    gaze_changed = QtCore.pyqtSignal()
+
     def __init__(self, **kwargs):
         self.gaze_locked = True
         super().__init__(**kwargs)
@@ -34,11 +36,14 @@ class _BenchVisualizer(RippleWaveVisualizer):
     def _set_mouse_gaze(self, x, y):
         if not self.gaze_locked:
             super()._set_mouse_gaze(x, y)
+            self.gaze_changed.emit()
 
     def _refresh_attention_preview(self):
         diagnostics_visible = self.belief_diagnostics is not None and self.belief_diagnostics.isVisible()
-        if not self.gaze_locked or diagnostics_visible:
+        if self.gaze_controls.autonomous_gaze.isChecked() or diagnostics_visible:
             super()._refresh_attention_preview()
+        else:
+            self.attention_scores = None
 
 
 class StaticWorldBench(QtWidgets.QWidget):
@@ -92,7 +97,7 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.controls_button = QtWidgets.QPushButton("Model controls")
         self.controls_button.clicked.connect(self._show_model_controls)
         self.lock_gaze = QtWidgets.QCheckBox("Lock gaze")
-        self.lock_gaze.setChecked(True)
+        self.lock_gaze.setToolTip("Hold the selected gaze for a fixed-patch trial.")
         self.lock_gaze.toggled.connect(self._set_gaze_lock)
         self.export_button = QtWidgets.QPushButton("Save trace")
         self.export_button.clicked.connect(self._save_trace)
@@ -105,6 +110,7 @@ class StaticWorldBench(QtWidgets.QWidget):
         layout.addLayout(toolbar)
         description = QtWidgets.QLabel(
             "Static world; no camera or microphone. Model controls change settling steps/rate, learning, and canvas feedback. "
+            "Move the mouse over any image to select gaze; Step/Run samples it. Lock gaze for fixed-patch trials. "
             "New trial keeps model settings/gaze but restores seed-0 weights, hidden state and zero canvas; "
             "other source/wave settings return to bench defaults. "
             f"Each step uses forecast dt={self.dt:g} s; playback speed does not change this clock."
@@ -118,9 +124,10 @@ class StaticWorldBench(QtWidgets.QWidget):
         layout.addWidget(self.splitter, 1)
         self.images = pg.GraphicsLayoutWidget()
         self.outlines = []
-        self.world_image = self._image_panel("World (evaluator only)", 0)
+        self.world_image = self._image_panel("World (next gaze; evaluator only)", 0)
         self.forecast_image = self._image_panel("Forecast (outside fovea retained)", 1)
         self.error_image = self._image_panel("Forecast RGB RMSE (0-1; gray = unobserved)", 2)
+        self.images.scene().sigMouseMoved.connect(self._move_image_gaze)
         self.error_colormap = pg.colormap.get("magma")
         self.splitter.addWidget(self.images)
         self.plots = pg.GraphicsLayoutWidget()
@@ -195,6 +202,17 @@ class StaticWorldBench(QtWidgets.QWidget):
             panel.section_widgets["gaze"].set_expanded(False)
             panel.section_widgets["camera-source"].set_expanded(False)
 
+    def _move_image_gaze(self, scene_position):
+        rows, cols = self.scene.shape[:2]
+        for image in (self.world_image, self.forecast_image, self.error_image):
+            if image.contains(image.mapFromScene(scene_position)):
+                point = image.getViewBox().mapSceneToView(scene_position)
+                self.visualizer._set_mouse_gaze(
+                    (point.x()-.5)/max(cols-1, 1),
+                    (point.y()-.5)/max(rows-1, 1),
+                )
+                return
+
     def new_trial(self):
         self.run_button.setChecked(False)
         if self.visualizer is not None:
@@ -222,6 +240,8 @@ class StaticWorldBench(QtWidgets.QWidget):
             update_interval_ms=self.timer.interval(), forecast_dt=self.dt,
         )
         self.visualizer.timer.stop()
+        self.visualizer.gaze_changed.connect(self._refresh_gaze_outlines)
+        self.visualizer.gaze_controls.precision_changed.connect(self._refresh_gaze_outlines)
         self.splitter.addWidget(self.visualizer)
         self.visualizer.show()
         self._set_gaze_lock(self.lock_gaze.isChecked())
@@ -255,7 +275,8 @@ class StaticWorldBench(QtWidgets.QWidget):
             f"forecast MSE {metrics.forecast_mse:.5f}; settled MSE {metrics.settled_mse:.5f}"
         )
         self.status.setText(
-            f"Step {self.steps} | {metrics.observed_rgb} observed RGB values | {errors} | "
+            f"Step {self.steps} | sampled gaze ({metrics.gaze[0]:.3f}, {metrics.gaze[1]:.3f}) | "
+            f"{metrics.observed_rgb} observed RGB values | {errors} | "
             f"E {metrics.energy_initial:.5g} -> {metrics.energy_final:.5g} | "
             f"steps {metrics.inference_steps}, rate {metrics.inference_rate:g}, "
             f"learning {'on' if metrics.learning_enabled else 'off'}, updates {metrics.learning_updates}, "
@@ -294,9 +315,17 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.error_image.setImage(error_image, autoLevels=False)
         for image in (self.world_image, self.forecast_image, self.error_image):
             image.setRect(bounds)
+        self._refresh_gaze_outlines()
+
+    def _refresh_gaze_outlines(self):
+        rows, cols = self.scene.shape[:2]
+        source = self.visualizer.source_orchestrator
+        io = source.graph_io
+        selected_gaze = source.visual_readout.config.spatial_precision.gaze
         theta = np.linspace(0, 2*np.pi, 97)
-        center = np.rint(np.asarray(io.gaze)*(cols-1, rows-1))+.5
-        for outline in self.outlines:
+        for index, outline in enumerate(self.outlines):
+            gaze = selected_gaze if index == 0 else io.gaze
+            center = np.rint(np.asarray(gaze)*(cols-1, rows-1))+.5
             outline.setData(center[0]+io.radius*np.cos(theta), center[1]+io.radius*np.sin(theta))
 
     def save_trace(self, path):

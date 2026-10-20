@@ -89,7 +89,8 @@ coordinates are in `["gaze"]["position"]`. Image resolution remains in
 Audio and camera availability come from `RIPPLE_CONFIG["sources"]`, and window
 visibility from `APP_CONFIG["windows"]`; startup does not silently change them.
 For camera-only operation, disable the audio source and both audio windows.
-Then no audio devices are initialized. **Observe vision** and **Audio** remain
+These are currently disabled by default, so no audio devices are initialized.
+**Observe vision** and **Audio** remain
 independent live evidence gates. Weight learning follows
 `RIPPLE_CONFIG["transforms"]["prediction_error"]["learning"]` and can be enabled in
 **Controls**; the startup log reports whether it is enabled.
@@ -167,18 +168,25 @@ scene, without camera or microphone hardware:
     --steps 8 --rate 0.1 --dt 0.03333333333333333
 ```
 
-The bench starts **paused**, with gaze locked, learning disabled, and canvas
+The bench starts **paused**, with mouse gaze unlocked, learning disabled, and canvas
 feedback zero. **Step** consumes one observation; **Run/Pause** controls playback.
 **Model controls** opens the application's existing Controls panel: settling
 steps/rate, generative learning, learning rate, and canvas-feedback rate act on
 the actual model. Radius and total hidden count remain startup arguments.
-Unlock gaze to move it over the embedded canvas or use the gaze controls;
+Move the mouse over the world, prediction, error image, or embedded canvas to
+select gaze. While paused this selects the next sample without consuming
+evidence; **Step/Run** gathers the selected patch through the production router.
+**Lock gaze** holds that position for a fixed-patch trial. You can also
 expand **Gaze and Observation** for **Observe vision**, which independently
-gates evidence. Locked-gaze trials skip
-prospective gaze searches unless joint belief diagnostics are explicitly opened.
+gates evidence. Mouse/locked trials skip prospective gaze searches unless joint
+belief diagnostics are explicitly opened. **Autonomous gaze** uses the same
+information-gain policy as main: it can hold its current position when equally
+best-scoring candidates include it. A zero root canvas with shared retinotopic
+weights can produce such ties; stationary gaze alone is not a routing failure.
 
 The world, persistent pre-evidence prediction, and observed-pixel forecast RGB
-RMSE are shown together. Magenta circles mark the circular aperture; gray error
+RMSE are shown together. The world's magenta circle marks the selected next gaze;
+prediction/error circles mark the latest sampled aperture. Gray error
 pixels are **unobserved**, not error-free. Plots separate:
 
 - Across-observation **forecast MSE before evidence** from **settled decoder MSE
@@ -187,9 +195,11 @@ pixels are **unobserved**, not error-free. Plots separate:
   hidden and sensory components. Backtracking makes this held-objective total
   energy non-increasing; sensory MSE alone need not decrease.
 
-With learning and feedback off, expect settling within observations and a
+With gaze locked, learning and feedback off, expect settling within observations and a
 possible warm-start transient, **not guaranteed improvement of future forecasts**.
 Enable learning with feedback still zero to isolate weight adaptation.
+Moving gaze changes the evaluated patch, so its MSE curve is not a fixed-target
+learning curve and need not decrease.
 Improvement on one fixed patch can be decoder-bias memorization; it does not
 establish generalization or location-specific scene memory. Positive canvas
 feedback also introduces wave propagation and damping, not pure static-root

@@ -4,7 +4,7 @@ import traceback
 
 import numpy as np
 import pytest
-from PyQt5 import QtTest
+from PyQt5 import QtCore, QtTest
 
 from audioviz.visualization.static_world_bench import StaticWorldBench
 from audioviz.visualization import ripple_wave_visualizer as visualizer_module
@@ -31,6 +31,7 @@ def test_bench_uses_actual_model_fixed_clock_and_missing_evidence_gaps(qapp, req
     now = [10.]
     monkeypatch.setattr(visualizer_module.time, "monotonic", lambda: now[0])
     bench = StaticWorldBench(resolution=(20, 28), foveal_radius=4, backend=backend, dt=.025)
+    bench.lock_gaze.setChecked(True)
     bench.show()
     qapp.processEvents()
     try:
@@ -116,6 +117,7 @@ def test_new_trial_restores_seeded_parameters_and_keeps_selected_inference_setti
     assert StaticWorldBench.HISTORY_LIMIT == 512
     monkeypatch.setattr(StaticWorldBench, "HISTORY_LIMIT", 2)
     bench = StaticWorldBench(resolution=(20, 28), foveal_radius=4, backend=backend)
+    bench.lock_gaze.setChecked(True)
     bench.show()
     qapp.processEvents()
     try:
@@ -164,3 +166,96 @@ def test_fixed_forecast_interval_rejects_nonpositive_or_boolean_values(qapp):
     for dt in (True, 0, -1, np.nan):
         with pytest.raises(ValueError, match="dt"):
             StaticWorldBench(backend="numpy", dt=dt)
+
+
+@pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
+def test_image_mouse_gaze_selects_the_next_sample_without_consuming_evidence(
+    qapp, request, monkeypatch, backend,
+):
+    if backend == "cupy":
+        request.getfixturevalue("cupy_backend")
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("Native widget requires a window-system context")
+    monkeypatch.setattr(StaticWorldBench, "PREVIEW_MAX_SIDE", 16)
+    bench = StaticWorldBench(resolution=(40, 60), foveal_radius=4, backend=backend)
+    bench.show()
+    qapp.processEvents()
+    try:
+        assert not bench.lock_gaze.isChecked()
+        source = bench.visualizer.source_orchestrator
+        for image, gaze in (
+            (bench.world_image, (.25, .75)),
+            (bench.forecast_image, (.75, .25)),
+            (bench.error_image, (0., 0.)),
+        ):
+            reads_before = bench.capture.read_count
+            position = image.getViewBox().mapViewToScene(
+                QtCore.QPointF(.5+59*gaze[0], .5+39*gaze[1]),
+            )
+            bench.images.scene().sigMouseMoved.emit(position)
+            assert source.visual_readout.config.spatial_precision.gaze == pytest.approx(gaze)
+            assert bench.capture.read_count == reads_before
+            x, y = bench.outlines[0].getData()
+            assert (x.min()+x.max())/2 == round(59*gaze[0])+.5
+            assert (y.min()+y.max())/2 == round(39*gaze[1])+.5
+            frame = bench.step_once()
+            assert frame.gaze == pytest.approx(gaze)
+            assert bench.capture.read_count == reads_before+1
+            io, graph = source.graph_io, source.sensory_graph
+            expected = bench.scene[tuple(io.positions[io.valid].T)].astype(np.float32)/255
+            actual = to_numpy(graph.evidence[graph.visual_slice]).reshape(-1, 3)[io.valid]
+            np.testing.assert_array_equal(actual, expected)
+            assert frame.observed_rgb == int(io.valid.sum())*3
+            assert bench.visualizer.attention_scores is None
+        assert bench.forecast_image.image.shape[0] <= 16
+        bench.lock_gaze.setChecked(True)
+        bench.images.scene().sigMouseMoved.emit(
+            bench.world_image.getViewBox().mapViewToScene(QtCore.QPointF(30, 20)),
+        )
+        assert source.visual_readout.config.spatial_precision.gaze == (0., 0.)
+        assert bench.step_once().gaze == (0., 0.)
+    finally:
+        bench.close()
+
+
+def test_autonomous_gaze_routes_the_selected_patch_before_capture_and_holds_without_evidence(qapp, monkeypatch):
+    bench = StaticWorldBench(resolution=(40, 60), foveal_radius=4, backend="numpy")
+    bench.show()
+    qapp.processEvents()
+    try:
+        source = bench.visualizer.source_orchestrator
+        controls = bench.visualizer.gaze_controls
+        controls.autonomous_gaze.setChecked(True)
+        assert source.gaze_policy is not None
+        scores = np.ones((9, 13))
+        scores[2, 9] = 2
+        monkeypatch.setattr(source, "visual_information_gain", lambda precision: scores)
+        selected_before_reads = []
+        select = source.gaze_policy.select
+
+        def record_selection(scores, current):
+            selected_before_reads.append(bench.capture.read_count)
+            return select(scores, current)
+
+        monkeypatch.setattr(source.gaze_policy, "select", record_selection)
+        captured_gazes = []
+        read = bench.capture.read
+
+        def record_capture():
+            captured_gazes.append(source.graph_io.gaze)
+            return read()
+
+        monkeypatch.setattr(bench.capture, "read", record_capture)
+        assert bench.step_once().gaze == (.75, .25)
+        assert selected_before_reads == [0]
+        assert captured_gazes == [(.75, .25)]
+        controls.observe.setChecked(False)
+        frame = bench.step_once()
+        assert frame.gaze == (.75, .25) and frame.observed_rgb == 0
+        assert selected_before_reads == [0] and captured_gazes == [(.75, .25)]
+        bench.new_trial()
+        qapp.processEvents()
+        assert bench.visualizer.gaze_controls.autonomous_gaze.isChecked()
+        assert bench.visualizer.source_orchestrator.gaze_policy is not None
+    finally:
+        bench.close()
