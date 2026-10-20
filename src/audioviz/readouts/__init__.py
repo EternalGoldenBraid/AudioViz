@@ -10,6 +10,7 @@ from audioviz.readouts.gaussian_audio_uncertainty import AudioBeliefSnapshot, Ga
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty, VisualBeliefSnapshot
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 from audioviz.readouts.shared_sensory_graph import SharedGraphSnapshot, SharedSensoryGraph
+from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph, SharedPredictiveCodingSnapshot
 
 __all__ = [
     "IdentityRGBReadout",
@@ -24,4 +25,6 @@ __all__ = [
     "GaussianSpatialPrecision",
     "SharedGraphSnapshot",
     "SharedSensoryGraph",
+    "SharedPredictiveCodingGraph",
+    "SharedPredictiveCodingSnapshot",
 ]
