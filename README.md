@@ -352,6 +352,46 @@ per-backend cProfile data after warmup. Python profiles attribute asynchronous
 GPU wait time to synchronization points such as finite checks; synchronized
 stage timings are more useful for locating the actual cost.
 
+### Foveal graph memory sweep
+
+Measure the shared foveal PC core independently of image resolution:
+
+```bash
+python scripts/benchmark_foveal_memory.py --radii 8 16 24 32 64 --hidden-sizes 6 16 32
+python scripts/benchmark_foveal_memory.py --backend cupy --radii 8 16 32 --hidden-sizes 6 16
+python scripts/benchmark_foveal_memory.py --radii 16 32 --hidden-sizes 16 32 --candidates 0 --json
+```
+
+Each case runs in a fresh process and constructs the real float64 model, performs
+one forecast/evidence update (learning enabled by default; `--no-learning`
+disables it), and evaluates the requested number of distinct candidate patches
+(`117` by default, matching autonomous gaze; `0` omits that phase). The circular
+radius is in pixels, with full interior support and float32 input fixtures.
+The table distinguishes parameter bytes, unique retained graph array storage
+(including cached weights and Jacobians), peak traced host allocations, and
+CuPy pool peak/reserved bytes. `--json` also includes per-phase host peaks.
+Whole-process peak RSS includes Python, libraries, native workspaces and CUDA
+context costs; it is **not** graph-only memory. Traced host peaks include
+synthetic inputs and cold operator allocations but exclude untraced native
+workspaces. Gaze scoring currently uses NumPy on the host even for a CuPy model.
+The OpenGL runner uses the NumPy numerical core, so the default sweep covers
+that core without creating a renderer or camera.
+
+For `K` RGB foveal locations, `H` hidden units and `A` audio terminals, parameter
+storage is exactly `8 * (H*3K + (3K+A)*H + H*H + H + 3K+A)` bytes. Image dimensions
+do not enter this expression or the measured graph workload. Full-image
+prediction buffers, camera preprocessing, wave simulation and rendering remain
+resolution-dependent and are excluded. `--image-shape ROWS COLS` only accounts
+for one full RGB float32 buffer (23.73 MiB at 1080x1920); it allocates no image
+and does not estimate total application memory.
+
+The application still caps its radius at `16`; the numerical core currently
+supports up to `4096` foveal locations and `64` hidden units. The script measures
+larger circles within those core limits without changing application settings.
+Above-limit cases (including radius `64`) are clearly labeled **parameter
+estimates only**, with no fabricated graph/peak measurements. `--estimate-only`
+performs parameter accounting without allocating any model.
+
 ### Native 1080p profiling
 
 Measured on an RTX 3060 with two six-channel hidden fields, synthetic camera/audio
