@@ -157,6 +157,9 @@ device values.
 
 ### Static-world predictive-coding bench
 
+See the [experiment report and open sampling questions](docs/static-world-experiment-report.md)
+for measured results and the current implementation pause.
+
 Run the **same foveal model and wave pipeline** against a deterministic geometric
 scene, without camera or microphone hardware:
 
