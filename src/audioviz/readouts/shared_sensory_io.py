@@ -2,7 +2,25 @@ from dataclasses import replace
 
 import numpy as np
 
+from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
 from audioviz.utils.opengl_compute import GLArray
+
+
+def circular_foveal_offsets(radius):
+    limit = SharedPredictiveCodingGraph.MAX_VISUAL_SLOTS
+    if (
+        isinstance(radius, bool) or not isinstance(radius, (int, np.integer))
+        or radius < 1 or int(radius)**2 > limit
+    ):
+        raise ValueError(f"foveal_radius must be a positive integer with at most {limit} disk pixels")
+    radius = int(radius)
+    offsets = np.array([
+        (y, x) for y in range(-radius, radius+1) for x in range(-radius, radius+1)
+        if y*y+x*x <= radius*radius
+    ], dtype=np.intp)
+    if len(offsets) > limit:
+        raise ValueError(f"foveal_radius={radius} has {len(offsets)} disk pixels; maximum is {limit}")
+    return offsets
 
 
 class SharedSensoryBranch:
@@ -49,13 +67,8 @@ class SharedSensoryIO:
         self.shape = shape
         self.backend = backend
         self.device = device
-        if isinstance(radius, bool) or not isinstance(radius, int) or not 1 <= radius <= 16:
-            raise ValueError("foveal radius must be an integer between 1 and 16 pixels")
+        self.offsets = circular_foveal_offsets(radius)
         self.radius = radius
-        self.offsets = np.array([
-            (y, x) for y in range(-radius, radius+1) for x in range(-radius, radius+1)
-            if y*y+x*x <= radius*radius
-        ], dtype=np.intp)
         self.visual_shape = (len(self.offsets), 1)
         self.gaze = (.5, .5)
         self.positions, self.valid = self.route(self.gaze)

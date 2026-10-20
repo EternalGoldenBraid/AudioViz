@@ -196,6 +196,7 @@ def test_shared_foveal_selection_routes_before_forecast_and_camera_capture(monke
 def test_shared_foveal_config_rejects_unbounded_full_observation():
     with pytest.raises(ValueError, match="full-image"):
         ActiveVisionConfig(shared_sensory_graph=True, mode="full")
-    for radius in (False, 0, 17, .5):
+    assert ActiveVisionConfig(shared_sensory_graph=True, foveal_radius=36).foveal_radius == 36
+    for radius in (False, 0, 37, .5):
         with pytest.raises(ValueError, match="foveal_radius"):
             ActiveVisionConfig(shared_sensory_graph=True, foveal_radius=radius)

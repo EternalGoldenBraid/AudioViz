@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
+from audioviz.readouts.shared_sensory_io import circular_foveal_offsets
 
 
 @dataclass(frozen=True)
@@ -23,11 +24,7 @@ class ActiveVisionConfig:
             raise ValueError("gaze mode must be mouse, autonomous or full")
         if not isinstance(self.shared_sensory_graph, bool):
             raise ValueError("shared_sensory_graph must be a boolean")
-        if (
-            isinstance(self.foveal_radius, bool) or not isinstance(self.foveal_radius, int)
-            or not 1 <= self.foveal_radius <= 16
-        ):
-            raise ValueError("foveal_radius must be an integer between 1 and 16 pixels")
+        circular_foveal_offsets(self.foveal_radius)
         if self.shared_sensory_graph and self.mode == "full":
             raise ValueError("Shared foveal PC supports mouse or autonomous gaze, not full-image observation")
         if self.shared_sensory_graph and self.audio_precision not in (None, 1.0):

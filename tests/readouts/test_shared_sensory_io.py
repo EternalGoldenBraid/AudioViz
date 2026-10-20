@@ -53,6 +53,18 @@ def test_foveal_parameters_do_not_scale_with_world_dimensions():
     assert models[0].canvas_weights.shape == models[1].canvas_weights.shape == (8, 591)
     assert models[0].sensory_weights.shape == models[1].sensory_weights.shape == (607, 8)
     assert large._prediction.nbytes == 1080*1920*3*4
-    for radius in (True, 0, 17, 1.5):
+    for radius in (True, 0, 37, 1.5, 1000000):
         with pytest.raises(ValueError, match="radius"):
             SharedSensoryIO((10, 10, 3), radius=radius)
+
+
+def test_larger_disks_keep_fixed_weight_slots_when_gaze_clips_image():
+    io = SharedSensoryIO((80, 96, 3), radius=32)
+    assert io.visual_shape == (3209, 1) and io.valid.all()
+    world = np.arange(80*96*3, dtype=np.float32).reshape(80, 96, 3)
+    io.set_gaze((0, 0))
+    samples = io.sample(world).reshape(-1, 3)
+    assert 0 < io.valid.sum() < 3209
+    np.testing.assert_array_equal(samples[~io.valid], 0)
+    np.testing.assert_array_equal(samples[io.valid], world[tuple(io.positions[io.valid].T)])
+    assert SharedSensoryIO((80, 96, 3), radius=36).visual_shape == (4053, 1)
