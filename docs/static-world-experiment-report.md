@@ -8,6 +8,46 @@ branch **`research/active-vision-eig`** in draft PR #1. The branch and commit
 labels in this report identify the original experimental snapshot. Branch
 consolidation did not change the implementation pause recorded below.
 
+## Current canvas ablation and prediction-persistence boundary
+
+Main and the bench now default to a **held root canvas**, with no autonomous
+wave propagation or damping. **Controls > Surprise: wave dynamics OFF/ON**
+restores the existing wave equation. Explicit drives and sensory-gradient
+corrections still update the root when waves are off; disabling waves does
+not imply a zero root or disable predictive coding. A held step synchronizes
+the current/previous field states, clearing wave velocity. Model, world, and
+source clocks continue advancing. New trial retains the wave enable switch,
+and traces record the actual enable state per step as well as at export.
+
+The static and Brownian measurements recorded below predate this default
+change; they used the enabled wave substrate with a zero root and zero
+canvas feedback, where the root stayed zero.
+
+Prediction persistence has separate causes:
+
+- The full-image forecast is a last-visit cache. `SharedSensoryIO.render`
+  overwrites only the current in-bounds foveal positions; outside entries
+  are never recomputed or aged. This cache is not used as evidence or as
+  the model's candidate-scoring state.
+- Hidden activity is warm-started with `exp(-dt/tau)` and then relaxed
+  against the hidden-only energy. Relaxation additionally removes
+  history dependence, with finite settling controlled by steps/rate;
+  `tau` alone does not specify the complete temporal dynamics.
+- Synaptic parameters, including decoder biases, persist. A learned
+  non-neutral prior can remain after transient hidden activity dissipates.
+
+No display fade, weight forgetting, or temporal-model rewrite is included
+in the canvas ablation. Choosing one requires specifying which state should
+decay and its resting prior; these are not interchangeable mechanisms.
+
+Math peer's reading of
+[Difference Predictive Coding for Training Spiking Neural Networks,
+ICLR 2026](https://iclr.cc/virtual/2026/poster/10007923):
+DiffPC uses non-leaky difference accumulators and signed ternary spikes to
+communicate state changes. The reconstructed signal persists when spike
+traffic stops; threshold refinement is not prediction decay. Spiking alone
+does not expire stale display history or define temporal-world dynamics.
+
 ## Follow-up: Brownian scene-motion experiment
 
 After branch consolidation, the user authorized making the test world move

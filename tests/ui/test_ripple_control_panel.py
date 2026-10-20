@@ -25,6 +25,12 @@ def test_ripple_control_panel_updates_wave_physics(ripple_panel_deps):
         use_gpu=False,
     )
     panel = RippleControlPanel(engine)
+    assert panel.wave_dynamics_button.isChecked()
+    panel.wave_dynamics_button.click()
+    assert not engine.wave_propagation_enabled
+    assert "OFF" in panel.wave_dynamics_button.text()
+    panel.wave_dynamics_button.click()
+    assert engine.wave_propagation_enabled
 
     panel.damping_slider.setValue(500)
     panel.speed_slider.setValue(20)

@@ -116,6 +116,33 @@ def test_forecast_signed_root_copies_pending_guards_and_pre_evidence_predictions
     assert graph.mean.dtype == np.float64
 
 
+@pytest.mark.parametrize("inference_rate", (0., .1))
+def test_hidden_warm_start_leaks_but_learned_decoder_prior_does_not(inference_rate):
+    graph = make_graph(
+        config=PredictiveCodingConfig(
+            inference_steps=8, inference_rate=inference_rate, gradient_clip=1.,
+        ),
+        memory_time_constant=.5,
+    )
+    graph.canvas_weights.fill(0)
+    graph.recurrent_weights.fill(0)
+    graph.hidden_bias.fill(0)
+    graph.sensory_weights.fill(.25)
+    graph.sensory_bias.fill(np.log(3.))
+    graph.mean[graph.hidden_slice] = .3
+    before = graph.mean[graph.hidden_slice].copy()
+    prediction, _ = graph.forecast(np.zeros((1, 2, 3)), dt=.1)
+    expected = before*np.exp(-.1/.5)*(1-inference_rate)**8
+    np.testing.assert_allclose(graph.mean[graph.hidden_slice], expected, atol=1e-15)
+    assert np.all(prediction > .75)
+    graph.condition()
+    prediction, _ = graph.forecast(np.zeros((1, 2, 3)), dt=10.)
+    np.testing.assert_allclose(prediction, .75, atol=1e-7)
+    graph.condition()
+    assert graph.updates == 0
+    np.testing.assert_array_equal(graph.sensory_bias, np.log(3.))
+
+
 @pytest.mark.parametrize("modality", ["visual", "audio"])
 def test_evidence_reaches_root_only_through_inferred_hidden_residual(modality):
     config = PredictiveCodingConfig(inference_steps=80, inference_rate=.5)

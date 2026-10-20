@@ -32,6 +32,7 @@ def test_model_configuration_wires_total_hidden_units_and_foveal_radius():
     config["transforms"]["prediction_error"]["learning"].update(enabled=True, learning_rate=.01)
 
     flattened = main.build_ripple_visualizer_config(config)
+    assert flattened["wave_propagation_enabled"] is False
     assert flattened["use_shader"] and not flattened["use_gpu"]
     source = flattened["source_orchestrator_config"]
     assert not source.audio.enabled
@@ -161,6 +162,7 @@ def test_normal_main_constructs_and_updates_the_configured_foveal_graph(qapp, mo
         window.update_visualization()
         source = window.source_orchestrator
         graph = source.sensory_graph
+        assert not window.engine.wave_propagation_enabled
         assert source.graph_io.radius == 32 and source.graph_io.visual_shape == (3209, 1)
         assert graph.hidden_nodes == hidden_units and graph.canvas_weights.shape == (hidden_units, 9627)
         assert graph.mean.dtype == np.dtype("float64")

@@ -48,6 +48,7 @@ class _BenchVisualizer(RippleWaveVisualizer):
 
 @dataclass(frozen=True)
 class SceneStepMetrics(StaticWorldMetrics):
+    wave_propagation: bool
     brownian_enabled: bool
     brownian_scale: float
     world_offset: tuple[float, float]
@@ -141,7 +142,7 @@ class StaticWorldBench(QtWidgets.QWidget):
             "Test world; no camera or microphone. Model controls change settling steps/rate, learning, and canvas feedback. "
             "Move the mouse over any image to select gaze; Step/Run samples it. "
             "For fixed-patch trials, lock gaze and turn scene motion off. "
-            "New trial keeps model settings/gaze but restores seed-0 weights, hidden state and zero canvas; "
+            "New trial keeps model settings/gaze and the wave switch but restores seed-0 weights, hidden state and zero canvas; "
             "other source/wave settings return to bench defaults. "
             f"Each step uses forecast dt={self.dt:g} s; playback speed does not change this clock."
         )
@@ -182,7 +183,7 @@ class StaticWorldBench(QtWidgets.QWidget):
             "Settled error uses decoder residuals, not clamped sensory states. "
             "Total energy decreases within a fixed conditioning objective; visual MSE and next-step forecast need not. "
             "Motion changes the prediction target; defaults hold weights and root fixed. "
-            "Canvas feedback enables live wave dynamics. "
+            "Canvas feedback updates the root; Surprise optionally enables wave dynamics. "
             f"Plots/export retain the latest {self.HISTORY_LIMIT} steps."
         )
         footer.setWordWrap(True)
@@ -250,6 +251,7 @@ class StaticWorldBench(QtWidgets.QWidget):
 
     def new_trial(self):
         self.run_button.setChecked(False)
+        wave_enabled = False if self.visualizer is None else self.visualizer.engine.wave_propagation_enabled
         if self.visualizer is not None:
             self.source_config = replace(
                 self.source_config,
@@ -274,6 +276,7 @@ class StaticWorldBench(QtWidgets.QWidget):
             rgb_canvas_enabled=True, camera_capture=self.capture,
             source_orchestrator_config=self.source_config, active_vision=self.vision_config,
             update_interval_ms=self.timer.interval(), forecast_dt=self.dt,
+            wave_propagation_enabled=wave_enabled,
         )
         self.visualizer.timer.stop()
         self.visualizer.gaze_changed.connect(self._refresh_gaze_outlines)
@@ -306,6 +309,7 @@ class StaticWorldBench(QtWidgets.QWidget):
         )
         metrics = SceneStepMetrics(
             **asdict(measured), brownian_enabled=moving, brownian_scale=scale,
+            wave_propagation=self.visualizer.engine.wave_propagation_enabled,
             world_offset=tuple(float(value) for value in self.world.offset),
             world_pixel_offset=self.world.pixel_offset,
         )
@@ -328,7 +332,7 @@ class StaticWorldBench(QtWidgets.QWidget):
             f"E {metrics.energy_initial:.5g} -> {metrics.energy_final:.5g} | "
             f"steps {metrics.inference_steps}, rate {metrics.inference_rate:g}, "
             f"learning {'on' if metrics.learning_enabled else 'off'}, updates {metrics.learning_updates}, "
-            f"canvas rate {metrics.canvas_rate:g}"
+            f"canvas rate {metrics.canvas_rate:g}; waves {'on' if metrics.wave_propagation else 'off'}"
         )
         self._refresh_images()
         return metrics
@@ -384,7 +388,8 @@ class StaticWorldBench(QtWidgets.QWidget):
             motion_enabled=self.motion_enabled.isChecked(), brownian_scale=float(self.motion_scale.value()),
             backend=self.backend, foveal_radius=self.vision_config.foveal_radius,
             hidden_units=graph.hidden_nodes, seed=0, forecast_dt=self.dt,
-            wave_propagation=True, history_limit=self.HISTORY_LIMIT, total_steps=self.steps,
+            wave_propagation=self.visualizer.engine.wave_propagation_enabled,
+            history_limit=self.HISTORY_LIMIT, total_steps=self.steps,
             current_config=asdict(graph.config), frames=[asdict(frame) for frame in self.history],
         )
         Path(path).write_text(json.dumps(payload, indent=2, allow_nan=False)+"\n")

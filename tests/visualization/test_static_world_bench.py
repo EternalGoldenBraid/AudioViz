@@ -43,6 +43,7 @@ def test_bench_uses_actual_model_fixed_clock_and_missing_evidence_gaps(qapp, req
         graph = source.sensory_graph
         initial = [to_numpy(getattr(graph, key)).copy() for key in graph._PARAMETERS]
         first = bench.step_once()
+        assert not first.wave_propagation and not bench.visualizer.engine.wave_propagation_enabled
         assert first.time == .025 and first.observed_rgb == 49*3
         assert first.energy_final <= first.energy_initial+1e-10
         assert not first.learning_enabled and first.canvas_rate == 0
@@ -85,17 +86,29 @@ def test_bench_uses_actual_model_fixed_clock_and_missing_evidence_gaps(qapp, req
         assert trace["total_steps"] == 3 and len(trace["frames"]) == 3
         assert trace["frames"][-1]["forecast_mse"] is None
         assert trace["frames"][1]["inference_rate"] == 0
-        assert trace["wave_propagation"] and trace["seed"] == 0
+        assert not trace["wave_propagation"] and trace["seed"] == 0
+        assert not any(frame["wave_propagation"] for frame in trace["frames"])
         assert trace["forecast_dt"] == .025
         bench.visualizer.gaze_controls.observe.setChecked(True)
         controls["learning-dynamics", "canvas_rate"].setValue(.05)
         feedback = bench.step_once()
         assert feedback.canvas_rate == .05 and feedback.canvas_gradient_norm > 0
         assert np.any(spatial_field(bench.visualizer.engine.get_field()) != 0)
+        panel = bench.visualizer.control_panel
+        assert not panel.wave_dynamics_button.isChecked()
+        panel.wave_dynamics_button.click()
+        assert "ON" in panel.wave_dynamics_button.text()
+        assert bench.step_once().wave_propagation
+        bench.new_trial()
+        qapp.processEvents()
+        assert bench.visualizer.engine.wave_propagation_enabled
+        assert bench.step_once().wave_propagation
+        bench.save_trace(path)
+        assert json.loads(path.read_text())["wave_propagation"]
         bench.run_button.setChecked(True)
         assert bench.timer.isActive() and not bench.step_button.isEnabled()
         QtTest.QTest.qWait(80)
-        assert bench.steps > 4
+        assert bench.steps > 1
         bench.run_button.setChecked(False)
         assert not bench.timer.isActive() and bench.step_button.isEnabled()
     finally:

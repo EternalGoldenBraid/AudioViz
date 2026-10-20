@@ -141,6 +141,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  camera_capture=None,
                  active_vision: ActiveVisionConfig | None = None,
                  forecast_dt: float | None = None,
+                 wave_propagation_enabled: bool = True,
                  **kwargs):
         if forecast_dt is not None and (
             isinstance(forecast_dt, bool) or not np.isfinite(forecast_dt) or forecast_dt <= 0
@@ -244,6 +245,7 @@ class RippleWaveVisualizer(VisualizerBase):
             body_boundary_transmission=self.body_boundary_transmission,
             body_boundary_dissipation=self.body_boundary_dissipation,
             use_external_opengl_context=self.use_shader,
+            wave_propagation_enabled=wave_propagation_enabled,
         )
         self.dt = self.engine.dt
         self.source_orchestrator = RippleSourceOrchestrator(

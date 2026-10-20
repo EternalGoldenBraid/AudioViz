@@ -224,6 +224,18 @@ class RippleControlPanel(QtWidgets.QWidget):
         ))
         self.reset_button.clicked.connect(self.reset_field)
         content_layout.addWidget(self.reset_button)
+        self.wave_dynamics_button = QtWidgets.QPushButton()
+        self.wave_dynamics_button.setCheckable(True)
+        self.wave_dynamics_button.setChecked(engine.wave_propagation_enabled)
+        self.wave_dynamics_button.setToolTip(self._tooltip_text(
+            "Optional wave-equation evolution of the root canvas. Off holds its state "
+            "between explicit drives and sensory corrections, without wave damping or "
+            "spatial propagation. Hidden inference and learning continue. "
+            "Switching off clears wave velocity on the next step."
+        ))
+        self._update_wave_dynamics(engine.wave_propagation_enabled)
+        self.wave_dynamics_button.toggled.connect(self._update_wave_dynamics)
+        content_layout.addWidget(self.wave_dynamics_button)
         if on_belief_diagnostics is not None:
             beliefs_button = QtWidgets.QPushButton("Attention / Belief Diagnostics")
             beliefs_button.clicked.connect(on_belief_diagnostics)
@@ -483,6 +495,12 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.engine.reset()
         if self.on_reset is not None:
             self.on_reset()
+
+    def _update_wave_dynamics(self, enabled: bool) -> None:
+        self.engine.set_wave_propagation(enabled)
+        self.wave_dynamics_button.setText(
+            f"Surprise: wave dynamics {'ON' if enabled else 'OFF'}"
+        )
 
     def update_speed(self, val: float) -> None:
         self.engine.set_speed(val)
