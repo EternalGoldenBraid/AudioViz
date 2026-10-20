@@ -43,136 +43,149 @@ class SharedSensoryBranch:
 
 
 class SharedSensoryIO:
-    """Bounded RGB gather and device-native interpolation around the compact graph."""
+    """Route fixed circular slots through world coordinates without resizing weights."""
 
-    def __init__(self, shape, visual_shape, *, backend=np, device=None):
+    def __init__(self, shape, *, radius=8, backend=np, device=None):
         self.shape = shape
-        self.visual_shape = visual_shape
         self.backend = backend
         self.device = device
-        rows, cols = shape[:2]
-        self.sample_rows = np.rint(np.linspace(0, rows-1, visual_shape[0])).astype(np.intp)
-        self.sample_cols = np.rint(np.linspace(0, cols-1, visual_shape[1])).astype(np.intp)
-        self._rows = backend.asarray(self.sample_rows)
-        self._cols = backend.asarray(self.sample_cols)
-        x = np.interp(np.arange(cols), self.sample_cols, np.arange(visual_shape[1]))
-        y = np.interp(np.arange(rows), self.sample_rows, np.arange(visual_shape[0]))
+        if isinstance(radius, bool) or not isinstance(radius, int) or not 1 <= radius <= 16:
+            raise ValueError("foveal radius must be an integer between 1 and 16 pixels")
+        self.radius = radius
+        self.offsets = np.array([
+            (y, x) for y in range(-radius, radius+1) for x in range(-radius, radius+1)
+            if y*y+x*x <= radius*radius
+        ], dtype=np.intp)
+        self.visual_shape = (len(self.offsets), 1)
+        self.gaze = (.5, .5)
+        self.positions, self.valid = self.route(self.gaze)
+        self._previous_positions = self.positions.copy()
+        self._previous_valid = np.zeros(len(self.offsets), dtype=bool)
         if device is None:
-            self._x = backend.asarray(x, dtype=backend.float32)
-            self._y = backend.asarray(y, dtype=backend.float32)
+            self._prediction = backend.full(shape, .5, dtype=backend.float32)
+            self._correction = backend.zeros(shape, dtype=backend.float32)
         else:
-            self._indices = GLArray(device, (sum(visual_shape),), np.concatenate((self.sample_rows, self.sample_cols)))
-            self._samples = GLArray(device, (*visual_shape, 3))
-            self._x = GLArray(device, (cols,), x)
-            self._y = GLArray(device, (rows,), y)
-            self._render_values = GLArray(device, (*visual_shape, 3))
-            self._prediction = GLArray(device, shape)
+            self._indices = GLArray(device, (len(self.offsets), 3))
+            self._samples = GLArray(device, (*self.visual_shape, 3))
+            self._render_values = GLArray(device, (*self.visual_shape, 3))
+            self._prediction = GLArray(device, shape, np.full(shape, .5, dtype=np.float32))
             self._correction = GLArray(device, shape)
-            row_ports = np.full(rows, -1, dtype=np.float32)
-            col_ports = np.full(cols, -1, dtype=np.float32)
-            row_ports[self.sample_rows] = np.arange(visual_shape[0])
-            col_ports[self.sample_cols] = np.arange(visual_shape[1])
-            self._row_ports = GLArray(device, (rows,), row_ports)
-            self._col_ports = GLArray(device, (cols,), col_ports)
+        self.set_gaze(self.gaze)
 
-    def sample(self, image):
+    def route(self, gaze):
+        if len(gaze) != 2 or any(not np.isfinite(v) or not 0 <= v <= 1 for v in gaze):
+            raise ValueError("gaze must contain two normalized coordinates")
+        center = np.rint(np.asarray(gaze)[::-1]*(np.asarray(self.shape[:2])-1)).astype(np.intp)
+        positions = self.offsets+center
+        valid = np.all((positions >= 0) & (positions < self.shape[:2]), axis=1)
+        return positions, valid
+
+    def set_gaze(self, gaze):
+        self.gaze = tuple(gaze)
+        self.positions, self.valid = self.route(gaze)
+        if self.device is not None:
+            self._indices.upload(np.column_stack((self.positions, self.valid)))
+
+    def _gather(self, image, positions, valid, indices=None, output=None):
         if tuple(image.shape) != tuple(self.shape):
             raise ValueError("Shared graph camera observation must match the RGB canvas")
         if self.device is None:
-            return image[self._rows[:, None], self._cols[None, :]]
+            xp = self.backend
+            result = xp.zeros((*valid.shape, 3), dtype=xp.float32)
+            rows, cols = positions[valid].T
+            result[xp.asarray(valid)] = image[xp.asarray(rows), xp.asarray(cols)]
+            return result
         self.device.run(
             """
             layout(std430,binding=0) readonly buffer Image {float image[];};
             layout(std430,binding=1) readonly buffer Indices {float indices[];};
             layout(std430,binding=2) writeonly buffer Samples {float samples[];};
-            uniform int count,nr,nc,width,offset;
+            uniform int count,width,offset;
             void main(){
                 int i=int(gl_GlobalInvocationID.x);if(i>=count)return;
-                int p=i/3,c=i%3,y=int(indices[p/nc]),x=int(indices[nr+p%nc]);
-                samples[i]=image[offset+(y*width+x)*3+c];
+                int p=i/3,c=i%3,y=int(indices[p*3]),x=int(indices[p*3+1]);
+                samples[i]=indices[p*3+2]>0.0?image[offset+(y*width+x)*3+c]:0.0;
             }""",
-            [image, self._indices, self._samples], self._samples.size,
-            count=self._samples.size, nr=self.visual_shape[0], nc=self.visual_shape[1],
+            [image, indices, output], output.size, count=output.size,
             width=self.shape[1], offset=image.offset,
         )
-        return self._samples.download()
+        return output.download()
 
-    def visual_mask(self, precision):
-        """Observe the gaze sample and sample centers inside its one-sigma fovea."""
-        if not precision.sample:
-            return np.zeros(self.visual_shape, dtype=bool)
-        if precision.peak == 0:
-            return np.ones(self.visual_shape, dtype=bool)
-        x, y, radius = precision.pixel_parameters(self.shape[:2])
-        distances = (
-            (self.sample_rows[:, None]-y)**2 + (self.sample_cols[None, :]-x)**2
-        )
-        mask = distances <= radius**2
-        mask.flat[distances.argmin()] = True
-        return mask
+    def sample(self, image):
+        return self._gather(
+            image, self.positions, self.valid,
+            getattr(self, "_indices", None), getattr(self, "_samples", None),
+        ).reshape(*self.visual_shape, 3)
+
+    def sample_candidates(self, image, gazes):
+        routes = [self.route(gaze) for gaze in gazes]
+        positions = np.stack([route[0] for route in routes])
+        valid = np.stack([route[1] for route in routes])
+        if self.device is None:
+            return self._gather(image, positions, valid), valid
+        indices = GLArray(self.device, (*valid.shape, 3), np.concatenate(
+            (positions, valid[..., None]), axis=-1,
+        ))
+        samples = GLArray(self.device, (*valid.shape, 3))
+        try:
+            return self._gather(image, positions, valid, indices, samples), valid
+        finally:
+            self.device.release(indices, samples)
 
     def nearest_pixel(self, gaze):
-        row = int(np.abs(self.sample_rows-gaze[1]*(self.shape[0]-1)).argmin())
-        col = int(np.abs(self.sample_cols-gaze[0]*(self.shape[1]-1)).argmin())
-        return (row, col), (int(self.sample_rows[row]), int(self.sample_cols[col]))
+        index = int(np.flatnonzero(np.all(self.offsets == 0, axis=1))[0])
+        return (index, 0), tuple(int(v) for v in self.route(gaze)[0][index])
 
-    def scatter(self, values):
-        """Apply the adjoint of sampling to a gradient on the canvas root ports."""
+    def _write(self, output, values, positions, valid):
         values = values.reshape(*self.visual_shape, 3)
         if self.device is None:
-            result = self.backend.zeros(self.shape, dtype=self.backend.float32)
-            result[self._rows[:, None], self._cols[None, :]] = values
-            return result
+            rows, cols = positions[valid].T
+            output[self.backend.asarray(rows), self.backend.asarray(cols)] = self.backend.asarray(
+                values, dtype=self.backend.float32,
+            ).reshape(-1, 3)[self.backend.asarray(valid)]
+            return output
+        self._indices.upload(np.column_stack((positions, valid)))
         self._render_values.upload(values)
         self.device.run(
             """
             layout(std430,binding=0) readonly buffer Values {float values[];};
-            layout(std430,binding=1) readonly buffer Rows {float rows[];};
-            layout(std430,binding=2) readonly buffer Cols {float cols[];};
-            layout(std430,binding=3) writeonly buffer Output {float result[];};
-            uniform int count,width,nc;
+            layout(std430,binding=1) readonly buffer Indices {float indices[];};
+            layout(std430,binding=2) buffer Output {float result[];};
+            uniform int count,width;
             void main(){
                 int i=int(gl_GlobalInvocationID.x);if(i>=count)return;
-                int p=i/3,c=i%3,y=int(rows[p/width]),x=int(cols[p%width]);
-                result[i]=(y<0||x<0)?0.0:values[(y*nc+x)*3+c];
+                int p=i/3,c=i%3;if(indices[p*3+2]==0.0)return;
+                int y=int(indices[p*3]),x=int(indices[p*3+1]);
+                result[(y*width+x)*3+c]=values[i];
             }""",
-            [self._render_values, self._row_ports, self._col_ports, self._correction],
-            self._correction.size, count=self._correction.size,
-            width=self.shape[1], nc=self.visual_shape[1],
+            [self._render_values, self._indices, output],
+            self._render_values.size, count=self._render_values.size, width=self.shape[1],
         )
-        return self._correction
+        self._indices.upload(np.column_stack((self.positions, self.valid)))
+        return output
 
-    def render(self, values, *, correction=False):
-        values = values.reshape(*self.visual_shape, 3)
+    def scatter(self, values):
+        """Sampling's exact adjoint; clear only the previous correction's support."""
+        zeros = self.backend.zeros((*self.visual_shape, 3), dtype=self.backend.float32)
+        self._write(self._correction, zeros, self._previous_positions, self._previous_valid)
+        self._previous_positions = self.positions.copy()
+        self._previous_valid = self.valid.copy()
+        return self._write(self._correction, values, self.positions, self.valid)
+
+    def render(self, values):
+        return self._write(self._prediction, values, self.positions, self.valid)
+
+    def reset(self):
+        self._prediction = (
+            self.backend.full(self.shape, .5, dtype=self.backend.float32)
+            if self.device is None else self._prediction
+        )
         if self.device is not None:
-            self._render_values.upload(values)
-            output = self._correction if correction else self._prediction
             self.device.run(
-                """
-                layout(std430,binding=0) readonly buffer Values {float values[];};
-                layout(std430,binding=1) readonly buffer X {float xcoord[];};
-                layout(std430,binding=2) readonly buffer Y {float ycoord[];};
-                layout(std430,binding=3) writeonly buffer Output {float result[];};
-                uniform int count,width,nr,nc;
-                void main(){
-                    int i=int(gl_GlobalInvocationID.x);if(i>=count)return;
-                    int p=i/3,c=i%3;
-                    float x=xcoord[p%width],y=ycoord[p/width];
-                    int x0=int(x),y0=int(y),x1=min(x0+1,nc-1),y1=min(y0+1,nr-1);
-                    float top=mix(values[(y0*nc+x0)*3+c],values[(y0*nc+x1)*3+c],fract(x));
-                    float bottom=mix(values[(y1*nc+x0)*3+c],values[(y1*nc+x1)*3+c],fract(x));
-                    result[i]=mix(top,bottom,fract(y));
-                }""",
-                [self._render_values, self._x, self._y, output], output.size,
-                count=output.size, width=self.shape[1], nr=self.visual_shape[0], nc=self.visual_shape[1],
+                "layout(std430,binding=0) buffer Output {float values[];};"
+                "uniform int count;void main(){int i=int(gl_GlobalInvocationID.x);"
+                "if(i<count)values[i]=0.5;}",
+                [self._prediction], self._prediction.size, count=self._prediction.size,
             )
-            return output
-        xp = self.backend
-        values = xp.asarray(values, dtype=xp.float32)
-        x0, y0 = self._x.astype(xp.intp), self._y.astype(xp.intp)
-        x1 = xp.minimum(x0+1, self.visual_shape[1]-1)
-        y1 = xp.minimum(y0+1, self.visual_shape[0]-1)
-        fx, fy = (self._x-x0)[None, :, None], (self._y-y0)[:, None, None]
-        top = values[y0[:, None], x0[None, :]]*(1-fx) + values[y0[:, None], x1[None, :]]*fx
-        bottom = values[y1[:, None], x0[None, :]]*(1-fx) + values[y1[:, None], x1[None, :]]*fx
-        return (top*(1-fy)+bottom*fy).astype(xp.float32, copy=False)
+        self._correction.fill(0)
+        self._previous_valid.fill(False)
