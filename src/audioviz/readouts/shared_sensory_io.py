@@ -68,6 +68,12 @@ class SharedSensoryIO:
             self._render_values = GLArray(device, (*visual_shape, 3))
             self._prediction = GLArray(device, shape)
             self._correction = GLArray(device, shape)
+            row_ports = np.full(rows, -1, dtype=np.float32)
+            col_ports = np.full(cols, -1, dtype=np.float32)
+            row_ports[self.sample_rows] = np.arange(visual_shape[0])
+            col_ports[self.sample_cols] = np.arange(visual_shape[1])
+            self._row_ports = GLArray(device, (rows,), row_ports)
+            self._col_ports = GLArray(device, (cols,), col_ports)
 
     def sample(self, image):
         if tuple(image.shape) != tuple(self.shape):
@@ -109,6 +115,32 @@ class SharedSensoryIO:
         row = int(np.abs(self.sample_rows-gaze[1]*(self.shape[0]-1)).argmin())
         col = int(np.abs(self.sample_cols-gaze[0]*(self.shape[1]-1)).argmin())
         return (row, col), (int(self.sample_rows[row]), int(self.sample_cols[col]))
+
+    def scatter(self, values):
+        """Apply the adjoint of sampling to a gradient on the canvas root ports."""
+        values = values.reshape(*self.visual_shape, 3)
+        if self.device is None:
+            result = self.backend.zeros(self.shape, dtype=self.backend.float32)
+            result[self._rows[:, None], self._cols[None, :]] = values
+            return result
+        self._render_values.upload(values)
+        self.device.run(
+            """
+            layout(std430,binding=0) readonly buffer Values {float values[];};
+            layout(std430,binding=1) readonly buffer Rows {float rows[];};
+            layout(std430,binding=2) readonly buffer Cols {float cols[];};
+            layout(std430,binding=3) writeonly buffer Output {float result[];};
+            uniform int count,width,nc;
+            void main(){
+                int i=int(gl_GlobalInvocationID.x);if(i>=count)return;
+                int p=i/3,c=i%3,y=int(rows[p/width]),x=int(cols[p%width]);
+                result[i]=(y<0||x<0)?0.0:values[(y*nc+x)*3+c];
+            }""",
+            [self._render_values, self._row_ports, self._col_ports, self._correction],
+            self._correction.size, count=self._correction.size,
+            width=self.shape[1], nc=self.visual_shape[1],
+        )
+        return self._correction
 
     def render(self, values, *, correction=False):
         values = values.reshape(*self.visual_shape, 3)
