@@ -92,9 +92,11 @@ RIPPLE_CONFIG = {
         "plane_size_m": (50.0, 50.0),
         # "resolution": (480, 640),
         # "resolution": (1080, 1920),
+        # "resolution": (960, 1200),
         # "resolution": (600, 800),
+        # "resolution": (400, 600),
         # "resolution": (300, 400),
-        "resolution": (100, 200),
+        # # "resolution": (100, 200),
         # "resolution": (48, 64),
     },
     "dynamics": {
@@ -105,7 +107,9 @@ RIPPLE_CONFIG = {
         "boundary_condition": "neumann",
     },
     "renderer": {
-        "backend": "numpy",  # numpy | gpu | opengl
+        # "backend": "numpy",  # numpy | gpu | opengl
+        "backend": "opengl",  # numpy | gpu | opengl
+        # "backend": "gpu",  # numpy | gpu | opengl
         "rgb_canvas_enabled": True,
         "auto_color_activation_threshold": 0.1,
         "auto_color_floor": 0.1,

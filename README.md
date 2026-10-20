@@ -153,7 +153,9 @@ Both run on OpenGL, NumPy, or CuPy without a physical camera or microphone.
 For live streaming, the first run prompts for audio devices and stores the
 machine-local selection in `config/audio_devices.json`. The file is ignored by
 Git; `config/audio_devices.example.json` documents its structure and safe null
-device values.
+device values. The command-line device picker uses `-1` for the Null Device,
+including when no physical devices are listed. Disabling both audio devices
+allows processing to start without opening audio streams.
 
 ### Static-world predictive-coding bench
 
@@ -436,6 +438,19 @@ excluded, so neither mode is a claim about live device FPS. `--profile` saves
 per-backend cProfile data after warmup. Python profiles attribute asynchronous
 GPU wait time to synchronization points such as finite checks; synchronized
 stage timings are more useful for locating the actual cost.
+
+### Profile the current live application
+
+```bash
+.venv/bin/python scripts/profile_live.py --backend opengl --warmup 10 --frames 120 --output /tmp/audioviz-live.prof
+```
+
+This runs the current `main.py` configuration, including its camera/source
+settings, and reports update-call duration and wall-clock update rate after
+warmup. `--backend` accepts `numpy`, `gpu` (CuPy), or `opengl`; omitting it
+preserves the configured backend. The actual visualizer resolution is printed.
+It saves cProfile data and a sibling text report. These update timings are not
+synchronized per-kernel GPU timings or a count of presented display frames.
 
 ### Foveal graph memory sweep
 
