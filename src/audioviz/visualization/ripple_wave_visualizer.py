@@ -140,7 +140,12 @@ class RippleWaveVisualizer(VisualizerBase):
                  pose_capture=None,
                  camera_capture=None,
                  active_vision: ActiveVisionConfig | None = None,
+                 forecast_dt: float | None = None,
                  **kwargs):
+        if forecast_dt is not None and (
+            isinstance(forecast_dt, bool) or not np.isfinite(forecast_dt) or forecast_dt <= 0
+        ):
+            raise ValueError("forecast_dt must be finite and positive")
         if source_orchestrator_config is None:
             source_orchestrator_config = RippleSourceOrchestratorConfig()
         if pose_config is None:
@@ -159,6 +164,7 @@ class RippleWaveVisualizer(VisualizerBase):
                 raise ValueError("Active vision requires camera prediction-error inference")
         super().__init__(processor, **kwargs)
         self.active_vision_config = active_vision
+        self.forecast_dt = forecast_dt
         self.gaze_controls = None
         self.gaze_status = None
         self._gaze_last_prediction_time = None
@@ -890,6 +896,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.active_vision_config is not None:
             now = time.monotonic()
             elapsed = (
+                self.forecast_dt if self.forecast_dt is not None else
                 self.timer.interval()/1000 if self._gaze_last_prediction_time is None
                 else now-self._gaze_last_prediction_time
             )

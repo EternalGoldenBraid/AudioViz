@@ -154,6 +154,58 @@ machine-local selection in `config/audio_devices.json`. The file is ignored by
 Git; `config/audio_devices.example.json` documents its structure and safe null
 device values.
 
+### Static-world predictive-coding bench
+
+Run the **same foveal model and wave pipeline** against a deterministic geometric
+scene, without camera or microphone hardware:
+
+```bash
+.venv/bin/python -m audioviz.visualization.static_world_bench
+# Smaller graph or alternative execution backend:
+.venv/bin/python -m audioviz.visualization.static_world_bench \
+    --backend numpy --resolution 80 120 --foveal-radius 16 --hidden-units 6 \
+    --steps 8 --rate 0.1 --dt 0.03333333333333333
+```
+
+The bench starts **paused**, with gaze locked, learning disabled, and canvas
+feedback zero. **Step** consumes one observation; **Run/Pause** controls playback.
+**Model controls** opens the application's existing Controls panel: settling
+steps/rate, generative learning, learning rate, and canvas-feedback rate act on
+the actual model. Radius and total hidden count remain startup arguments.
+Unlock gaze to move it over the embedded canvas or use the gaze controls;
+expand **Gaze and Observation** for **Observe vision**, which independently
+gates evidence. Locked-gaze trials skip
+prospective gaze searches unless joint belief diagnostics are explicitly opened.
+
+The world, persistent pre-evidence prediction, and observed-pixel forecast RGB
+RMSE are shown together. Magenta circles mark the circular aperture; gray error
+pixels are **unobserved**, not error-free. Plots separate:
+
+- Across-observation **forecast MSE before evidence** from **settled decoder MSE
+  before that observation's weight update**, on observed RGB coordinates only.
+- The latest observation's **total residual-energy trajectory**, with final
+  hidden and sensory components. Backtracking makes this held-objective total
+  energy non-increasing; sensory MSE alone need not decrease.
+
+With learning and feedback off, expect settling within observations and a
+possible warm-start transient, **not guaranteed improvement of future forecasts**.
+Enable learning with feedback still zero to isolate weight adaptation.
+Improvement on one fixed patch can be decoder-bias memorization; it does not
+establish generalization or location-specific scene memory. Positive canvas
+feedback also introduces wave propagation and damping, not pure static-root
+gradient descent. A zero settling rate is the no-relaxation control; the maximum
+step count applies to both forecast and conditioning.
+
+**New trial (fresh weights)** restores seed-0 parameters, hidden state, and a
+zero canvas while retaining model settings and gaze; other source/wave settings
+return to bench defaults. The ordinary Controls reset retains learned weights,
+so it is not a fresh trial. Every observation uses the fixed `--dt` for model
+forecasting, independently of pause duration; wave physics retains its own CFL
+timestep. **Save trace** writes JSON containing the latest **512 observations**,
+including recorded model settings, energy trajectories, gaze, and missing-error
+values as `null`. This is a metric log, not a complete replay of arbitrary
+source/wave-control interventions.
+
 ---
 
 ## 🧍 Pose Model
