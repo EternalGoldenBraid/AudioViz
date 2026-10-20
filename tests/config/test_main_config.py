@@ -1,7 +1,13 @@
 from copy import deepcopy
 import importlib.util
 from pathlib import Path
+import signal
+import sys
+
+import numpy as np
 import pytest
+
+from audioviz.sources import CircularDotCapture, CircularDotConfig, CircularDotSource
 
 
 def _load_main_module():
@@ -13,74 +19,58 @@ def _load_main_module():
     return module
 
 
-def test_build_ripple_visualizer_config_flattens_nested_source_config():
+def test_model_configuration_wires_total_hidden_units_and_foveal_radius():
     main = _load_main_module()
     config = deepcopy(main.RIPPLE_CONFIG)
+    config["model"].update(foveal_radius=32, hidden_units=16, memory_time_constant=.7)
+    config["gaze"].update(mode="autonomous", position=(.25, .75))
     config["renderer"]["backend"] = "opengl"
     config["sources"]["audio"]["enabled"] = False
-    config["sources"]["camera_frame"]["enabled"] = True
     config["sources"]["camera_frame"]["camera_index"] = 2
-    config["transforms"]["prediction_error"]["enabled"] = True
-    config["transforms"]["prediction_error"]["inference"]["hidden_channels"] = 4
-    config["transforms"]["prediction_error"]["inference"]["dtype"] = "float32"
-    config["transforms"]["prediction_error"]["inference"]["steps"] = 12
-    config["transforms"]["prediction_error"]["inference"]["hidden_rate"] = 0.2
-    config["transforms"]["prediction_error"]["inference"]["canvas_rate"] = 0.03
-    config["transforms"]["prediction_error"]["learning"]["enabled"] = True
-    config["transforms"]["prediction_error"]["learning"]["learning_rate"] = 0.01
+    inference = config["transforms"]["prediction_error"]["inference"]
+    inference.update(steps=12, hidden_rate=.2, canvas_rate=.03)
+    config["transforms"]["prediction_error"]["learning"].update(enabled=True, learning_rate=.01)
 
     flattened = main.build_ripple_visualizer_config(config)
-
-    assert flattened["use_shader"] is True
-    assert flattened["use_gpu"] is False
-    orchestrator_config = flattened["source_orchestrator_config"]
-    pose_config = flattened["pose_config"]
-
-    assert orchestrator_config.audio.enabled is False
-    assert orchestrator_config.camera_frame.enabled is True
-    assert orchestrator_config.camera_frame.camera_index == 2
-    assert orchestrator_config.prediction_error.enabled is True
-    assert orchestrator_config.prediction_error.inputs == ("camera_frame",)
-    assert orchestrator_config.visual_pathway.hidden_channels == 4
-    assert orchestrator_config.visual_pathway.dtype == "float32"
-    assert orchestrator_config.visual_pathway.inference_steps == 12
-    assert orchestrator_config.visual_pathway.inference_rate == 0.2
-    assert orchestrator_config.visual_pathway.canvas_rate == 0.03
-    assert orchestrator_config.visual_pathway.cross_modal_enabled is False
-    assert orchestrator_config.visual_pathway.learning_enabled is True
-    assert orchestrator_config.visual_pathway.learning_rate == 0.01
-    assert pose_config.camera_index == config["sources"]["pose"]["camera_index"]
-    assert (
-        pose_config.body_boundary_transmission
-        == config["sources"]["pose"]["boundary"]["transmission"]
-    )
-    config["transforms"]["prediction_error"]["inference"]["cross_modal_enabled"] = True
-    assert main.build_ripple_visualizer_config(config)["source_orchestrator_config"].visual_pathway.cross_modal_enabled
+    assert flattened["use_shader"] and not flattened["use_gpu"]
+    source = flattened["source_orchestrator_config"]
+    assert not source.audio.enabled
+    assert source.camera_frame.enabled and source.camera_frame.camera_index == 2
+    assert source.prediction_error.enabled and source.prediction_error.inputs == ("camera_frame",)
+    assert source.visual_pathway.hidden_channels == 16
+    assert source.visual_pathway.dtype == "float32"
+    assert source.visual_pathway.inference_steps == 12
+    assert source.visual_pathway.inference_rate == .2
+    assert source.visual_pathway.canvas_rate == .03
+    assert not source.visual_pathway.cross_modal_enabled
+    assert source.visual_pathway.learning_enabled
+    assert source.visual_pathway.learning_rate == .01
+    gaze = flattened["active_vision"]
+    assert gaze.shared_sensory_graph and gaze.foveal_radius == 32
+    assert gaze.mode == "autonomous" and gaze.precision.gaze == (.25, .75)
+    assert gaze.memory_time_constant == .7 and gaze.audio_precision is None
+    assert flattened["pose_config"].camera_index == config["sources"]["pose"]["camera_index"]
 
 
-def test_active_vision_config_requires_explicit_camera_only_ripple():
+@pytest.mark.parametrize("field,value,message", (
+    ("hidden_units", 65, "hidden_units"), ("hidden_units", 0, "hidden_units"),
+    ("hidden_units", True, "hidden_units"),
+    ("foveal_radius", 37, "foveal_radius"), ("foveal_radius", True, "foveal_radius"),
+))
+def test_invalid_model_sizes_fail_before_hardware_initialization(field, value, message):
     main = _load_main_module()
     config = deepcopy(main.RIPPLE_CONFIG)
-    assert main.build_ripple_visualizer_config(config)["active_vision"] is None
-    config["active_vision"].update(enabled=True, mode="autonomous", memory_time_constant=.7)
-    with pytest.raises(ValueError, match="audio"):
+    config["model"][field] = value
+    with pytest.raises(ValueError, match=message):
         main.build_ripple_visualizer_config(config)
-    config["active_vision"]["audio_precision"] = 1.4
-    av_with_audio = main.build_ripple_visualizer_config(config)["active_vision"]
-    assert av_with_audio.audio_precision == pytest.approx(1.4)
-    config["active_vision"]["audio_precision"] = None
-    config["sources"]["audio"]["enabled"] = False
-    cfg = main.build_ripple_visualizer_config(config)["active_vision"]
-    assert cfg.mode == "autonomous" and cfg.memory_time_constant == .7
-    assert cfg.precision.gaze == (.5, .5)
-    assert cfg.audio_precision is None
 
 
-@pytest.mark.parametrize("mode,shared", (
-    (None, False), ("mouse", False), ("autonomous", False), ("full", False), ("autonomous", True),
-))
-def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, monkeypatch, mode, shared):
+@pytest.mark.parametrize("audio,spectrogram", ((False, False), (True, False), (False, True)))
+def test_unflagged_startup_uses_foveal_model_and_explicit_audio_settings(qapp, monkeypatch, audio, spectrogram):
     main = _load_main_module()
+    main.RIPPLE_CONFIG["sources"]["audio"]["enabled"] = audio
+    main.APP_CONFIG["windows"]["spectrogram"]["enabled"] = spectrogram
+    main.APP_CONFIG["windows"]["helix"]["enabled"] = False
     original_app, original_ripple = deepcopy(main.APP_CONFIG), deepcopy(main.RIPPLE_CONFIG)
     created, starts = [], []
 
@@ -98,7 +88,7 @@ def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, mon
     processor = Processor()
 
     def create_audio(config):
-        assert mode is None, "camera-only startup must not initialize audio or select devices"
+        assert audio or spectrogram, "camera-only configuration must not initialize audio"
         return processor, dict(cmap=None, norm=None, waveform_plot_duration=.5), 50
 
     class Window:
@@ -118,86 +108,84 @@ def test_main_camera_profile_skips_audio_and_preserves_default_startup(qapp, mon
     monkeypatch.setattr(main, "RippleWaveVisualizer", Window)
     monkeypatch.setattr(main, "SpectrogramVisualizer", Window)
     monkeypatch.setattr(main.QtWidgets.QApplication, "exec", lambda self: 0)
-    monkeypatch.setattr(main.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(signal, "signal", lambda *args: None)
     old_style = qapp.styleSheet()
     try:
         with pytest.raises(SystemExit) as stopped:
-            main.main(([] if mode is None else ["--active-vision", mode]) + (["--shared-sensory-graph"] if shared else []))
+            main.main([])
         assert stopped.value.code == 0
+        assert len(created) == 1+spectrogram
         ripple = next(value for value in created if "source_orchestrator_config" in value)
-        assert ripple["processor"] is (processor if mode is None else None)
-        assert starts == ([True] if mode is None else [])
-        if mode is not None:
-            assert len(created) == 1
-            assert ripple["active_vision"].mode == mode
-            assert ripple["active_vision"].shared_sensory_graph is shared
-            assert ripple["source_orchestrator_config"].camera_frame.enabled
-            assert not ripple["source_orchestrator_config"].audio.enabled
+        assert ripple["processor"] is (processor if audio else None)
+        assert starts == ([True] if audio or spectrogram else [])
+        assert ripple["active_vision"].shared_sensory_graph
+        assert ripple["active_vision"].foveal_radius == 32
+        assert ripple["active_vision"].audio_precision == (1.0 if audio else None)
+        assert ripple["source_orchestrator_config"].visual_pathway.hidden_channels == 6
+        assert ripple["source_orchestrator_config"].audio.enabled is audio
         assert main.APP_CONFIG == original_app and main.RIPPLE_CONFIG == original_ripple
     finally:
         qapp.setStyleSheet(old_style)
 
 
-@pytest.mark.parametrize("shared", (False, True))
-def test_main_active_audio_requires_active_vision_and_routes_processor_to_ripple(qapp, monkeypatch, shared):
+@pytest.mark.parametrize("backend,hidden_units", (("numpy", 6), ("opengl", 16)))
+def test_normal_main_constructs_and_updates_the_configured_foveal_graph(qapp, monkeypatch, backend, hidden_units):
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("Native widget requires a window-system context")
     main = _load_main_module()
-    with pytest.raises(SystemExit):
-        main.main(["--active-audio"])
-    with pytest.raises(SystemExit):
-        main.main(["--shared-sensory-graph"])
-    with pytest.raises(SystemExit):
-        main.main(["--active-vision", "full", "--shared-sensory-graph"])
+    main.RIPPLE_CONFIG["model"]["hidden_units"] = hidden_units
+    main.RIPPLE_CONFIG["sources"]["audio"]["enabled"] = False
+    main.RIPPLE_CONFIG["renderer"]["backend"] = backend
+    main.RIPPLE_CONFIG["field"]["resolution"] = (80, 96)
+    main.APP_CONFIG["windows"]["spectrogram"]["enabled"] = False
+    main.APP_CONFIG["windows"]["helix"]["enabled"] = False
+    main.APP_CONFIG["windows"]["ripples"]["size"] = (800, 600)
+    stimulus = CircularDotSource(CircularDotConfig(resolution=(80, 96), radius=20))
+    created, errors = [], []
 
-    created, starts = [], []
-
-    class Processor:
-        def process_pending_audio(self):
-            pass
-
-        def start(self):
-            starts.append(True)
-            return True
-
-        def stop(self):
-            pass
-
-    processor = Processor()
-    monkeypatch.setattr(
-        main, "_create_audio_processor",
-        lambda config: (processor, dict(cmap=None, norm=None, waveform_plot_duration=.5), 50),
-    )
-
-    class Window:
+    class Window(main.RippleWaveVisualizer):
         def __init__(self, **kwargs):
-            created.append(kwargs)
+            super().__init__(camera_capture=CircularDotCapture(stimulus), **kwargs)
+            self.timer.stop()
+            created.append(self)
 
-        def setWindowTitle(self, title):
-            pass
-
-        def resize(self, *size):
-            pass
-
-        def show(self):
-            pass
+    def run(app):
+        qapp.processEvents()
+        window = created[0]
+        window.update_visualization()
+        source = window.source_orchestrator
+        graph = source.sensory_graph
+        assert source.graph_io.radius == 32 and source.graph_io.visual_shape == (3209, 1)
+        assert graph.hidden_nodes == hidden_units and graph.canvas_weights.shape == (hidden_units, 9627)
+        assert graph.mean.dtype == np.dtype("float64")
+        assert graph.clamped[:graph.visual_nodes].all()
+        assert np.isfinite(graph.belief_snapshot()["variance"]).all()
+        assert window.visual_prediction.shape == (80, 96, 3)
+        assert not errors, "\n".join(map(str, errors))
+        return 0
 
     monkeypatch.setattr(main, "RippleWaveVisualizer", Window)
-    monkeypatch.setattr(main, "SpectrogramVisualizer", Window)
-    monkeypatch.setattr(main.QtWidgets.QApplication, "exec", lambda self: 0)
-    monkeypatch.setattr(main.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(main.QtWidgets.QApplication, "exec", run)
+    monkeypatch.setattr(signal, "signal", lambda *args: None)
+    monkeypatch.setattr(sys, "excepthook", lambda *error: errors.append(error))
     old_style = qapp.styleSheet()
     try:
         with pytest.raises(SystemExit) as stopped:
-            main.main(["--active-vision", "autonomous", "--active-audio"] + (["--shared-sensory-graph"] if shared else []))
+            main.main([])
         assert stopped.value.code == 0
-        assert len(created) == 1
-        ripple = created[0]
-        assert ripple["processor"] is processor
-        assert starts == [True]
-        assert ripple["active_vision"].mode == "autonomous"
-        assert ripple["active_vision"].audio_precision == pytest.approx(1.0)
-        assert ripple["active_vision"].shared_sensory_graph is shared
-        assert ripple["active_vision"].foveal_radius == 8
-        assert ripple["source_orchestrator_config"].audio.enabled is True
-        assert ripple["source_orchestrator_config"].camera_frame.enabled is True
     finally:
+        for window in created:
+            window.close()
         qapp.setStyleSheet(old_style)
+
+
+def test_model_selection_flags_are_not_an_alternative_application_entrypoint():
+    main = _load_main_module()
+    for args in (["--shared-sensory-graph"], ["--active-vision", "mouse"], ["--active-audio"]):
+        with pytest.raises(SystemExit) as stopped:
+            main.main(args)
+        assert stopped.value.code == 2
+    config = deepcopy(main.RIPPLE_CONFIG)
+    config["gaze"]["mode"] = "full"
+    with pytest.raises(ValueError, match="full-image"):
+        main.build_ripple_visualizer_config(config)

@@ -80,7 +80,7 @@ def measure_case(
 ):
     row = case_description(radius, hidden_nodes, audio_nodes, backend)
     if not supported_case(row["slots"], hidden_nodes, audio_nodes):
-        raise ValueError("case exceeds numerical core capacity")
+        raise ValueError("case exceeds the numerical graph's software size guards")
     if backend not in ("numpy", "cupy"):
         raise ValueError("backend must be numpy or cupy")
     xp = np
@@ -182,7 +182,7 @@ def main(argv=None):
     parser.add_argument("--hidden-sizes", nargs="+", type=positive, default=[6, 16, 32])
     parser.add_argument(
         "--backend", choices=("numpy", "cupy"), default="numpy",
-        help="Numerical core backend. The OpenGL runner uses the NumPy core.",
+        help="Numerical graph backend. The OpenGL runner uses the NumPy graph.",
     )
     parser.add_argument("--audio-nodes", type=nonnegative, default=16)
     parser.add_argument("--inference-steps", type=positive, default=8)
@@ -204,7 +204,7 @@ def main(argv=None):
             row = case_description(radius, hidden, args.audio_nodes, args.backend)
             supported = supported_case(row["slots"], hidden, args.audio_nodes)
             if args.estimate_only or not supported:
-                row["status"] = "parameter estimate only" if supported else "parameter estimate only: core limit"
+                row["status"] = "parameter estimate only" if supported else "parameter estimate only: graph size guard"
             else:
                 spec = dict(
                     radius=radius, hidden_nodes=hidden, audio_nodes=args.audio_nodes,
@@ -243,7 +243,7 @@ def main(argv=None):
         print(json.dumps(payload, indent=2))
         return
     print(
-        f"{args.backend} float64 core; learning={args.learning}; "
+        f"{args.backend} float64 graph; learning={args.learning}; "
         f"{args.inference_steps} inference steps; {args.candidates} gaze candidates.\n"
         "Each measured case runs in a fresh process: construct, one forecast/evidence update, then requested gaze scoring.\n"
         "Full circular support (no edge clipping); float32 sensory/root inputs, float64 model arrays.\n"
@@ -251,8 +251,8 @@ def main(argv=None):
         "Host peak = tracemalloc peak including graph, inputs and temporary arrays; excludes untraced native workspaces.\n"
         "RSS = whole-process high-water mark including interpreter/libraries. GPU columns cover the private CuPy array pool.\n"
         "Gaze scoring currently runs on the host for both numerical backends. No camera, GUI, image buffers or wave simulation.\n"
-        f"Core limits: {payload['core_limits']}. Above-limit rows estimate parameters ONLY; other measurements are absent.\n"
-        "The current application radius limit is 16 pixels; this script also exercises larger stencils within core limits.\n"
+        f"Software graph size guards (not hardware limits): {payload['core_limits']}. Above-limit rows estimate parameters ONLY.\n"
+        "The application accepts disks within the same visual-slot limit; set its sizes in main.py RIPPLE_CONFIG['model'].\n"
         f"One RGB float32 image at {args.image_shape[0]}x{args.image_shape[1]}: "
         f"{payload['image_buffer_bytes']/MIB:.2f} MiB (accounting only; not allocated; not total app memory).\n"
     )

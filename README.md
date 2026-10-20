@@ -22,8 +22,8 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 - Optional synthetic tone generator for testing
 - Optional GPU wave propagation and predictive inference (via CuPy); NumPy is the default
 - Adjustable wave physics: damping, decay, speed, amplitude
-- Three-channel wave surface with independent persistent visual/audio hidden belief states
-- Local nonlinear predictive coding: sensory surprise revises hidden states and the canvas
+- Three-channel wave surface with a shared recurrent audiovisual hidden state
+- Foveal nonlinear predictive coding: sensory surprise revises hidden states and the canvas
 - Learned sensory pathways with fixed substrate conductances; the rendered image is the canvas surface
 - Modular audio processor and visualizer structure
 
@@ -45,45 +45,67 @@ python main.py
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
-For a live camera-only active-vision session in the main visualizer, run:
+### Feature application and baseline
+
+On this feature branch, ordinary `python main.py` runs the **foveal predictive-coding
+application**. Model-selection flags (`--active-vision`, `--active-audio`,
+`--shared-sensory-graph`) have been removed. The established per-pixel model belongs
+to the baseline branch/worktree; choosing an application means choosing its worktree,
+not changing a model flag. For the local comparison, `../AudioViz-baseline` is checked
+out at local `main`, commit `e0994e8`. Run each worktree with its own project environment
+so an editable package installation does not accidentally import the other worktree.
+
 ```bash
-python main.py --active-vision mouse
+# Feature application, from AudioViz
+.venv/bin/python main.py
+
+# Established application, in a separate shell
+cd ../AudioViz-baseline
+.venv/bin/python main.py
 ```
-(`mouse`, `autonomous`, or `full`; also configurable via `RIPPLE_CONFIG["active_vision"]`).
-Add `--active-audio` (or set a positive `RIPPLE_CONFIG["active_vision"]["audio_precision"]`)
-to opt into the common-mode temporal Gaussian audio filter alongside active vision:
-```bash
-python main.py --active-vision mouse --active-audio
+
+The sizes are together in `main.py`:
+
+```python
+RIPPLE_CONFIG["model"] = {
+    "foveal_radius": 32,
+    "hidden_units": 6,
+    "memory_time_constant": 1/3,
+}
 ```
-Add `--shared-sensory-graph` (or set `RIPPLE_CONFIG["active_vision"]["shared_sensory_graph"] = True`;
-requires `--active-vision {mouse,autonomous}`, with `--active-audio` optional) to opt into a
-compact **foveal generative predictive-coding network** with a routed circular canvas root patch,
-dense shared recurrent hidden units, and hard-disk sensory clamps instead of the fixed-weight
-two-branch filter:
-```bash
-python main.py --active-vision mouse --active-audio --shared-sensory-graph
-```
-Without `--active-audio`, the explicit camera-only profile skips audio
-device/hardware initialization, disables the spectrogram and pitch-helix windows
-and ripple audio, and enables camera/ripple with the shared `GazeControls` panel
-(including live `sigma` / `baseline` / `peak` foveal `pg.SpinBox` controls in the
-default Gaussian mode), on-canvas/2D-preview gaze/fovea/advisory-IG overlay
-(`AttentionOverlay`), and temporal Gaussian filter. Passing `--active-audio`
-initializes audio capture and routes freshness-gated 16-band spectral
-observations through `GaussianAudioUncertainty` into the shared deterministic
-wave medium (without claiming physical sound localization or learned
-modality-specialized regions).
-When `--shared-sensory-graph` is enabled, `SharedSensoryIO` routes a fixed
-integer circular foveal stencil configured by
-`RIPPLE_CONFIG["active_vision"]["foveal_radius"]` (default `8` pixels, integer
-`1..16`, giving `K = 197` static disk RGB slots = `591` visual nodes by default,
-passed to `SharedPredictiveCodingGraph` as `visual_shape=(K, 1)`). Only `mouse`
-and `autonomous` gaze modes are supported in shared mode (`full` mode is
-explicitly rejected so weights never expand to the full image, and Gaussian
-`sigma` / `baseline` / `peak` / `full` controls are hidden). At each step,
-`SharedPredictiveCodingGraph` forecasts from the routed in-bounds circular
-canvas patch through `hidden_channels` shared hidden units (default `6`, with
-dense off-diagonal recurrence) to `3K` RGB and `16` global audio terminals.
+
+`hidden_units` is the **total number of shared recurrent hidden units**, not a
+number of layers or channels at every image pixel. Radius is measured in image
+pixels; radius `32` contains `3,209` RGB locations (`9,627` visual values).
+Both sizes are startup settings: change them and restart. Any positive integer
+radius whose disk fits `4,096` locations is accepted (currently through radius
+`36`, with `4,053` locations); hidden units must be in `1..64`. These are explicit
+software allocation guards, **not measured hardware limits**. The former independent
+16-pixel application-radius restriction is gone.
+
+Set `RIPPLE_CONFIG["gaze"]["mode"]` to `"mouse"` or `"autonomous"`; initial normalized
+coordinates are in `["gaze"]["position"]`. Image resolution remains in
+`RIPPLE_CONFIG["field"]["resolution"]` (or the visualizer default when omitted).
+Audio and camera availability come from `RIPPLE_CONFIG["sources"]`, and window
+visibility from `APP_CONFIG["windows"]`; startup does not silently change them.
+For camera-only operation, disable the audio source and both audio windows.
+Then no audio devices are initialized. **Observe vision** and **Audio** remain
+independent live evidence gates. Weight learning follows
+`RIPPLE_CONFIG["transforms"]["prediction_error"]["learning"]` and can be enabled in
+**Controls**; the startup log reports whether it is enabled.
+
+The current hidden population has dense off-diagonal recurrence, with no imposed
+sequence of hidden layers. Both edge directions exist, but their weights are not
+constrained to be equal. Canvas-root and sensory-terminal roles remain prescribed.
+Geometric embedding, cylindrical squeezing, and distance-based edge pruning are
+not implemented. Observing an entire small image with this graph would **not**
+recover the baseline per-pixel model.
+
+`SharedSensoryIO` routes the fixed integer disk through world coordinates.
+At each step, `SharedPredictiveCodingGraph` forecasts from the routed in-bounds
+canvas patch through the recurrent hidden state to foveal RGB and `16` global audio
+terminals. The numerical graph uses float64; native OpenGL camera, canvas, and
+routing buffers use float32.
 Out-of-bounds stencil slots near image borders are masked by `aperture_mask`
 without renumbering slot indices, yielding identically zero root activity and
 zero root/evidence gradients on inactive slots. A persistent full-image visual
@@ -106,17 +128,15 @@ candidate gaze forecasts (`candidate_information_gain` /
 forecast rule per candidate patch—never allocating a dense all-sensory `N x N`
 covariance matrix. The earlier `SharedSensoryGraph` remains an experimental
 Python API (Page 5 of `docs/predictive-uncertainty-math.drawio`), but no longer
-powers this launch flag.
+powers the main application.
 The canvas toolbar provides **Controls**, **Predictions**, and **Diagnostics**
 (`BeliefDiagnosticsView`, polling bounded `10 Hz` host snapshots of hidden
-mean/variance, linearized sensory signal covariance `J P J^T` without
-observation noise in the default filter, or the shared PC **Joint Graph**
-`H x H` hidden covariance, per-node marginal variances, `3 x 3` / `16 x 16`
+mean/variance, shared PC **Joint Graph** `H x H` hidden covariance,
+per-node marginal variances, `3 x 3` / `16 x 16`
 sensory covariance submatrices, generative weight matrices, prediction errors,
 canvas gradient, and settling-energy trajectory, plus prospective visual/audio
 EIG). Failed camera opens or reads latch cleanly without per-frame hardware
-retry loops until **Camera Frame** is toggled off and on. Ordinary
-`python main.py` remains unchanged.
+retry loops until **Camera Frame** is toggled off and on.
 Explicit Linux `/dev/videoN` camera paths use OpenCV's V4L2 backend, keeping
 camera controls available instead of automatically selecting a file backend.
 
@@ -354,7 +374,7 @@ stage timings are more useful for locating the actual cost.
 
 ### Foveal graph memory sweep
 
-Measure the shared foveal PC core independently of image resolution:
+Measure the numerical foveal graph independently of image resolution:
 
 ```bash
 python scripts/benchmark_foveal_memory.py --radii 8 16 24 32 64 --hidden-sizes 6 16 32
@@ -374,8 +394,8 @@ Whole-process peak RSS includes Python, libraries, native workspaces and CUDA
 context costs; it is **not** graph-only memory. Traced host peaks include
 synthetic inputs and cold operator allocations but exclude untraced native
 workspaces. Gaze scoring currently uses NumPy on the host even for a CuPy model.
-The OpenGL runner uses the NumPy numerical core, so the default sweep covers
-that core without creating a renderer or camera.
+The OpenGL runner uses the NumPy numerical graph, so the default sweep covers
+that graph without creating a renderer or camera.
 
 For `K` RGB foveal locations, `H` hidden units and `A` audio terminals, parameter
 storage is exactly `8 * (H*3K + (3K+A)*H + H*H + H + 3K+A)` bytes. Image dimensions
@@ -385,16 +405,17 @@ resolution-dependent and are excluded. `--image-shape ROWS COLS` only accounts
 for one full RGB float32 buffer (23.73 MiB at 1080x1920); it allocates no image
 and does not estimate total application memory.
 
-The application still caps its radius at `16`; the numerical core currently
-supports up to `4096` foveal locations and `64` hidden units. The script measures
-larger circles within those core limits without changing application settings.
+The application and numerical graph share the same software limits:
+`4096` foveal locations and `64` hidden units. The script measures circles
+within those limits without changing application settings.
 Above-limit cases (including radius `64`) are clearly labeled **parameter
 estimates only**, with no fabricated graph/peak measurements. `--estimate-only`
 performs parameter accounting without allocating any model.
 
-### Native 1080p profiling
+### Established per-pixel model: native 1080p profiling
 
-Measured on an RTX 3060 with two six-channel hidden fields, synthetic camera/audio
+These measurements describe the established per-pixel model, not the feature
+application's foveal graph. Measured on an RTX 3060 with two six-channel hidden fields, synthetic camera/audio
 evidence, no learning or cross-modal loop, and closed diagnostic windows:
 
 | Configuration | Mean frame time | Throughput |

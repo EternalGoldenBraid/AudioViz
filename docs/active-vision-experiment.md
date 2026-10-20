@@ -133,7 +133,24 @@ of wall-clock rendering speed. Display FPS therefore need not equal stimulus
 FPS. Parameters are experimental settings, not calibrated camera-noise
 estimates.
 
-### Live camera-only, active-audio, and shared-sensory-graph modes in `main.py`
+### Current feature application
+
+Run `python main.py` without model-selection flags. In `main.py`,
+`RIPPLE_CONFIG["model"]` groups `foveal_radius` (default `32` pixels),
+`hidden_units` (default `6` total recurrent units), and `memory_time_constant`.
+`RIPPLE_CONFIG["gaze"]` contains `mode` (`mouse` or `autonomous`) and normalized
+`position`; source and window configuration independently control camera/audio
+availability and audio-device initialization. Size changes require restarting.
+The normal entrypoint always uses `SharedPredictiveCodingGraph`.
+
+The established per-pixel application is preserved at local `main` (`e0994e8`)
+in the sibling `AudioViz-baseline` worktree. Use separate project environments
+for the two worktrees so editable imports resolve to the intended source tree.
+The feature branch no longer exposes alternate models through launch flags.
+The following flag-based integration and Gaussian filter sections describe
+historical behavior and retained experimental APIs, not current `main.py` usage.
+
+### Historical flag-based integration (through `8f935ce`)
 
 ```bash
 python main.py --active-vision mouse
@@ -537,17 +554,18 @@ filter (visualized on **Page 4** of
    precision metadata), gathering only the single nearest-gaze pixel `(2 * H,)`
    on OpenGL.
 
-### Shared generative predictive coding (`--shared-sensory-graph`)
+### Shared generative predictive coding
 
-This section describes shared PC runtime snapshot `46f2897`.
+This section describes the residual-energy model introduced at snapshot `46f2897`,
+now used by the normal feature entrypoint.
 
 The shared runner uses a directed generative model with dense hidden recurrence
 and a **routed circular foveal stencil**. Integer disk offsets
 `D_r = {(dy, dx) in Z^2 : dy^2 + dx^2 <= r^2}` are fixed at construction by
-`active_vision.foveal_radius` (default `r = 8` pixels, integer `1 <= r <= 16`,
-giving `K = 197` static RGB slots = `591` visual nodes by default, supplied to
+`RIPPLE_CONFIG["model"]["foveal_radius"]` (default `r = 32` pixels,
+giving `K = 3209` static RGB slots = `9627` visual nodes by default, supplied to
 `SharedPredictiveCodingGraph` as `visual_shape=(K, 1)` with bounded capacity
-`MAX_VISUAL_SLOTS = 4096`). At gaze `g_t`, `SharedSensoryIO` routes the
+`MAX_VISUAL_SLOTS = 4096`, accepting integer radii `1..36`). At gaze `g_t`, `SharedSensoryIO` routes the
 in-bounds world pixels `(y_k, x_k) = round(g_t) + (dy_k, dx_k)` into the fixed
 slot vector `c_g in R^{3K}` alongside a boolean boundary validity mask
 `m_ap in {0, 1}^{3K}` (`aperture_mask`), without renumbering slots when the disk
@@ -567,11 +585,17 @@ This recurrent residual-energy model is not a normalized Bayesian DAG.
 Learning minimizes residual energy, not an exact normalized likelihood;
 normalization terms are not included. The generative direction specifies
 which states predict which others, while dense hidden recurrence adds cycles.
+The hidden units are one recurrent population, not an ordered stack of hidden
+layers. Their adjacency includes both directions, but weights are not constrained
+to be symmetric. Canvas and sensory roles are still fixed; a general symmetric
+graph with geometry-initialized, distance-pruned connectivity is not implemented.
+Full-image observation would not make this model equivalent to the baseline
+per-pixel hidden-state model.
 
 `O` contains only currently observed sensory coordinates. When **Observe vision**
 is on, `O` clamps the in-bounds circular foveal RGB slots (`visual_mask = m_ap`);
 there is no Gaussian spatial falloff (`sigma`, `baseline`, and `peak` controls
-are hidden) and `full` gaze mode is explicitly rejected in `--shared-sensory-graph`
+are hidden) and `full` gaze mode is explicitly rejected in the feature application
 (`mouse` and `autonomous` only, with no full-image weight expansion). Fresh
 silent audio clamps to zero; unavailable, disabled, or stale audio supplies no
 constraint. Unobserved terminals freely take their decoded predictions,
@@ -676,11 +700,11 @@ states/clamps, `H x H` hidden covariance, marginal sensory variances, `W_c`,
 `R`, `W_s`, biases, prediction errors, root gradient, and the inference energy
 trajectory. Both sensory tabs view the same hidden state.
 
-With default `foveal_radius = 8` (`K = 197` RGB slots = `591` visual nodes), `16`
-audio terminals, and `hidden_channels = 6` shared hidden units (`613` total
+With default `foveal_radius = 32` (`K = 3209` RGB slots = `9627` visual nodes), `16`
+audio terminals, and `hidden_units = 6` shared hidden units (`9649` total
 nodes, `6 x 6` hidden covariance), NumPy/CuPy run the model on their array
-backend while evaluating unclamped hidden relaxation and batched `9 x 13`
-candidate gaze forecasts directly in float64. OpenGL keeps pixel preprocessing,
+backend. Non-mutating batched `9 x 13` candidate gaze forecasts run in NumPy
+float64 on the host for both backends. OpenGL keeps pixel preprocessing,
 bounded circular-stencil gathers/scatters, and persistent full-frame prediction
 textures on the GPU while running compact hidden inference, weight learning,
 and `H x H` curvature calculations on the host; legacy per-pixel hidden buffers

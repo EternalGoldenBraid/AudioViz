@@ -69,7 +69,7 @@ def test_cli_measures_sweep_and_labels_above_limit_rows_without_allocating_image
         assert row["graph_array_bytes"] > row["parameter_bytes"] > 0
     for row in data["rows"][2:]:
         assert row["slots"] == benchmark.disk_slots(over_radius) > limit
-        assert row["status"] == "parameter estimate only: core limit"
+        assert row["status"] == "parameter estimate only: graph size guard"
         assert "host_peak_bytes" not in row and "graph_array_bytes" not in row
 
 

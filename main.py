@@ -27,7 +27,7 @@ from audioviz.sources import (
 from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
-from audioviz.readouts import GaussianSpatialPrecision, PredictiveCodingConfig
+from audioviz.readouts import GaussianSpatialPrecision, PredictiveCodingConfig, SharedPredictiveCodingGraph
 from audioviz.sources.gaze import ActiveVisionConfig
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 
@@ -77,19 +77,14 @@ AUDIO_CONFIG = {
 }
 
 RIPPLE_CONFIG = {
-    "active_vision": {
-        "enabled": False,
-        "mode": "mouse",
-        "gaze": (0.5, 0.5),
-        "sigma": 0.15,
-        "baseline": 0.01,
-        "peak": 1.0,
-        "initial_variance": 1.0,
-        "process_variance": 0.01,
+    "model": {
+        "foveal_radius": 32,
+        "hidden_units": 6,
         "memory_time_constant": 1/3,
-        "audio_precision": None,
-        "shared_sensory_graph": False,
-        "foveal_radius": 8,
+    },
+    "gaze": {
+        "mode": "mouse",
+        "position": (0.5, 0.5),
     },
     "field": {
         "n_sources": 5,
@@ -170,8 +165,6 @@ RIPPLE_CONFIG = {
             "enabled": True,
             "inputs": ("camera_frame",),
             "inference": {
-                "dtype": "float32",
-                "hidden_channels": 6,
                 "steps": 8,
                 "hidden_rate": 0.1,
                 "canvas_rate": 0.01,
@@ -201,24 +194,32 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     prediction_error_inference = prediction_error["inference"]
     prediction_error_learning = prediction_error["learning"]
     backend = renderer["backend"]
-    gaze = config.get("active_vision", {})
-    active_vision = None
-    if gaze.get("enabled", False):
-        audio_precision = gaze.get("audio_precision")
-        if audio["enabled"] and audio_precision is None:
-            raise ValueError("Active vision requires ripple audio to be disabled unless audio_precision is configured")
-        active_vision = ActiveVisionConfig(
-            mode=gaze["mode"],
-            precision=GaussianSpatialPrecision(
-                gaze=tuple(gaze["gaze"]), sigma=gaze["sigma"], baseline=gaze["baseline"], peak=gaze["peak"],
-            ),
-            initial_variance=gaze["initial_variance"],
-            process_variance=gaze["process_variance"],
-            memory_time_constant=gaze["memory_time_constant"],
-            audio_precision=audio_precision,
-            shared_sensory_graph=gaze.get("shared_sensory_graph", False),
-            foveal_radius=gaze.get("foveal_radius", 8),
-        )
+    model = config["model"]
+    gaze = config["gaze"]
+    hidden_units = model["hidden_units"]
+    limit = SharedPredictiveCodingGraph.MAX_HIDDEN_NODES
+    if isinstance(hidden_units, bool) or not isinstance(hidden_units, int) or not 1 <= hidden_units <= limit:
+        raise ValueError(f"model.hidden_units must be an integer between 1 and {limit}")
+    pathway = PredictiveCodingConfig(
+        hidden_channels=hidden_units,
+        dtype="float32" if backend == "opengl" else "float64",
+        inference_steps=prediction_error_inference["steps"],
+        inference_rate=prediction_error_inference["hidden_rate"],
+        canvas_rate=prediction_error_inference["canvas_rate"],
+        learning_enabled=prediction_error_learning["enabled"],
+        learning_rate=prediction_error_learning["learning_rate"],
+        weight_decay=prediction_error_learning["weight_decay"],
+        weight_clip=prediction_error_learning["weight_clip"],
+        gradient_clip=prediction_error_learning["gradient_clip"],
+    )
+    active_vision = ActiveVisionConfig(
+        mode=gaze["mode"],
+        precision=GaussianSpatialPrecision(gaze=tuple(gaze["position"])),
+        memory_time_constant=model["memory_time_constant"],
+        audio_precision=1.0 if audio["enabled"] else None,
+        shared_sensory_graph=True,
+        foveal_radius=model["foveal_radius"],
+    )
 
     return {
         **config["field"],
@@ -249,19 +250,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
                 enabled=prediction_error["enabled"],
                 inputs=tuple(prediction_error["inputs"]),
             ),
-            visual_pathway=PredictiveCodingConfig(
-                hidden_channels=prediction_error_inference["hidden_channels"],
-                dtype=prediction_error_inference.get("dtype", "float64"),
-                inference_steps=prediction_error_inference["steps"],
-                inference_rate=prediction_error_inference["hidden_rate"],
-                canvas_rate=prediction_error_inference["canvas_rate"],
-                cross_modal_enabled=prediction_error_inference.get("cross_modal_enabled", False),
-                learning_enabled=prediction_error_learning["enabled"],
-                learning_rate=prediction_error_learning["learning_rate"],
-                weight_decay=prediction_error_learning["weight_decay"],
-                weight_clip=prediction_error_learning["weight_clip"],
-                gradient_clip=prediction_error_learning["gradient_clip"],
-            ),
+            visual_pathway=pathway,
         ),
         "pose_config": RipplePoseConfig(
             enabled=pose["enabled"],
@@ -393,55 +382,21 @@ def _create_audio_processor(ripple_config):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Audio Ripple main application")
-    parser.add_argument(
-        "--active-vision", choices=("mouse", "autonomous", "full"),
-        help="Camera-only session with shared gaze controls; audio windows and audio devices are disabled unless --active-audio is passed.",
+    parser = argparse.ArgumentParser(
+        description="Foveal predictive-coding application. Configure model sizes and sources in RIPPLE_CONFIG in main.py.",
     )
-    parser.add_argument(
-        "--active-audio", action="store_true",
-        help="Enable audio evidence alongside --active-vision (common-mode filter or shared PC when selected).",
-    )
-    parser.add_argument(
-        "--shared-sensory-graph", action="store_true",
-        help="Use shared foveal predictive coding: fixed circular sampling, shared weights, persistent image predictions; requires mouse or autonomous --active-vision.",
-    )
-    args = parser.parse_args(argv)
-    if args.active_audio and args.active_vision is None:
-        parser.error("--active-audio requires --active-vision")
-    if args.shared_sensory_graph and args.active_vision is None:
-        parser.error("--shared-sensory-graph requires --active-vision")
-    if args.shared_sensory_graph and args.active_vision == "full":
-        parser.error("--shared-sensory-graph uses a bounded circular fovea; choose mouse or autonomous")
+    parser.parse_args(argv)
     app_config, source_config = deepcopy(APP_CONFIG), deepcopy(RIPPLE_CONFIG)
-    if args.active_vision is not None:
-        source_config["active_vision"].update(enabled=True, mode=args.active_vision)
-        if args.shared_sensory_graph:
-            source_config["active_vision"]["shared_sensory_graph"] = True
-        if args.active_audio:
-            if source_config["active_vision"].get("audio_precision") is None:
-                source_config["active_vision"]["audio_precision"] = 1.0
-            source_config["sources"]["audio"]["enabled"] = True
-            logger.info(
-                "Active vision + audio: shared generative predictive coding enabled."
-                if source_config["active_vision"].get("shared_sensory_graph", False) else
-                "Active vision + audio: temporal Gaussian visual and common-mode audio inference enabled."
-            )
-        else:
-            source_config["sources"]["audio"]["enabled"] = False
-            logger.info("Active vision: camera-only session; audio windows and audio device initialization disabled.")
-        source_config["sources"]["camera_frame"]["enabled"] = True
-        for name in ("spectrogram", "helix"):
-            app_config["windows"][name]["enabled"] = False
-        app_config["windows"]["ripples"]["enabled"] = True
-        if source_config["active_vision"].get("shared_sensory_graph", False):
-            logger.info(
-                "Shared foveal PC: radius {} pixels, uniform circular evidence; "
-                "canvas -> shared hidden -> sensory predictions; outside-fovea predictions persist.",
-                source_config["active_vision"].get("foveal_radius", 8),
-            )
     windows = app_config["windows"]
     ripple_config = build_ripple_visualizer_config(source_config) if windows["ripples"]["enabled"] else None
+    if ripple_config is not None:
+        logger.info(
+            "Foveal PC: radius {} pixels, {} total recurrent hidden units, {} gaze, {} image backend; "
+            "learning {}. Sizes are configured in RIPPLE_CONFIG['model'].",
+            source_config["model"]["foveal_radius"], source_config["model"]["hidden_units"],
+            source_config["gaze"]["mode"], source_config["renderer"]["backend"],
+            "enabled" if source_config["transforms"]["prediction_error"]["learning"]["enabled"] else "disabled",
+        )
     camera_only = (
         ripple_config is not None and ripple_config["active_vision"] is not None
         and ripple_config["active_vision"].audio_precision is None
