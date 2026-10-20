@@ -1,9 +1,9 @@
-"""Static-scene experiments using the feature application's foveal model."""
+"""Static or Brownian-moving scene experiments using the production foveal model."""
 from __future__ import annotations
 
 import argparse
 from collections import deque
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 
@@ -19,7 +19,7 @@ from audioviz.sources import (
     AudioSourceConfig, CameraFrameSourceConfig, RippleSourceOrchestratorConfig, SyntheticSourceConfig,
 )
 from audioviz.sources.gaze import ActiveVisionConfig
-from audioviz.sources.static_scene import geometric_scene, StaticSceneCapture
+from audioviz.sources.static_scene import BrownianScene, StaticSceneCapture
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 from audioviz.utils.array_backend import to_numpy
 from audioviz.utils.spatial_preview import spatial_preview
@@ -46,8 +46,16 @@ class _BenchVisualizer(RippleWaveVisualizer):
             self.attention_scores = None
 
 
+@dataclass(frozen=True)
+class SceneStepMetrics(StaticWorldMetrics):
+    brownian_enabled: bool
+    brownian_scale: float
+    world_offset: tuple[float, float]
+    world_pixel_offset: tuple[int, int]
+
+
 class StaticWorldBench(QtWidgets.QWidget):
-    """One observation per step, with bounded evaluator-only traces."""
+    """Advance the world/model per step, with bounded evaluator-only traces."""
 
     HISTORY_LIMIT = 512
     PREVIEW_MAX_SIDE = 256
@@ -55,6 +63,7 @@ class StaticWorldBench(QtWidgets.QWidget):
     def __init__(
         self, *, resolution=(80, 120), foveal_radius=32, hidden_units=6,
         backend="opengl", dt=1/30, inference_steps=8, inference_rate=.1,
+        motion_enabled=True, brownian_scale=4.,
     ):
         super().__init__()
         if backend not in ("numpy", "cupy", "opengl"):
@@ -66,10 +75,14 @@ class StaticWorldBench(QtWidgets.QWidget):
             or not 1 <= hidden_units <= SharedPredictiveCodingGraph.MAX_HIDDEN_NODES
         ):
             raise ValueError(f"hidden_units must be in 1..{SharedPredictiveCodingGraph.MAX_HIDDEN_NODES}")
-        self.scene = geometric_scene(resolution)
+        if not isinstance(motion_enabled, bool):
+            raise ValueError("motion_enabled must be a boolean")
+        if isinstance(brownian_scale, bool) or not np.isfinite(brownian_scale) or brownian_scale < 0:
+            raise ValueError("brownian_scale must be finite and non-negative")
+        self.world = BrownianScene(resolution)
         self.backend, self.dt = backend, float(dt)
         self.steps = 0
-        self.history: deque[StaticWorldMetrics] = deque(maxlen=self.HISTORY_LIMIT)
+        self.history: deque[SceneStepMetrics] = deque(maxlen=self.HISTORY_LIMIT)
         self.source_config = RippleSourceOrchestratorConfig(
             synthetic=SyntheticSourceConfig(enabled=False),
             audio=AudioSourceConfig(enabled=False),
@@ -83,7 +96,7 @@ class StaticWorldBench(QtWidgets.QWidget):
             ),
         )
         self.vision_config = ActiveVisionConfig(shared_sensory_graph=True, foveal_radius=foveal_radius)
-        self.setWindowTitle("Static World - Foveal Predictive Coding Bench")
+        self.setWindowTitle("Test World - Foveal Predictive Coding Bench")
         self.resize(1440, 1000)
         layout = QtWidgets.QVBoxLayout(self)
         toolbar = QtWidgets.QHBoxLayout()
@@ -108,9 +121,26 @@ class StaticWorldBench(QtWidgets.QWidget):
             toolbar.addWidget(widget)
         toolbar.addStretch()
         layout.addLayout(toolbar)
+        world_controls = QtWidgets.QHBoxLayout()
+        self.motion_enabled = QtWidgets.QCheckBox("Brownian scene motion")
+        self.motion_enabled.setChecked(motion_enabled)
+        self.motion_enabled.setToolTip(
+            "Move the world each model step, even with Observe off. Uncheck to freeze its current position."
+        )
+        self.motion_scale = pg.SpinBox(value=brownian_scale, bounds=(0, None), step=.5)
+        self.motion_scale.setEnabled(motion_enabled)
+        self.motion_scale.setToolTip("Per-axis displacement standard deviation = scale * sqrt(dt).")
+        self.motion_enabled.toggled.connect(self.motion_scale.setEnabled)
+        world_controls.addWidget(self.motion_enabled)
+        world_controls.addWidget(QtWidgets.QLabel("Scale (pixels/sqrt(s))"))
+        world_controls.addWidget(self.motion_scale)
+        world_controls.addWidget(QtWidgets.QLabel("World seed: 0; New trial resets motion."))
+        world_controls.addStretch()
+        layout.addLayout(world_controls)
         description = QtWidgets.QLabel(
-            "Static world; no camera or microphone. Model controls change settling steps/rate, learning, and canvas feedback. "
-            "Move the mouse over any image to select gaze; Step/Run samples it. Lock gaze for fixed-patch trials. "
+            "Test world; no camera or microphone. Model controls change settling steps/rate, learning, and canvas feedback. "
+            "Move the mouse over any image to select gaze; Step/Run samples it. "
+            "For fixed-patch trials, lock gaze and turn scene motion off. "
             "New trial keeps model settings/gaze but restores seed-0 weights, hidden state and zero canvas; "
             "other source/wave settings return to bench defaults. "
             f"Each step uses forecast dt={self.dt:g} s; playback speed does not change this clock."
@@ -131,13 +161,13 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.error_colormap = pg.colormap.get("magma")
         self.splitter.addWidget(self.images)
         self.plots = pg.GraphicsLayoutWidget()
-        self.mse_plot = self.plots.addPlot(row=0, col=0, title="Across observations: observed RGB MSE")
+        self.mse_plot = self.plots.addPlot(row=0, col=0, title="Across steps: observed RGB MSE")
         self.mse_plot.addLegend()
-        self.mse_plot.setLabel("bottom", "Observation step")
+        self.mse_plot.setLabel("bottom", "Model/world step")
         self.mse_plot.setLabel("left", "MSE per observed RGB value")
         self.forecast_curve = self.mse_plot.plot(pen=pg.mkPen("#4ddde0", width=2), name="Pre-evidence forecast")
         self.settled_curve = self.mse_plot.plot(pen=pg.mkPen("#ffb454", width=2), name="Settled decoder (before learning)")
-        self.energy_plot = self.plots.addPlot(row=0, col=1, title="Within latest observation: conditioning energy")
+        self.energy_plot = self.plots.addPlot(row=0, col=1, title="Within latest step: conditioning energy")
         self.energy_plot.addLegend()
         self.energy_plot.setLabel("bottom", "Accepted hidden updates")
         self.energy_plot.setLabel("left", "Residual energy (sum)")
@@ -151,7 +181,8 @@ class StaticWorldBench(QtWidgets.QWidget):
             "Only observed foveal RGB values enter MSE; no-evidence steps are gaps, not zero error. "
             "Settled error uses decoder residuals, not clamped sensory states. "
             "Total energy decreases within a fixed conditioning objective; visual MSE and next-step forecast need not. "
-            "Defaults hold weights and root fixed. Canvas feedback enables live wave dynamics. "
+            "Motion changes the prediction target; defaults hold weights and root fixed. "
+            "Canvas feedback enables live wave dynamics. "
             f"Plots/export retain the latest {self.HISTORY_LIMIT} steps."
         )
         footer.setWordWrap(True)
@@ -162,6 +193,10 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.visualizer = None
         self.new_trial()
         self.splitter.setSizes((270, 220, 330))
+
+    @property
+    def scene(self):
+        return self.world.frame
 
     def _image_panel(self, title, column):
         plot = self.images.addPlot(row=0, col=column, title=title)
@@ -231,6 +266,7 @@ class StaticWorldBench(QtWidgets.QWidget):
             self.visualizer.close()
             self.visualizer.setParent(None)
             self.visualizer.deleteLater()
+        self.world.reset()
         self.capture = StaticSceneCapture(self.scene)
         self.visualizer = _BenchVisualizer(
             resolution=self.scene.shape[:2], plane_size_m=(1, 1),
@@ -252,15 +288,26 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.status.setText("Paused at step 0. Fresh seed-0 weights; no evidence consumed. Step or Run to begin.")
         self._refresh_images()
 
-    def step_once(self) -> StaticWorldMetrics:
+    def step_once(self) -> SceneStepMetrics:
+        if not self.visualizer.renderer.prepare_frame():
+            raise RuntimeError("Renderer is not ready; show the bench before stepping.")
+        moving = self.motion_enabled.isChecked()
+        scale = float(self.motion_scale.value())
+        self.world.advance(self.dt, scale=scale if moving else 0.)
+        self.capture.set_frame(self.scene)
         before = self.visualizer.engine.time
         self.visualizer.update_visualization()
         if self.visualizer.engine.time == before:
             raise RuntimeError("Renderer is not ready; show the bench before stepping.")
         self.steps += 1
         source = self.visualizer.source_orchestrator
-        metrics = measure_static_world_step(
+        measured = measure_static_world_step(
             source.sensory_graph, step=self.steps, dt=self.dt, gaze=source.graph_io.gaze,
+        )
+        metrics = SceneStepMetrics(
+            **asdict(measured), brownian_enabled=moving, brownian_scale=scale,
+            world_offset=tuple(float(value) for value in self.world.offset),
+            world_pixel_offset=self.world.pixel_offset,
         )
         self.history.append(metrics)
         x = [frame.step for frame in self.history]
@@ -276,6 +323,7 @@ class StaticWorldBench(QtWidgets.QWidget):
         )
         self.status.setText(
             f"Step {self.steps} | sampled gaze ({metrics.gaze[0]:.3f}, {metrics.gaze[1]:.3f}) | "
+            f"scene offset {metrics.world_pixel_offset} px | "
             f"{metrics.observed_rgb} observed RGB values | {errors} | "
             f"E {metrics.energy_initial:.5g} -> {metrics.energy_final:.5g} | "
             f"steps {metrics.inference_steps}, rate {metrics.inference_rate:g}, "
@@ -331,7 +379,9 @@ class StaticWorldBench(QtWidgets.QWidget):
     def save_trace(self, path):
         graph = self.visualizer.source_orchestrator.sensory_graph
         payload = dict(
-            scene="static-geometric-v1", resolution=self.scene.shape[:2],
+            scene="brownian-geometric-v1", resolution=self.scene.shape[:2],
+            world_seed=self.world.seed, world_time=self.world.time,
+            motion_enabled=self.motion_enabled.isChecked(), brownian_scale=float(self.motion_scale.value()),
             backend=self.backend, foveal_radius=self.vision_config.foveal_radius,
             hidden_units=graph.hidden_nodes, seed=0, forecast_dt=self.dt,
             wave_propagation=True, history_limit=self.HISTORY_LIMIT, total_steps=self.steps,
@@ -362,7 +412,9 @@ def main(argv=None):
     parser.add_argument("--hidden-units", type=int, default=6)
     parser.add_argument("--steps", type=int, default=8, help="Maximum hidden settling updates per forecast and conditioning.")
     parser.add_argument("--rate", type=float, default=.1, help="Initial hidden relaxation step size (backtracking may reduce it).")
-    parser.add_argument("--dt", type=float, default=1/30, help="Fixed model forecast interval per observation, in seconds.")
+    parser.add_argument("--dt", type=float, default=1/30, help="Fixed model/world interval per step, in seconds.")
+    parser.add_argument("--static-scene", action="store_true", help="Disable Brownian motion for the static-scene control.")
+    parser.add_argument("--brownian-scale", type=float, default=4., help="Brownian displacement scale, pixels/sqrt(second).")
     args = parser.parse_args(argv)
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
@@ -370,6 +422,7 @@ def main(argv=None):
         resolution=tuple(args.resolution), foveal_radius=args.foveal_radius,
         hidden_units=args.hidden_units, backend=args.backend,
         dt=args.dt, inference_steps=args.steps, inference_rate=args.rate,
+        motion_enabled=not args.static_scene, brownian_scale=args.brownian_scale,
     )
     window.show()
     return app.exec()

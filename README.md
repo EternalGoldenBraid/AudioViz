@@ -162,32 +162,48 @@ device values. The command-line device picker uses `-1` for the Null Device,
 including when no physical devices are listed. Disabling both audio devices
 allows processing to start without opening audio streams.
 
-### Static-world predictive-coding bench
+### Test-world predictive-coding bench
 
 See the [experiment report and open sampling questions](docs/static-world-experiment-report.md)
-for measured results and the current implementation pause.
+for measured results and the current gaze-policy design pause.
 
-Run the **same foveal model and wave pipeline** against a deterministic geometric
-scene, without camera or microphone hardware:
+Run the **same foveal model and wave pipeline** against a geometric scene with
+seeded Brownian translation, without camera or microphone hardware:
 
 ```bash
 .venv/bin/python -m audioviz.visualization.static_world_bench
+# Original static-scene control:
+.venv/bin/python -m audioviz.visualization.static_world_bench --static-scene
 # Smaller graph or alternative execution backend:
 .venv/bin/python -m audioviz.visualization.static_world_bench \
     --backend numpy --resolution 80 120 --foveal-radius 16 --hidden-units 6 \
     --steps 8 --rate 0.1 --dt 0.03333333333333333
 ```
 
+**Brownian scene motion** starts enabled, with scale `4` pixels/sqrt(second).
+Each step adds independent per-axis `Normal(0, scale^2 * dt)` displacements.
+The world uses seed `0`; its clock advances even with **Observe vision** off.
+Motion belongs to the scene, not the gaze policy, and no independent pixel
+noise or stochastic action selector is added.
+
+The scale is adjustable live or with `--brownian-scale`. Displacement is
+continuous, but rendering rounds it to integer pixels, crops at image edges,
+and fills exposed pixels with the scene's dark background. It does not wrap,
+reflect, or clamp the random walk; objects can leave the view. Uncheck the
+motion control to freeze the current position. **New trial** resets the world
+position and RNG along with the model, retaining the chosen motion settings.
+
 The bench starts **paused**, with mouse gaze unlocked, learning disabled, and canvas
-feedback zero. **Step** consumes one observation; **Run/Pause** controls playback.
+feedback zero. **Step** advances the world/model once and consumes an observation
+when Observe is enabled; **Run/Pause** controls playback.
 **Model controls** opens the application's existing Controls panel: settling
 steps/rate, generative learning, learning rate, and canvas-feedback rate act on
 the actual model. Radius and total hidden count remain startup arguments.
 Move the mouse over the world, prediction, error image, or embedded canvas to
 select gaze. While paused this selects the next sample without consuming
 evidence; **Step/Run** gathers the selected patch through the production router.
-**Lock gaze** holds that position for a fixed-patch trial. You can also
-expand **Gaze and Observation** for **Observe vision**, which independently
+**Lock gaze** holds that position; turn scene motion off as well for a fixed-patch
+trial. You can also expand **Gaze and Observation** for **Observe vision**, which independently
 gates evidence. Mouse/locked trials skip prospective gaze searches unless joint
 belief diagnostics are explicitly opened. **Autonomous gaze** uses the same
 information-gain policy as main: it can hold its current position when equally
@@ -199,17 +215,18 @@ RMSE are shown together. The world's magenta circle marks the selected next gaze
 prediction/error circles mark the latest sampled aperture. Gray error
 pixels are **unobserved**, not error-free. Plots separate:
 
-- Across-observation **forecast MSE before evidence** from **settled decoder MSE
+- Across-step **forecast MSE before evidence** from **settled decoder MSE
   before that observation's weight update**, on observed RGB coordinates only.
 - The latest observation's **total residual-energy trajectory**, with final
   hidden and sensory components. Backtracking makes this held-objective total
   energy non-increasing; sensory MSE alone need not decrease.
 
-With gaze locked, learning and feedback off, expect settling within observations and a
-possible warm-start transient, **not guaranteed improvement of future forecasts**.
+With scene motion off, gaze locked, learning and feedback off, expect settling
+within observations and a possible warm-start transient, **not guaranteed
+improvement of future forecasts**.
 Enable learning with feedback still zero to isolate weight adaptation.
-Moving gaze changes the evaluated patch, so its MSE curve is not a fixed-target
-learning curve and need not decrease.
+Moving gaze or moving the scene changes the evaluated target, so its MSE curve
+is not a fixed-target learning curve and need not decrease.
 Improvement on one fixed patch can be decoder-bias memorization; it does not
 establish generalization or location-specific scene memory. Positive canvas
 feedback also introduces wave propagation and damping, not pure static-root
@@ -219,12 +236,13 @@ step count applies to both forecast and conditioning.
 **New trial (fresh weights)** restores seed-0 parameters, hidden state, and a
 zero canvas while retaining model settings and gaze; other source/wave settings
 return to bench defaults. The ordinary Controls reset retains learned weights,
-so it is not a fresh trial. Every observation uses the fixed `--dt` for model
-forecasting, independently of pause duration; wave physics retains its own CFL
-timestep. **Save trace** writes JSON containing the latest **512 observations**,
-including recorded model settings, energy trajectories, gaze, and missing-error
-values as `null`. This is a metric log, not a complete replay of arbitrary
-source/wave-control interventions.
+so it is not a fresh trial. Every step uses the fixed `--dt` for model
+forecasting and world motion, independently of pause duration; wave physics
+retains its own CFL timestep. **Save trace** writes JSON containing the latest
+**512 steps**, including recorded model settings, energy trajectories, gaze, Brownian
+settings, continuous/rendered scene offsets, and missing-error values as `null`.
+The world seed and clock are also recorded. This is a metric log, not a
+complete replay of arbitrary source/wave-control interventions.
 
 ---
 

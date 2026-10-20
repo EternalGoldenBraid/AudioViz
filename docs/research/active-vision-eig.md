@@ -11,9 +11,10 @@ agent work and coordinate through PR comments.
 The proposal below retains the earlier circular-dot/Gaussian-precision design.
 For the current hard-circular-fovea predictive-coding application and static
 scene bench, see the [README](../../README.md) and
-[experiment report](../static-world-experiment-report.md). Further stochastic
-world/observer and sampling-policy implementation is paused; those questions
-remain open.
+[experiment report](../static-world-experiment-report.md). The bench now has a
+seeded Brownian scene-motion intervention and a static control. This changes
+the test environment, not the gaze policy or model's uncertainty assumptions.
+Further gaze-policy and latent/observer sampling design remains paused.
 
 ## Literature and conceptual grounding for coding agents
 

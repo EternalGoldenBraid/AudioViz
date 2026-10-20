@@ -30,7 +30,9 @@ def test_bench_uses_actual_model_fixed_clock_and_missing_evidence_gaps(qapp, req
         pytest.skip("Native widget requires a window-system context")
     now = [10.]
     monkeypatch.setattr(visualizer_module.time, "monotonic", lambda: now[0])
-    bench = StaticWorldBench(resolution=(20, 28), foveal_radius=4, backend=backend, dt=.025)
+    bench = StaticWorldBench(
+        resolution=(20, 28), foveal_radius=4, backend=backend, dt=.025, motion_enabled=False,
+    )
     bench.lock_gaze.setChecked(True)
     bench.show()
     qapp.processEvents()
@@ -116,7 +118,7 @@ def test_new_trial_restores_seeded_parameters_and_keeps_selected_inference_setti
         pytest.skip("Native widget requires a window-system context")
     assert StaticWorldBench.HISTORY_LIMIT == 512
     monkeypatch.setattr(StaticWorldBench, "HISTORY_LIMIT", 2)
-    bench = StaticWorldBench(resolution=(20, 28), foveal_radius=4, backend=backend)
+    bench = StaticWorldBench(resolution=(20, 28), foveal_radius=4, backend=backend, motion_enabled=False)
     bench.lock_gaze.setChecked(True)
     bench.show()
     qapp.processEvents()
@@ -259,3 +261,92 @@ def test_autonomous_gaze_routes_the_selected_patch_before_capture_and_holds_with
         assert bench.visualizer.source_orchestrator.gaze_policy is not None
     finally:
         bench.close()
+
+
+@pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
+def test_brownian_world_moves_without_evidence_and_freezes_and_restarts_reproducibly(
+    qapp, request, backend, tmp_path,
+):
+    if backend == "cupy":
+        request.getfixturevalue("cupy_backend")
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("Native widget requires a window-system context")
+    bench = StaticWorldBench(
+        resolution=(40, 60), foveal_radius=4, backend=backend, brownian_scale=20.,
+    )
+    bench.lock_gaze.setChecked(True)
+    bench.show()
+    qapp.processEvents()
+    try:
+        assert bench.motion_enabled.isChecked()
+        initial_scene = bench.scene.copy()
+        controls = bench.visualizer.gaze_controls
+        controls.observe.setChecked(False)
+        first_offsets = []
+        for _ in range(3):
+            frame = bench.step_once()
+            first_offsets.append(frame.world_offset)
+            assert frame.forecast_mse is None and frame.settled_mse is None
+            assert frame.learning_updates == 0 and frame.gaze == (.5, .5)
+        assert bench.world.time == pytest.approx(3*bench.dt) and bench.capture.read_count == 0
+        assert not np.array_equal(bench.scene, initial_scene)
+        np.testing.assert_array_equal(bench.world_image.image, bench.scene)
+        controls.observe.setChecked(True)
+        observed = bench.step_once()
+        assert bench.capture.read_count == 1 and observed.observed_rgb == 49*3
+        source = bench.visualizer.source_orchestrator
+        io, graph = source.graph_io, source.sensory_graph
+        expected = bench.scene[tuple(io.positions[io.valid].T)].astype(np.float32)/255
+        np.testing.assert_array_equal(
+            to_numpy(graph.evidence[graph.visual_slice]).reshape(-1, 3)[io.valid], expected,
+        )
+        bench.motion_enabled.setChecked(False)
+        assert not bench.motion_scale.isEnabled()
+        frozen_scene = bench.scene.copy()
+        frozen = bench.step_once()
+        assert frozen.world_offset == observed.world_offset and not frozen.brownian_enabled
+        np.testing.assert_array_equal(bench.scene, frozen_scene)
+        path = tmp_path / "moving-world.json"
+        bench.save_trace(path)
+        trace = json.loads(path.read_text())
+        assert trace["world_seed"] == 0 and trace["world_time"] == pytest.approx(5*bench.dt)
+        assert trace["motion_enabled"] is False
+        assert trace["frames"][0]["brownian_enabled"] is True
+        assert trace["frames"][0]["brownian_scale"] == 20.
+        assert trace["frames"][-1]["world_pixel_offset"] == list(frozen.world_pixel_offset)
+        bench.new_trial()
+        qapp.processEvents()
+        assert bench.world.time == 0 and bench.world.pixel_offset == (0, 0)
+        np.testing.assert_array_equal(bench.scene, initial_scene)
+        assert not bench.motion_enabled.isChecked() and bench.motion_scale.value() == 20.
+        bench.motion_enabled.setChecked(True)
+        for expected_offset in first_offsets:
+            assert bench.step_once().world_offset == expected_offset
+        bench.motion_scale.setValue(0.)
+        zero_scale = bench.step_once()
+        assert zero_scale.brownian_enabled and zero_scale.brownian_scale == 0.
+        assert zero_scale.world_offset == first_offsets[-1]
+    finally:
+        bench.close()
+
+
+def test_cli_static_control_reaches_the_same_bench(qapp, monkeypatch):
+    from audioviz.visualization import static_world_bench as module
+    created = []
+
+    class Window:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+
+        def show(self):
+            pass
+
+    monkeypatch.setattr(module, "StaticWorldBench", Window)
+    monkeypatch.setattr(module.QtWidgets.QApplication, "exec", lambda self: 0)
+    old_style = qapp.styleSheet()
+    try:
+        assert module.main(["--static-scene", "--brownian-scale", "6", "--backend", "numpy"]) == 0
+        assert created[0]["motion_enabled"] is False
+        assert created[0]["brownian_scale"] == 6 and created[0]["backend"] == "numpy"
+    finally:
+        qapp.setStyleSheet(old_style)

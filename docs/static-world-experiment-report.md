@@ -6,11 +6,48 @@ Runtime snapshot: `c494c32`.
 Research and implementation histories have since been combined on the shared
 branch **`research/active-vision-eig`** in draft PR #1. The branch and commit
 labels in this report identify the original experimental snapshot. Branch
-consolidation does not change the implementation pause below.
+consolidation did not change the implementation pause recorded below.
 
-## Decision at this pause
+## Follow-up: Brownian scene-motion experiment
 
-Pause implementation of stochastic gaze/world dynamics. The user does **not**
+After branch consolidation, the user authorized making the test world move
+before choosing a new gaze mechanism. The bench now starts with seeded Brownian
+translation enabled; **gaze-policy and latent/observer sampling design remain
+paused**. The original static-patch measurements below are unchanged and do
+not describe the moving-world experiment.
+
+The world advances once per fixed model interval, independently of camera
+reads and Observe. Its per-axis increment distribution is
+`Normal(0, scale^2 * dt)`, with default scale `4` pixels/sqrt(second) and seed
+`0`. Rendering rounds the continuous offset to pixels, crops rather than wraps,
+and fills exposed pixels with the scene's dark background. The random walk
+itself is not clipped or reflected; objects can move out of view.
+
+**Brownian scene motion** and its scale are live controls. Turning motion off
+freezes the current position. **New trial** restores the initial position and
+RNG while retaining the chosen settings. Use `--static-scene` and Lock gaze to
+recover the held-target control. Trace rows record enabled state, scale, and
+continuous/rendered offsets; the export also records world seed/time.
+
+Native OpenGL trial: at `80x120`, radius `32`, hidden count `6`, fixed gaze
+`(0.5, 0.5)`, `dt=1/30`, default motion scale, and learning/canvas feedback off,
+60 steps moved the rendered scene from `(0, 0)` to `(0, 7)` pixels. The first 10 steps advanced the world
+with Observe off, zero camera reads, and unavailable MSE. Enabling Observe
+then produced 50 camera reads over the remaining 50 steps. A fresh trial
+with motion off reproduced the held-world forecast MSE at step 15:
+`0.15163090413829192`. These establish the world/measurement separation and
+static control, not a new exploration or learning result.
+
+Only the RGB frame crosses the camera interface. Neither gaze selection nor
+the predictive model receives evaluator offsets or the world's RNG state.
+No pixel noise, random tie-breaker, softmax, or eye-motion policy was added.
+With zero root feedback, the model-side symmetry described below can persist:
+a moving scene is not evidence that informative autonomous sensing is solved.
+
+## Decision at the original pause
+
+At this earlier pause, implementation of stochastic gaze/world dynamics was
+paused. The user does **not**
 want a special-case rule that detects equally good candidates and then samples
 among them. The direction under consideration is that stochasticity and
 sampling belong to the ongoing world/observer dynamics, including ordinary
@@ -21,8 +58,8 @@ or replacement action distribution has been implemented. The existing greedy
 autonomous policy, including its flat/tied-score handling, is still present;
 this describes the current implementation, not an endorsed final design.
 
-The immediate coordination request is to retain the evidence and unresolved
-questions below, not to start another implementation or force a policy choice.
+The coordination request remains to retain the evidence and unresolved
+questions below, not to force a gaze-policy choice.
 
 ## What now exists
 
