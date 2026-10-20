@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from collections.abc import Mapping
+from types import ModuleType
 
 import numpy as np
 
@@ -14,6 +15,10 @@ from audioviz.readouts.diagnostics import (
     mean_energy,
 )
 from audioviz.utils.spatial_preview import spatial_preview
+from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
+from audioviz.utils.array_backend import (
+    array_module, canvas_direction, hidden_direction, project_channels, spatial_mean, to_numpy,
+)
 
 @dataclass(frozen=True)
 class PredictiveCodingConfig:
@@ -27,8 +32,14 @@ class PredictiveCodingConfig:
     weight_clip: float = 10.0
     gradient_clip: float = 1.0
     cross_modal_enabled: bool = False
+    dtype: str = "float64"
+    spatial_precision: GaussianSpatialPrecision | None = None
 
     def __post_init__(self) -> None:
+        if self.spatial_precision is not None and not isinstance(self.spatial_precision, GaussianSpatialPrecision):
+            raise ValueError("spatial_precision must be a GaussianSpatialPrecision or None")
+        if self.dtype not in ("float32", "float64"):
+            raise ValueError("dtype must be float32 or float64")
         if not isinstance(self.cross_modal_enabled, bool):
             raise ValueError("cross_modal_enabled must be a boolean")
         for name in ("hidden_channels", "inference_steps"):
@@ -53,6 +64,7 @@ class PredictiveCodingRGBReadout:
         *,
         canvas_shape: tuple[int, ...],
         config: PredictiveCodingConfig | None = None,
+        backend: ModuleType = np,
     ) -> None:
         if (
             len(canvas_shape) != 3
@@ -62,29 +74,37 @@ class PredictiveCodingRGBReadout:
             raise ValueError("predictive RGB readout requires a nonempty RGB canvas")
         self.canvas_shape = tuple(canvas_shape)
         self.config = PredictiveCodingConfig() if config is None else config
-        self.hidden = np.zeros(
+        xp = backend
+        dtype = xp.dtype(self.config.dtype)
+        self.hidden = xp.zeros(
             (*self.canvas_shape[:2], self.config.hidden_channels),
-            dtype=np.float64,
+            dtype=dtype,
         )
         rng = np.random.default_rng(0)
-        self.canvas_weights = rng.normal(
+        self.canvas_weights = xp.asarray(rng.normal(
             scale=0.1, size=(self.config.hidden_channels, 3)
-        )
-        self.visual_weights = rng.normal(
+        ), dtype=dtype)
+        self.visual_weights = xp.asarray(rng.normal(
             scale=0.1, size=(3, self.config.hidden_channels)
-        )
+        ), dtype=dtype)
         for channel in range(min(3, self.config.hidden_channels)):
             self.canvas_weights[channel, channel] = 1.0
             self.visual_weights[channel, channel] = 1.0
-        self.stream_state_weights = rng.normal(scale=.1, size=(1, self.config.hidden_channels))
-        self.stream_state_bias = np.zeros(1)
+        self.stream_state_weights = xp.asarray(rng.normal(scale=.1, size=(1, self.config.hidden_channels)), dtype=dtype)
+        self.stream_state_bias = xp.zeros(1, dtype=dtype)
         self.stream_state_prediction: float | None = None
-        self.hidden_error = np.zeros_like(self.hidden)
-        self.visual_error = np.zeros(self.canvas_shape, dtype=np.float64)
+        self.hidden_error = xp.zeros_like(self.hidden)
+        self.visual_error = xp.zeros(self.canvas_shape, dtype=dtype)
         self.diagnostics_enabled = False
         self.diagnostics: PredictiveCodingDiagnostics | None = None
         self.spatial_preview_enabled = False
         self._preview_prediction: np.ndarray | None = None
+        self._precision_config = None
+        self._precision_field = None
+
+    @property
+    def backend(self) -> ModuleType:
+        return array_module(self.hidden)
 
     def set_diagnostics_enabled(self, enabled: bool) -> None:
         self.diagnostics_enabled = bool(enabled)
@@ -103,6 +123,8 @@ class PredictiveCodingRGBReadout:
         next_config = replace(self.config, **changes)
         if next_config.hidden_channels != self.config.hidden_channels:
             raise ValueError("hidden_channels cannot change without rebuilding the readout")
+        if next_config.dtype != self.config.dtype:
+            raise ValueError("dtype cannot change without rebuilding the readout")
         self.config = next_config
 
     def reset(self) -> None:
@@ -115,21 +137,23 @@ class PredictiveCodingRGBReadout:
         self.stream_state_prediction = None
 
     def predict(self, prior: np.ndarray) -> np.ndarray:
+        xp = self.backend
         canvas = self._coerce(prior, name="canvas prior")
-        predicted_hidden = np.tanh(canvas) @ self.canvas_weights.T
+        predicted_hidden = project_channels(xp.tanh(canvas), self.canvas_weights.T)
         # Advance memory from the wave prior before any new sensory evidence.
         self.hidden += self.config.inference_rate * (predicted_hidden - self.hidden)
         return self._capture_prediction()
 
-    def _capture_prediction(self) -> np.ndarray:
+    def _capture_prediction(self, *, include_stream_state: bool = True) -> np.ndarray:
         self.diagnostics = None
         self._preview_prediction = None
-        prediction = self._predict_observation(np.tanh(self.hidden))
-        self.stream_state_prediction = self.predict_stream_state()
+        activity = self.backend.tanh(self.hidden)
+        prediction = self._predict_observation(activity)
+        self.stream_state_prediction = self.predict_stream_state(activity) if include_stream_state else None
         self._require_finite(self.hidden, prediction)
         if self.spatial_preview_enabled:
             self._preview_prediction = self._preview_observation(prediction)
-        return prediction.astype(np.float32)
+        return prediction.astype(self.backend.float32)
 
     def infer(
         self, prior: np.ndarray, observation: np.ndarray | None,
@@ -141,33 +165,39 @@ class PredictiveCodingRGBReadout:
         )
 
     def predict_stream_state(self, hidden_activity: np.ndarray | None = None) -> float:
-        activity = np.tanh(self.hidden) if hidden_activity is None else hidden_activity
-        logit = float((activity.mean(axis=(0, 1)) @ self.stream_state_weights.T + self.stream_state_bias)[0])
+        logit = self._stream_state_logit(hidden_activity)
         self._require_finite(logit)
-        return float(.5 * (1 + np.tanh(.5 * logit)))
+        return float(.5 * (1 + self.backend.tanh(.5 * logit)))
+
+    def _stream_state_logit(self, hidden_activity: np.ndarray | None = None):
+        xp = self.backend
+        activity = xp.tanh(self.hidden) if hidden_activity is None else hidden_activity
+        return (spatial_mean(activity) @ self.stream_state_weights.T + self.stream_state_bias)[0]
 
     def _stream_state_terms(
         self, observed: bool, hidden_activity: np.ndarray | None = None,
-    ) -> tuple[float, float, float]:
-        prediction = self.predict_stream_state(hidden_activity)
+    ):
+        prediction = .5 * (1 + self.backend.tanh(.5 * self._stream_state_logit(hidden_activity)))
         error = float(observed) - prediction
         return prediction, error, error * prediction * (1 - prediction)
 
     def _finish_inference(
         self, canvas: np.ndarray, observed: np.ndarray | None, inference_energy: list[float],
         *, hidden_error: np.ndarray | None = None, learn: bool = True,
+        visual_error: np.ndarray | None = None,
         cross_weights: np.ndarray | None = None,
         cross_parent_means: tuple[float, ...] = (),
         cross_update_norm: float = 0.0,
         stream_state: bool | None = None,
     ) -> None:
+        xp = self.backend
         self.hidden_error = (
-            self.hidden - np.tanh(canvas) @ self.canvas_weights.T
+            self.hidden - project_channels(xp.tanh(canvas), self.canvas_weights.T)
             if hidden_error is None else hidden_error
         )
-        self.visual_error = (
-            np.zeros_like(self.visual_error) if observed is None
-            else observed - self._predict_observation(np.tanh(self.hidden))
+        self.visual_error = visual_error if visual_error is not None else (
+            xp.zeros_like(self.visual_error) if observed is None
+            else observed - self._predict_observation(xp.tanh(self.hidden))
         )
         weights_before = None
         parameters = (
@@ -183,35 +213,35 @@ class PredictiveCodingRGBReadout:
                 direction = stream_terms[2]
                 self._update_weights(
                     self.stream_state_weights,
-                    direction * np.tanh(self.hidden).mean(axis=(0, 1))[None, :],
+                    direction * spatial_mean(xp.tanh(self.hidden))[None, :],
                 )
-                self._update_weights(self.stream_state_bias, np.array([direction]))
+                self._update_weights(self.stream_state_bias, xp.asarray(direction).reshape(1))
         if weights_before is not None:
             self.diagnostics = PredictiveCodingDiagnostics(
                 hidden=EnergyStatistics.from_error(self.hidden_error),
                 visual=(
-                    EnergyStatistics.from_error(self.visual_error) if observed is not None
+                    EnergyStatistics.from_error(self._energy_visual_error(self.visual_error)) if observed is not None
                     else EnergyStatistics(
                         np.nan, np.nan, (np.nan,) * self.visual_weights.shape[0]
                     )
                 ),
                 inference_energy=tuple(inference_energy),
-                canvas_means=tuple(float(value) for value in canvas.mean(axis=(0, 1))),
-                hidden_means=tuple(float(value) for value in self.hidden.mean(axis=(0, 1))),
+                canvas_means=tuple(float(value) for value in to_numpy(spatial_mean(canvas))),
+                hidden_means=tuple(float(value) for value in to_numpy(spatial_mean(self.hidden))),
                 observation_means=tuple(
                     float(value)
-                    for value in (
+                    for value in to_numpy((
                         observed if observed is not None
-                        else self._predict_observation(np.tanh(self.hidden))
-                    ).mean(axis=tuple(range(self.visual_error.ndim - 1)))
+                        else self._predict_observation(xp.tanh(self.hidden))
+                    ).mean(axis=tuple(range(self.visual_error.ndim - 1))))
                 ),
                 canvas_weights=copy_weights(self.canvas_weights),
                 visual_weights=copy_weights(self.visual_weights),
                 learning_enabled=self.config.learning_enabled,
                 learning_rate=self.config.learning_rate,
                 weight_update_norm=float(
-                    np.sqrt(
-                        sum(np.sum((weights - before)**2) for weights, before in zip(parameters, weights_before))
+                    xp.sqrt(
+                        sum(xp.sum((weights - before)**2) for weights, before in zip(parameters, weights_before))
                         + cross_update_norm**2
                     )
                 ),
@@ -229,7 +259,7 @@ class PredictiveCodingRGBReadout:
                 cross_parent_means=cross_parent_means,
                 stream_state=(
                     StreamStateDiagnostics(
-                        observed=stream_state, prediction=stream_terms[0], energy=.5 * stream_terms[1]**2,
+                        observed=stream_state, prediction=float(stream_terms[0]), energy=float(.5 * stream_terms[1]**2),
                         weights=copy_weights(self.stream_state_weights),
                         bias=float(self.stream_state_bias[0]),
                     )
@@ -243,43 +273,65 @@ class PredictiveCodingRGBReadout:
             self._coerce(canvas, name="canvas state"),
             self._coerce_observation(observation),
         )
-        return mean_energy(hidden_error, visual_error)
+        return mean_energy(hidden_error, self._energy_visual_error(visual_error))
+
+    def _visual_precision(self, error):
+        config = self.config.spatial_precision
+        if config is None or error.ndim != 3:
+            return None
+        if self._precision_config != config:
+            self._precision_field = config.field(
+                self.canvas_shape[:2], backend=self.backend, dtype=self.hidden.dtype,
+            )[..., None]
+            self._precision_config = config
+        return self._precision_field
+
+    def _weighted_visual_error(self, error):
+        precision = self._visual_precision(error)
+        return error if precision is None else precision * error
+
+    def _energy_visual_error(self, error):
+        precision = self._visual_precision(error)
+        return error if precision is None else self.backend.sqrt(precision) * error
 
     def _errors(
         self, canvas: np.ndarray, observation: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
+        xp = self.backend
         return (
-            self.hidden - np.tanh(canvas) @ self.canvas_weights.T,
-            observation - self._predict_observation(np.tanh(self.hidden)),
+            self.hidden - project_channels(xp.tanh(canvas), self.canvas_weights.T),
+            observation - self._predict_observation(xp.tanh(self.hidden)),
         )
 
     def _learn(self, canvas: np.ndarray, *, learn_sensory: bool = True) -> None:
+        xp = self.backend
         pixel_count = self.canvas_shape[0] * self.canvas_shape[1]
         canvas_gradient = (
             self.hidden_error.reshape(-1, self.config.hidden_channels).T
-            @ np.tanh(canvas).reshape(-1, 3)
+            @ xp.tanh(canvas).reshape(-1, 3)
         ) / pixel_count
         self._update_weights(self.canvas_weights, canvas_gradient)
         if learn_sensory:
             self._update_weights(self.visual_weights, self._observation_gradient())
 
     def _update_weights(self, weights: np.ndarray, gradient: np.ndarray) -> None:
+        xp = self.backend
         gradient = gradient - self.config.weight_decay * weights
-        weights += self.config.learning_rate * np.clip(
+        weights += self.config.learning_rate * xp.clip(
             gradient, -self.config.gradient_clip, self.config.gradient_clip
         )
-        np.clip(weights, -self.config.weight_clip, self.config.weight_clip, out=weights)
+        xp.clip(weights, -self.config.weight_clip, self.config.weight_clip, out=weights)
         self._require_finite(weights)
 
     def _observation_gradient(self) -> np.ndarray:
         pixel_count = self.canvas_shape[0] * self.canvas_shape[1]
         return (
-            self.visual_error.reshape(-1, 3).T
-            @ np.tanh(self.hidden).reshape(-1, self.config.hidden_channels)
+            self._weighted_visual_error(self.visual_error).reshape(-1, 3).T
+            @ self.backend.tanh(self.hidden).reshape(-1, self.config.hidden_channels)
         ) / pixel_count
 
     def _predict_observation(self, hidden_activity: np.ndarray) -> np.ndarray:
-        return hidden_activity @ self.visual_weights.T
+        return project_channels(hidden_activity, self.visual_weights.T)
 
     def _coerce_observation(self, observation: np.ndarray) -> np.ndarray:
         return self._coerce(observation, name="camera observation")
@@ -288,16 +340,20 @@ class PredictiveCodingRGBReadout:
         return spatial_preview(observation)
 
     def _coerce(self, values: np.ndarray, *, name: str) -> np.ndarray:
-        array = np.asarray(values, dtype=np.float64)
+        xp = self.backend
+        array = xp.asarray(values, dtype=self.hidden.dtype)
         if array.shape != self.canvas_shape:
             raise ValueError(f"{name} must match the readout canvas shape")
-        if not np.all(np.isfinite(array)):
+        if not bool(xp.all(xp.isfinite(array))):
             raise ValueError(f"{name} must contain only finite values")
         return array
 
-    @staticmethod
-    def _require_finite(*values: np.ndarray | float) -> None:
-        if any(not np.all(np.isfinite(value)) for value in values):
+    def _require_finite(self, *values: np.ndarray | float) -> None:
+        xp = self.backend
+        finite = xp.asarray(True)
+        for value in values:
+            finite &= xp.all(xp.isfinite(value))
+        if not bool(finite):
             raise FloatingPointError(
                 "Predictive coding diverged; reduce inference or learning rates."
             )
@@ -311,11 +367,21 @@ class PredictiveCodingHiddenCoupling:
     ) -> None:
         if camera is audio or camera.canvas_shape != audio.canvas_shape:
             raise ValueError("Hidden coupling requires distinct branches on the same canvas.")
+        if camera.backend is not audio.backend:
+            raise ValueError("Hidden coupling requires branches on the same backend.")
+        if camera.hidden.dtype != audio.hidden.dtype:
+            raise ValueError("Hidden coupling requires branches with the same dtype.")
         self.branches = (camera, audio)
         self.weights = {
-            target: np.zeros((target.hidden.shape[-1], parent.hidden.shape[-1]))
+            target: self.backend.zeros(
+                (target.hidden.shape[-1], parent.hidden.shape[-1]), dtype=target.hidden.dtype,
+            )
             for target, parent in ((camera, audio), (audio, camera))
         }
+
+    @property
+    def backend(self) -> ModuleType:
+        return self.branches[0].backend
 
     def parent(self, branch: PredictiveCodingRGBReadout) -> PredictiveCodingRGBReadout:
         if branch is self.branches[0]:
@@ -325,10 +391,11 @@ class PredictiveCodingHiddenCoupling:
         raise ValueError("Readout does not belong to this hidden coupling.")
 
     def hidden_errors(self, canvas: np.ndarray) -> dict[PredictiveCodingRGBReadout, np.ndarray]:
-        activity = np.tanh(canvas)
+        xp = self.backend
+        activity = xp.tanh(canvas)
         return {
-            branch: branch.hidden - activity @ branch.canvas_weights.T
-            - np.tanh(self.parent(branch).hidden) @ self.weights[branch].T
+            branch: branch.hidden - project_channels(activity, branch.canvas_weights.T)
+            - project_channels(xp.tanh(self.parent(branch).hidden), self.weights[branch].T)
             for branch in self.branches
         }
 
@@ -337,14 +404,14 @@ class PredictiveCodingHiddenCoupling:
         errors: dict[PredictiveCodingRGBReadout, np.ndarray],
     ) -> np.ndarray:
         child = self.parent(branch)
-        return errors[child] @ self.weights[child]
+        return project_channels(errors[child], self.weights[child])
 
     def predict(self, prior: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         canvas = self.branches[0]._coerce(prior, name="canvas prior")
         errors = self.hidden_errors(canvas)
         updates = [
             branch.config.inference_rate * (
-                -errors[branch] + (1 - np.tanh(branch.hidden)**2) * self.feedback(branch, errors)
+                -errors[branch] + (1 - self.backend.tanh(branch.hidden)**2) * self.feedback(branch, errors)
             )
             for branch in self.branches
         ]
@@ -369,6 +436,7 @@ def infer_joint(
     ):
         raise ValueError("Coupled inference requires both hidden branches.")
     first = branches[0][0]
+    xp = first.backend
     states = {} if stream_states is None else dict(stream_states)
     if not set(states).issubset({branch for branch, _ in branches}):
         raise ValueError("Stream-state context must belong to an inferred branch.")
@@ -379,6 +447,10 @@ def infer_joint(
     steps = first.config.inference_steps
     observations = []
     for branch, observed in branches:
+        if branch.backend is not xp:
+            raise ValueError("Joint branches must share an array backend.")
+        if branch.hidden.dtype != first.hidden.dtype:
+            raise ValueError("Joint branches must share a dtype.")
         if branch.canvas_shape != first.canvas_shape or branch.config.inference_steps != steps:
             raise ValueError("Joint branches must share canvas shape and inference step count.")
         if observed is None and coupling is None and branch not in states:
@@ -387,25 +459,26 @@ def infer_joint(
     collect = any(branch.diagnostics_enabled for branch, _ in observations)
     trajectory: list[float] = []
     for _ in range(steps):
-        canvas_activity = np.tanh(canvas)
-        correction = np.zeros_like(canvas)
+        canvas_activity = xp.tanh(canvas)
+        correction = xp.zeros_like(canvas)
         hidden_updates = []
         energy = 0.0
         errors = coupling.hidden_errors(canvas) if coupling is not None else {
-            branch: branch.hidden - canvas_activity @ branch.canvas_weights.T
+            branch: branch.hidden - project_channels(canvas_activity, branch.canvas_weights.T)
             for branch, _ in observations
         }
         for branch, observed in observations:
-            hidden_activity = np.tanh(branch.hidden)
+            hidden_activity = xp.tanh(branch.hidden)
             hidden_error = errors[branch]
             sensory_error = (
-                np.zeros_like(branch.visual_error) if observed is None
+                xp.zeros_like(branch.visual_error) if observed is None
                 else observed - branch._predict_observation(hidden_activity)
             )
-            correction += branch.config.canvas_rate * (
-                (1.0 - canvas_activity**2) * (hidden_error @ branch.canvas_weights)
+            correction += canvas_direction(
+                branch.config.canvas_rate, canvas_activity,
+                project_channels(hidden_error, branch.canvas_weights),
             )
-            feedback = sensory_error @ branch.visual_weights
+            feedback = project_channels(branch._weighted_visual_error(sensory_error), branch.visual_weights)
             if branch in states:
                 _, state_error, state_direction = branch._stream_state_terms(states[branch], hidden_activity)
                 feedback = feedback + state_direction * branch.stream_state_weights[0]
@@ -414,28 +487,32 @@ def infer_joint(
             if coupling is not None:
                 feedback = feedback + coupling.feedback(branch, errors)
             hidden_updates.append(
-                branch.config.inference_rate
-                * (-hidden_error + (1.0 - hidden_activity**2) * feedback)
+                hidden_direction(branch.config.inference_rate, hidden_error, hidden_activity, feedback)
             )
             if collect:
-                energy += mean_energy(hidden_error, sensory_error)
+                energy += mean_energy(hidden_error, branch._energy_visual_error(sensory_error))
         if collect:
-            trajectory.append(energy)
+            trajectory.append(float(energy))
         # Every direction is computed before any branch or the shared canvas moves.
         canvas += correction
         for (branch, _), update in zip(observations, hidden_updates):
             branch.hidden += update
-            branch._require_finite(canvas, branch.hidden)
+    # Check at the settling boundary, not by synchronizing the GPU every step.
+    first._require_finite(
+        canvas, *(branch.hidden for branch, _ in observations),
+        *(branch._stream_state_logit() for branch in states),
+    )
     final_errors = coupling.hidden_errors(canvas) if coupling is not None else {
-        branch: branch.hidden - np.tanh(canvas) @ branch.canvas_weights.T
+        branch: branch.hidden - project_channels(xp.tanh(canvas), branch.canvas_weights.T)
         for branch, _ in observations
     }
     if collect:
-        trajectory.append(sum(
-            mean_energy(final_errors[branch], np.zeros_like(branch.visual_error) if observed is None
-                        else observed - branch._predict_observation(np.tanh(branch.hidden)))
+        trajectory.append(float(sum(
+            mean_energy(final_errors[branch], branch._energy_visual_error(
+                xp.zeros_like(branch.visual_error) if observed is None
+                else observed - branch._predict_observation(xp.tanh(branch.hidden))))
             for branch, observed in observations
-        ) + sum(.5 * branch._stream_state_terms(state)[1]**2 for branch, state in states.items()))
+        ) + sum(.5 * branch._stream_state_terms(state)[1]**2 for branch, state in states.items())))
     learn = bool(states) or any(observed is not None for _, observed in observations)
     cross_updates = {}
     if coupling is not None and learn:
@@ -446,21 +523,21 @@ def infer_joint(
                 parent = coupling.parent(branch)
                 gradient = (
                     final_errors[branch].reshape(-1, branch.hidden.shape[-1]).T
-                    @ np.tanh(parent.hidden).reshape(-1, parent.hidden.shape[-1])
+                    @ xp.tanh(parent.hidden).reshape(-1, parent.hidden.shape[-1])
                 ) / (canvas.shape[0] * canvas.shape[1])
                 branch._update_weights(weights, gradient)
-            cross_updates[branch] = float(np.linalg.norm(weights - before)) if before is not None else 0.0
+            cross_updates[branch] = float(xp.linalg.norm(weights - before)) if before is not None else 0.0
     for branch, observed in observations:
         branch._finish_inference(
             canvas, observed, trajectory, hidden_error=final_errors[branch], learn=learn,
             cross_weights=coupling.weights[branch] if coupling is not None else None,
             cross_parent_means=(
-                tuple(float(value) for value in coupling.parent(branch).hidden.mean(axis=(0, 1)))
-                if coupling is not None else ()
+                tuple(float(value) for value in to_numpy(spatial_mean(coupling.parent(branch).hidden)))
+                if coupling is not None and branch.diagnostics_enabled else ()
             ),
             cross_update_norm=cross_updates.get(branch, 0.0),
             stream_state=states.get(branch),
         )
     correction = canvas - first._coerce(prior, name="canvas prior")
     first._require_finite(correction)
-    return correction.astype(np.float32)
+    return correction.astype(xp.float32)

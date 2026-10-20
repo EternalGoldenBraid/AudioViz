@@ -172,7 +172,7 @@ def test_context_rejects_unknown_branches_and_non_boolean_observations():
         infer_joint(canvas, ((camera, None),), stream_states={other: False})
 
 
-def test_camera_only_context_is_independent_of_preview_collection_and_rejects_shader():
+def test_camera_only_context_is_independent_of_preview_collection():
     engine = RippleEngine(resolution=(6, 8), plane_size_m=(1, 1), speed=1)
     source = RippleSourceOrchestrator(
         config=RippleSourceOrchestratorConfig(
@@ -194,6 +194,3 @@ def test_camera_only_context_is_independent_of_preview_collection_and_rejects_sh
     assert source.visual_readout.stream_state_prediction is None
     np.testing.assert_array_equal(source.visual_readout.stream_state_weights, weights)
     np.testing.assert_array_equal(source.visual_readout.stream_state_bias, bias)
-    engine.use_shader = True
-    with pytest.raises(NotImplementedError, match="array-backed"):
-        source.correct_from_observations()

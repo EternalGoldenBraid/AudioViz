@@ -9,6 +9,7 @@ from audioviz.sources.orchestrator import (
 )
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
 from audioviz.sources.pose import RipplePoseConfig
+from audioviz.sources.circular_dot import CircularDotCapture, CircularDotConfig, CircularDotSource
 
 __all__ = [
     "AudioRippleSource",
@@ -22,4 +23,7 @@ __all__ = [
     "SyntheticRippleSource",
     "SyntheticSourceConfig",
     "load_cv2",
+    "CircularDotCapture",
+    "CircularDotConfig",
+    "CircularDotSource",
 ]

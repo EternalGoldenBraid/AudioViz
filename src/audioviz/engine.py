@@ -12,7 +12,7 @@ from audioviz.physics.wave_propagator import (
     load_cupy,
 )
 from audioviz.physics.opengl_wave_propagator import WavePropagatorOpenGL
-from audioviz.utils.spatial_preview import preview_indices
+from audioviz.utils.spatial_preview import PREVIEW_MAX_SIDE, preview_indices
 
 
 class RippleEngine:
@@ -79,10 +79,6 @@ class RippleEngine:
             "boundary_condition": self.boundary_condition,
         }
         if use_shader:
-            if self.canvas_channels != 1:
-                raise NotImplementedError(
-                    "OpenGL propagation does not yet support multi-channel canvas states."
-                )
             self.propagator = WavePropagatorOpenGL(
                 **propagator_kwargs,
                 use_current_context=self.use_external_opengl_context,
@@ -233,9 +229,10 @@ class RippleEngine:
 
     def apply_observation_correction(self, correction_grid: np.ndarray) -> np.ndarray:
         if self.use_shader:
-            raise NotImplementedError(
-                "Observation correction does not yet support OpenGL propagation."
-            )
+            if not self._has_prior:
+                raise RuntimeError("propagate must be called before correcting observations")
+            self.propagator.apply_correction(correction_grid)
+            return self.propagator.get_native_state()
         if not self._has_prior:
             raise RuntimeError("propagate must be called before correcting observations")
 
@@ -254,11 +251,17 @@ class RippleEngine:
             return self.backend.asnumpy(self.Z)
         return self.Z
 
-    def get_field_preview(self) -> np.ndarray:
+    def get_field(self):
+        """Return native state; OpenGL storage requires explicit host snapshots."""
+        if self.use_shader:
+            return self.propagator.get_native_state()
+        return self.Z
+
+    def get_field_preview(self, *, max_side: int = PREVIEW_MAX_SIDE) -> np.ndarray:
         """Sample the corrected field before transferring GPU data to the host."""
         if self.use_shader:
-            raise RuntimeError("Spatial previews require an array-backed field.")
-        rows, columns = preview_indices(self.Z.shape)
+            return self.propagator.get_native_state().preview(max_side=max_side)
+        rows, columns = preview_indices(self.Z.shape, max_side=max_side)
         sampled = self.Z[rows[:, None], columns[None, :]]
         if self.use_gpu:
             sampled = self.backend.asnumpy(sampled)
@@ -266,12 +269,21 @@ class RippleEngine:
         snapshot.setflags(write=False)
         return snapshot
 
-    def get_prior_numpy(self) -> np.ndarray:
+    def get_prior(self):
+        """Return the wave prior on its native backend without a host transfer."""
         if not self._has_prior:
             raise RuntimeError("propagate must be called before reading the prior")
-        if self.use_gpu:
-            return self.backend.asnumpy(self.prior_Z)
+        if self.use_shader:
+            return self.propagator.get_native_state(prior=True)
         return self.prior_Z
+
+    def get_prior_numpy(self) -> np.ndarray:
+        prior = self.get_prior()
+        if self.use_shader:
+            return prior.download()
+        if self.use_gpu:
+            return self.backend.asnumpy(prior)
+        return prior
 
     def get_opengl_field_texture_id(self) -> int:
         if not self.use_shader:
@@ -331,8 +343,8 @@ class RippleEngine:
 
     def _capture_prior(self):
         if self.use_shader:
-            prior = self.propagator.get_state()
-            self.prior_Z[:] = prior
+            self._has_prior = True
+            return self.propagator.get_native_state(prior=True)
         else:
             self.prior_Z[...] = self.Z
         self._has_prior = True

@@ -35,6 +35,15 @@ def test_audio_processor_ignores_low_prominence_noise():
     assert processor.current_top_k_frequencies == [None, None, None]
 
 
+def test_audio_processor_can_start_without_audio_devices():
+    processor = _make_processor()
+    processor.is_streaming = True
+
+    assert processor.start() is True
+    processor.process_pending_audio()
+    processor.stop()
+
+
 def test_audio_processor_detects_dominant_tone():
     processor = _make_processor()
 

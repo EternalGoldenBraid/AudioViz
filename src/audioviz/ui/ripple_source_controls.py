@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from audioviz.source_controls import (
     CameraFrameSourceControls,
     ControlValue,
     PredictionLearningControls,
     PredictionOverlayControls,
+    SourceControl,
 )
 from audioviz.ui.ripple_control_panel import (
     ControlPanelSection,
@@ -27,6 +30,28 @@ class RippleSourceControlBinding:
         visualizer = self.visualizer
         sections: list[ControlPanelSection] = []
         controls = visualizer.audio_source.controls()
+        graph = visualizer.source_orchestrator.sensory_graph
+        audio_model = visualizer.source_orchestrator.audio_uncertainty
+        if audio_model is not None:
+            controls = (*controls, SourceControl(
+                key="audio_geometry", label="Observation Support", kind="text",
+                default="One global spectrum; common-mode uncertainty. No sound direction.",
+                tooltip="The microphone spectrum constrains a shared auditory perturbation, not independent image pixels or a located sound source.",
+            ), SourceControl(
+                key="audio_precision", label="Assigned Audio Precision",
+                default=audio_model.precision, minimum=0, maximum=max(1000, audio_model.precision), step=.05,
+                tooltip=(
+                    "Assigned inverse measurement variance: R = I / precision. "
+                    "Zero disables audio conditioning; it is not silent evidence or an input gain. "
+                    "This is a model assumption, not calibrated microphone confidence."
+                ),
+            ))
+        if graph is not None:
+            controls = (*controls, SourceControl(
+                key="audio_geometry", label="Observation Support", kind="text",
+                default=f"{graph.audio_nodes} nodes in the joint graph. Disabled/stale input leaves them unclamped.",
+                tooltip="Fresh spectra clamp global audio nodes; no microphone direction is measured.",
+            ))
         sections.append(
             ControlPanelSection(
                 key="audio-source",
@@ -34,6 +59,9 @@ class RippleSourceControlBinding:
                 controls=controls,
                 toggle_key="audio",
                 empty_message=(
+                    "Camera-only startup does not open audio hardware. "
+                    "Restart with --active-vision MODE --active-audio to enable sound."
+                    if visualizer.active_vision_config is not None else
                     "Audio source controls are unavailable without an audio processor."
                 ),
             )
@@ -42,9 +70,15 @@ class RippleSourceControlBinding:
             ControlPanelSection(
                 key="camera-source",
                 title="Camera Source",
-                controls=CameraFrameSourceControls(
+                controls=(SourceControl(
+                    key="camera_status",
+                    label="Camera Status",
+                    kind="text",
+                    default=visualizer.camera_source.status,
+                    tooltip="Failed capture handles are released. Toggle Camera Frame off/on to reopen the configured device.",
+                ), *CameraFrameSourceControls(
                     gain=visualizer.camera_source.gain,
-                ).get_controls(),
+                ).get_controls()),
                 toggle_key="camera",
             )
         )
@@ -66,44 +100,105 @@ class RippleSourceControlBinding:
                 empty_message="No pose-specific controls are available yet.",
             )
         )
-        transform_config = visualizer.prediction_error_transform.config
-        if transform_config.enabled or visualizer.audio_source.processor is not None or not visualizer.use_shader:
-            pathway_config = visualizer.source_orchestrator.visual_readout.config
+        pathway_config = visualizer.source_orchestrator.visual_readout.config
+        uncertainty_active = visualizer.source_orchestrator.has_temporal_beliefs
+        learning_controls = PredictionLearningControls(
+            enabled=pathway_config.learning_enabled,
+            inference_steps=pathway_config.inference_steps,
+            inference_rate=pathway_config.inference_rate,
+            canvas_rate=pathway_config.canvas_rate,
+            learning_rate=pathway_config.learning_rate,
+            weight_decay=pathway_config.weight_decay,
+            weight_clip=pathway_config.weight_clip,
+            gradient_clip=pathway_config.gradient_clip,
+            cross_modal_enabled=pathway_config.cross_modal_enabled,
+            cross_modal_available=not uncertainty_active and (
+                visualizer.source_orchestrator.hidden_coupling is not None
+                or (
+                    visualizer.source_orchestrator.shader_model is not None
+                    and visualizer.source_orchestrator.audio_readout is not None
+                )
+            ),
+        ).get_controls()
+        if graph is not None:
+            learning_controls = (
+                SourceControl(
+                    key="graph_size", label="Shared Graph", kind="text",
+                    default=(
+                        f"{visualizer.source_orchestrator.graph_io.radius}-pixel radius, "
+                        f"{graph.visual_nodes//3} circular slots -> {graph.hidden_nodes} dense hidden "
+                        f"-> routed RGB + {graph.audio_nodes} audio terminals; full-image prediction memory."
+                    ),
+                ),
+                SourceControl(
+                    key="graph_backend", label="Graph Backend", kind="text",
+                    default=(
+                        "CPU float64 PC / hidden curvature; GPU pixels; only foveal gathers."
+                        if visualizer.use_shader else
+                        "CuPy float64 GPU PC; float32 pixels." if visualizer.use_gpu else
+                        "NumPy float64 PC; float32 pixels."
+                    ),
+                ),
+            ) + tuple(
+                replace(
+                    control, label="Canvas Error Feedback Rate",
+                    tooltip="Scale the negative root-energy gradient once. Sampling's adjoint scatters it to canvas ports; waves propagate it.",
+                ) if control.key == "canvas_rate" else
+                replace(
+                    control, label="Learn Generative Weights",
+                    tooltip="Update generative weights from this model's residual energy after clamped-evidence inference. Missing inputs are not training targets.",
+                ) if control.key == "learning_enabled" else
+                replace(
+                    control,
+                    tooltip="Maximum hidden settling steps in the generative residual energy; weights remain fixed during inference.",
+                ) if control.key == "inference_steps" else control
+                for control in learning_controls if control.key != "cross_modal_enabled"
+            )
+        elif uncertainty_active:
+            learning_controls = tuple(
+                replace(
+                    control, kind="text", default="Unused: one Gaussian update per frame",
+                    tooltip="Temporal memory is configured independently of PC solver settings.",
+                ) if control.key in ("inference_steps", "inference_rate") else
+                replace(
+                    control, kind="text", default="Fixed for temporal Gaussian inference",
+                    tooltip="Parameter uncertainty is not propagated in temporal Gaussian mode.",
+                ) if control.key == "learning_enabled" else
+                replace(
+                    control, label="Canvas Feedback Rate",
+                    tooltip=(
+                        "Scale deterministic canvas feedback from observation-induced hidden innovations. "
+                        "Applied once per frame to available sensory corrections. "
+                        "Zero leaves hidden inference and wave propagation active."
+                    ),
+                )
+                for control in learning_controls
+                if control.key in ("inference_steps", "inference_rate", "learning_enabled", "canvas_rate")
+            )
+        sections.append(
+            ControlPanelSection(
+                key="learning-dynamics",
+                title="Shared Predictive Coding" if graph is not None else (
+                    "Temporal Sensory Beliefs" if uncertainty_active else "Sensory Inference and Learning"
+                ),
+                controls=learning_controls,
+                expanded=True,
+            )
+        )
+        if not visualizer.use_shader:
             sections.append(
                 ControlPanelSection(
-                    key="learning-dynamics",
-                    title="Sensory Inference and Learning",
-                    controls=PredictionLearningControls(
-                        enabled=pathway_config.learning_enabled,
-                        inference_steps=pathway_config.inference_steps,
-                        inference_rate=pathway_config.inference_rate,
-                        canvas_rate=pathway_config.canvas_rate,
-                        learning_rate=pathway_config.learning_rate,
-                        weight_decay=pathway_config.weight_decay,
-                        weight_clip=pathway_config.weight_clip,
-                        gradient_clip=pathway_config.gradient_clip,
-                        cross_modal_enabled=pathway_config.cross_modal_enabled,
-                        cross_modal_available=(
-                            visualizer.source_orchestrator.hidden_coupling is not None and not visualizer.use_shader
-                        ),
+                    key="learning-overlay",
+                    title="Substrate Conductances (Fixed)",
+                    controls=PredictionOverlayControls(
+                        enabled=visualizer.show_learning_overlay,
+                        stride=visualizer.learning_overlay_stride,
+                        threshold=visualizer.learning_overlay_threshold,
+                        scale=visualizer.learning_overlay_scale,
                     ).get_controls(),
-                    expanded=True,
+                    expanded=visualizer.show_learning_overlay,
                 )
             )
-            if not visualizer.use_shader:
-                sections.append(
-                    ControlPanelSection(
-                        key="learning-overlay",
-                        title="Substrate Conductances (Fixed)",
-                        controls=PredictionOverlayControls(
-                            enabled=visualizer.show_learning_overlay,
-                            stride=visualizer.learning_overlay_stride,
-                            threshold=visualizer.learning_overlay_threshold,
-                            scale=visualizer.learning_overlay_scale,
-                        ).get_controls(),
-                        expanded=visualizer.show_learning_overlay,
-                    )
-                )
         return tuple(sections)
 
     def build_toggles(self) -> tuple[SourceToggle, ...]:
@@ -119,19 +214,22 @@ class RippleSourceControlBinding:
                 key="audio",
                 label="Audio",
                 enabled=visualizer.use_audio_source,
-                available=visualizer.audio_source.processor is not None and not visualizer.use_shader,
+                available=visualizer.audio_source.processor is not None,
             ),
             SourceToggle(
                 key="camera",
                 label="Camera Frame",
                 enabled=visualizer.use_camera_source,
-                available=not visualizer.use_shader,
+                available=True,
             ),
             SourceToggle(
                 key="pose",
                 label="Pose Graph",
                 enabled=visualizer.use_pose_sources,
-                available=not (visualizer.use_gpu or visualizer.use_shader),
+                available=(
+                    not (visualizer.use_gpu or visualizer.use_shader)
+                    and not visualizer.source_orchestrator.has_temporal_beliefs
+                ),
             ),
         )
 
@@ -161,21 +259,22 @@ class RippleSourceControlBinding:
             visualizer.use_synthetic = enabled
             return
         if source_key == "audio":
-            if enabled and visualizer.use_shader:
-                raise NotImplementedError("Audio predictive inference requires the CPU/GPU ripple backend.")
             visualizer.audio_source.set_enabled(enabled)
             return
         if source_key == "camera":
-            if enabled and visualizer.use_shader:
-                raise NotImplementedError(
-                    "Camera-frame source currently requires the CPU/GPU ripple backend."
-                )
             visualizer.camera_source.set_enabled(enabled)
+            self.sync_camera_panel(visualizer.control_panel)
             return
         if source_key == "pose":
             visualizer._set_pose_sources_enabled(enabled)
             return
         raise KeyError(f"Unknown source toggle: {source_key}")
+
+    def sync_camera_panel(self, control_panel: RippleControlPanel | None) -> None:
+        if control_panel is not None:
+            control_panel.set_source_control_value(
+                "camera-source", "camera_status", self.visualizer.camera_source.status,
+            )
 
     def sync_audio_panel(
         self,
@@ -225,6 +324,12 @@ class RippleSourceControlBinding:
         value: ControlValue,
     ) -> None:
         visualizer = self.visualizer
+        if control_key == "audio_precision":
+            model = visualizer.source_orchestrator.audio_uncertainty
+            if model is None:
+                raise ValueError("Audio precision requires temporal audio inference")
+            model.set_precision(float(value))
+            return
         visualizer.audio_source.update_control(control_key, value)
 
     def _update_camera_control(

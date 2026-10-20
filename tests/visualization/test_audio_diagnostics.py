@@ -3,6 +3,7 @@ from copy import deepcopy
 
 import numpy as np
 import pytest
+from PyQt5 import QtCore
 
 from audioviz.sources import AudioSourceConfig, RippleSourceOrchestratorConfig, SyntheticSourceConfig
 from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
@@ -11,8 +12,25 @@ from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
 
+@pytest.fixture
+def visualizer_factory(qapp):
+    windows = []
+
+    def create(**kwargs):
+        window = RippleWaveVisualizer(**kwargs)
+        windows.append(window)
+        return window
+
+    yield create
+    for window in windows:
+        window.close()
+        window.deleteLater()
+    qapp.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+    qapp.processEvents()
+
+
 def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evidence_and_reset(
-    qapp, monkeypatch, layer_view_stub
+    qapp, monkeypatch, layer_view_stub, visualizer_factory
 ):
     import audioviz.sources.audio as source_module
     import audioviz.visualization.prediction_scene_window as scene_module
@@ -25,7 +43,7 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
         spectrogram_buffers=[np.full((32, 2), 0.7)], stft_window=np.ones(16),
         n_mels=None, minimum_signal_level=0.05,
     )
-    visualizer = RippleWaveVisualizer(
+    visualizer = visualizer_factory(
         processor=processor, resolution=(10, 20), plane_size_m=(1, 1), speed=1,
         source_orchestrator_config=RippleSourceOrchestratorConfig(
             synthetic=SyntheticSourceConfig(enabled=False), audio=AudioSourceConfig(enabled=True)
@@ -112,7 +130,7 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
 
 @pytest.mark.parametrize("cross_modal_enabled", (False, True))
 def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
-    qapp, monkeypatch, layer_view_stub, cross_modal_enabled
+    qapp, monkeypatch, layer_view_stub, visualizer_factory, cross_modal_enabled
 ):
     import audioviz.sources.audio as source_module
     import audioviz.visualization.prediction_scene_window as scene_module
@@ -132,7 +150,7 @@ def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
         ),
     )
     baseline, visible = (
-        RippleWaveVisualizer(
+        visualizer_factory(
             processor=deepcopy(processor), resolution=(6, 8), plane_size_m=(1, 1), speed=1,
             source_orchestrator_config=config,
         )
@@ -169,10 +187,10 @@ def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
 
 
 def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
-    qapp, layer_view_stub
+    qapp, layer_view_stub, visualizer_factory
 ):
     processor = SimpleNamespace(frame_counter=0, current_top_k_frequencies=[], current_signal_level=0)
-    visualizer = RippleWaveVisualizer(
+    visualizer = visualizer_factory(
         processor=processor, resolution=(6, 8), plane_size_m=(1, 1), speed=1,
         source_orchestrator_config=RippleSourceOrchestratorConfig(
             synthetic=SyntheticSourceConfig(enabled=False), audio=AudioSourceConfig(enabled=False),
@@ -210,7 +228,7 @@ def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
 
 @pytest.mark.parametrize("audio_available", (False, True))
 def test_source_toggles_automatically_clamp_stream_nodes_without_inventing_sensory_samples(
-    qapp, monkeypatch, layer_view_stub, audio_available
+    qapp, monkeypatch, layer_view_stub, visualizer_factory, audio_available
 ):
     import audioviz.visualization.prediction_scene_window as scene_module
 
@@ -220,7 +238,7 @@ def test_source_toggles_automatically_clamp_stream_nodes_without_inventing_senso
         SimpleNamespace(frame_counter=0, current_top_k_frequencies=[], current_signal_level=0)
         if audio_available else None
     )
-    visualizer = RippleWaveVisualizer(
+    visualizer = visualizer_factory(
         processor=processor, resolution=(6, 8), plane_size_m=(1, 1), speed=1,
         source_orchestrator_config=RippleSourceOrchestratorConfig(
             synthetic=SyntheticSourceConfig(enabled=False), audio=AudioSourceConfig(enabled=False),
