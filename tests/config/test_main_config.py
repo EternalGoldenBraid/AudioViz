@@ -145,6 +145,8 @@ def test_main_active_audio_requires_active_vision_and_routes_processor_to_ripple
         main.main(["--active-audio"])
     with pytest.raises(SystemExit):
         main.main(["--shared-sensory-graph"])
+    with pytest.raises(SystemExit):
+        main.main(["--active-vision", "full", "--shared-sensory-graph"])
 
     created, starts = [], []
 
@@ -194,6 +196,7 @@ def test_main_active_audio_requires_active_vision_and_routes_processor_to_ripple
         assert ripple["active_vision"].mode == "autonomous"
         assert ripple["active_vision"].audio_precision == pytest.approx(1.0)
         assert ripple["active_vision"].shared_sensory_graph is shared
+        assert ripple["active_vision"].foveal_radius == 8
         assert ripple["source_orchestrator_config"].audio.enabled is True
         assert ripple["source_orchestrator_config"].camera_frame.enabled is True
     finally:

@@ -16,12 +16,20 @@ class ActiveVisionConfig:
     memory_time_constant: float = 1/3
     audio_precision: float | None = None
     shared_sensory_graph: bool = False
+    foveal_radius: int = 8
 
     def __post_init__(self):
         if self.mode not in ("mouse", "autonomous", "full"):
             raise ValueError("gaze mode must be mouse, autonomous or full")
         if not isinstance(self.shared_sensory_graph, bool):
             raise ValueError("shared_sensory_graph must be a boolean")
+        if (
+            isinstance(self.foveal_radius, bool) or not isinstance(self.foveal_radius, int)
+            or not 1 <= self.foveal_radius <= 16
+        ):
+            raise ValueError("foveal_radius must be an integer between 1 and 16 pixels")
+        if self.shared_sensory_graph and self.mode == "full":
+            raise ValueError("Shared foveal PC supports mouse or autonomous gaze, not full-image observation")
         if self.shared_sensory_graph and self.audio_precision not in (None, 1.0):
             raise ValueError("Shared graph uses hard clamps; control audio availability with the Audio source toggle")
         if self.audio_precision is not None:

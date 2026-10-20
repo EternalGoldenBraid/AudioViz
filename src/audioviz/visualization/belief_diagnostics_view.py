@@ -186,7 +186,8 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         self.gain_explanation.setText(
             "Local linearized information gain about shared hidden nodes, using the pre-evidence generative "
             "Jacobian and unit sensory residual noise, in nats. This is a curvature-based counterfactual, "
-            "not exact nonlinear information gain. RGB terminals sample a compact grid, not all image pixels."
+            "not exact nonlinear information gain. Each candidate routes a hard circular patch of the canvas; "
+            "no current camera evidence is used to choose gaze."
             if shared else self._separate_gain_explanation
         )
         self.tabs.setTabEnabled(3, shared)
@@ -225,7 +226,7 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
             label, description = self.belief_descriptions[key]
             label.setText(
                 "Both tabs show the same shared hidden state and its local Gaussian approximation. "
-                + ("RGB statistics refer to the nearest compact input sample." if key == "visual" else
+                + ("RGB statistics refer to the foveal center pixel." if key == "visual" else
                    "Audio statistics refer to the global spectral nodes, not a located source.")
                 if shared else description
             )
@@ -254,8 +255,7 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
 
     def _refresh_joint(self, joint):
         clamped = joint["clamped"]
-        hidden = slice(*joint["hidden_slice"])
-        covariance = joint["covariance"][hidden, hidden]
+        covariance = joint["hidden_covariance"]
         sign, logdet = np.linalg.slogdet(covariance)
         if sign <= 0:
             raise FloatingPointError("Local hidden covariance must be positive definite")
@@ -273,7 +273,7 @@ class BeliefDiagnosticsView(QtWidgets.QWidget):
         table = self.joint_tables[index]
         if index:
             if index <= 4:
-                key = ("covariance", "canvas_weights", "recurrent_weights", "sensory_weights")[index-1]
+                key = ("hidden_covariance", "canvas_weights", "recurrent_weights", "sensory_weights")[index-1]
                 values = joint[key]
             elif index == 5:
                 values = np.concatenate((joint["sensory_error"], joint["hidden_error"]))[:, None]

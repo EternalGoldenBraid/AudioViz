@@ -70,13 +70,14 @@ class GazeControls(QtWidgets.QWidget):
         self.gaze_modes.buttonToggled.connect(lambda _button, checked: self._mode_changed() if checked else None)
         self._mode_changed()
 
-    def use_hard_clamps(self):
-        for control in (self.baseline, self.peak):
+    def use_hard_clamps(self, radius):
+        for control in (self.sigma, self.baseline, self.peak):
             control.hide()
             self.parameter_form.labelForField(control).hide()
-        self.sigma.setToolTip(
-            "Clamp the nearest RGB sample and sample centers within one sigma. "
-            "Full canvas clamps every compact RGB sample; assigned precision is not used."
+        self.full_canvas.hide()
+        self.full_canvas.setEnabled(False)
+        self.parameter_form.addRow(
+            "Foveal radius", QtWidgets.QLabel(f"{radius} pixels (fixed)")
         )
 
     @staticmethod

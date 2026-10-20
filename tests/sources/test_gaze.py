@@ -9,7 +9,7 @@ from audioviz.sources import (
     CameraFrameSourceConfig, CircularDotCapture, CircularDotConfig, CircularDotSource,
     RippleSourceOrchestrator, RippleSourceOrchestratorConfig, SyntheticSourceConfig,
 )
-from audioviz.sources.gaze import GazePolicy
+from audioviz.sources.gaze import ActiveVisionConfig, GazePolicy
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 
 
@@ -140,3 +140,62 @@ def test_withheld_frames_do_not_leak_stimulus_truth_into_next_policy_choice():
     finally:
         for _, _, capture in runs:
             capture.release()
+
+
+def test_shared_foveal_selection_routes_before_forecast_and_camera_capture(monkeypatch):
+    engine = RippleEngine(resolution=(12, 16), plane_size_m=(1, 1))
+    stimulus = CircularDotSource(CircularDotConfig(resolution=engine.resolution, duration=1))
+    capture = CircularDotCapture(stimulus)
+    source = RippleSourceOrchestrator(
+        config=RippleSourceOrchestratorConfig(
+            synthetic=SyntheticSourceConfig(enabled=False),
+            camera_frame=CameraFrameSourceConfig(enabled=True),
+            prediction_error=PredictionErrorTransformConfig(enabled=True),
+            visual_pathway=PredictiveCodingConfig(
+                dtype="float32", spatial_precision=GaussianSpatialPrecision(),
+            ),
+        ),
+        processor=None, engine=engine, resolution=engine.resolution,
+        n_sources=1, camera_capture=capture,
+        shared_sensory_graph=ActiveVisionConfig(shared_sensory_graph=True, foveal_radius=2),
+    )
+    source.gaze_policy = GazePolicy()
+    before = source.sensory_graph.belief_snapshot()
+
+    def select(scores, current):
+        assert stimulus.latest is None
+        assert source.sensory_graph.stage == "posterior"
+        after = source.sensory_graph.belief_snapshot()
+        for key in ("mean", "canvas_weights", "sensory_weights", "hidden_covariance"):
+            np.testing.assert_array_equal(after[key], before[key])
+        assert scores.shape == (9, 13) and np.isfinite(scores).all()
+        return (0., 0.)
+
+    monkeypatch.setattr(source.gaze_policy, "select", select)
+    try:
+        engine.propagate()
+        source.predict_visual(dt=.05)
+        assert source.graph_io.gaze == (0., 0.)
+        assert source.graph_io.valid.sum() == 6
+        assert stimulus.latest is None
+        source.correct_from_observations()
+        graph = source.sensory_graph
+        np.testing.assert_array_equal(
+            graph.clamped[graph.visual_slice].reshape(-1, 3),
+            np.repeat(source.graph_io.valid[:, None], 3, axis=1),
+        )
+        center = np.flatnonzero(np.all(source.graph_io.offsets == 0, axis=1))[0]
+        assert source.graph_io.positions[center].tolist() == [0, 0]
+        np.testing.assert_array_equal(
+            graph.canvas_gradient.reshape(-1, 3)[~source.graph_io.valid], 0,
+        )
+    finally:
+        capture.release()
+
+
+def test_shared_foveal_config_rejects_unbounded_full_observation():
+    with pytest.raises(ValueError, match="full-image"):
+        ActiveVisionConfig(shared_sensory_graph=True, mode="full")
+    for radius in (False, 0, 17, .5):
+        with pytest.raises(ValueError, match="foveal_radius"):
+            ActiveVisionConfig(shared_sensory_graph=True, foveal_radius=radius)

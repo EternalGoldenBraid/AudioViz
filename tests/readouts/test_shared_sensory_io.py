@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from audioviz.readouts.shared_sensory_io import SharedSensoryIO
+from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
 from audioviz.utils.array_backend import to_numpy
 
 
@@ -45,9 +46,13 @@ def test_circle_routing_retains_world_predictions_and_ignores_outside_evidence(r
 
 def test_foveal_parameters_do_not_scale_with_world_dimensions():
     small = SharedSensoryIO((20, 30, 3), radius=8)
-    large = SharedSensoryIO((100, 200, 3), radius=8)
+    large = SharedSensoryIO((1080, 1920, 3), radius=8)
     assert small.visual_shape == large.visual_shape == (197, 1)
     np.testing.assert_array_equal(small.offsets, large.offsets)
+    models = [SharedPredictiveCodingGraph(visual_shape=io.visual_shape) for io in (small, large)]
+    assert models[0].canvas_weights.shape == models[1].canvas_weights.shape == (8, 591)
+    assert models[0].sensory_weights.shape == models[1].sensory_weights.shape == (607, 8)
+    assert large._prediction.nbytes == 1080*1920*3*4
     for radius in (True, 0, 17, 1.5):
         with pytest.raises(ValueError, match="radius"):
             SharedSensoryIO((10, 10, 3), radius=radius)

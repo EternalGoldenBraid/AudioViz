@@ -314,7 +314,7 @@ class RippleWaveVisualizer(VisualizerBase):
         if active_vision is not None:
             self.gaze_controls = GazeControls(active_vision.precision, mode=active_vision.mode, compact=True, parent=self)
             if active_vision.shared_sensory_graph:
-                self.gaze_controls.use_hard_clamps()
+                self.gaze_controls.use_hard_clamps(active_vision.foveal_radius)
             self.gaze_controls.hide()
             self.gaze_status = QtWidgets.QLabel()
             self.gaze_status.setWordWrap(True)
@@ -327,10 +327,12 @@ class RippleWaveVisualizer(VisualizerBase):
             if active_vision.shared_sensory_graph:
                 graph = self.source_orchestrator.sensory_graph
                 self.gaze_description = (
-                    f"Generative predictive coding: {graph.visual_nodes} canvas root ports -> "
+                    f"Generative predictive coding: radius {active_vision.foveal_radius}-pixel circular fovea, "
+                    f"{graph.visual_nodes} routed canvas values -> "
                     f"{graph.hidden_nodes} dense recurrent hidden -> {graph.visual_nodes} RGB / {graph.audio_nodes} audio terminals. "
-                    "Observe clamps the nearest RGB sample and sample centers inside the one-sigma fovea; "
-                    "full canvas clamps all RGB samples. Missing or disabled inputs stay free, not zero. "
+                    "Observe clamps camera pixels strictly inside the disk, uniformly; outside it no camera evidence enters. "
+                    "Foveal weights follow gaze; full-image predictions persist outside the current patch. "
+                    "Missing or disabled inputs stay free, not zero. "
                     "The same residual energy drives inference, weight learning and canvas error feedback. "
                     "Information gain is local Gauss-Newton about shared hidden nodes with assigned unit residual noise, not calibrated confidence."
                 )
@@ -391,20 +393,22 @@ class RippleWaveVisualizer(VisualizerBase):
             available = self.camera_source.enabled and self.camera_source.status == "receiving"
             sample_points = ()
             io = self.source_orchestrator.graph_io
-            if io is not None and precision is not None and available:
-                rows, cols = np.where(io.visual_mask(precision))
-                sample_points = tuple(
-                    (float(io.sample_cols[col]/max(1, self.resolution[1]-1)),
-                     float(io.sample_rows[row]/max(1, self.resolution[0]-1)))
-                    for row, col in zip(rows, cols)
+            if io is not None and precision is not None:
+                _, pixel = io.nearest_pixel(precision.gaze)
+                precision = replace(
+                    precision,
+                    gaze=(pixel[1]/max(1, self.resolution[1]-1), pixel[0]/max(1, self.resolution[0]-1)),
+                    sigma=io.radius/min(self.resolution), baseline=0, peak=1,
                 )
             self.attention_overlay.set_attention(
                 precision, self.attention_scores, available=available, sample_points=sample_points,
+                hard_fovea=io is not None,
             )
             if self.prediction_scene is not None:
                 self.prediction_scene.image_view.set_attention(
                     self.attention_overlay.precision, self.attention_scores,
                     available=available, sample_points=sample_points,
+                    hard_fovea=io is not None,
                 )
 
     def _update_gaze_status(self):
@@ -521,6 +525,7 @@ class RippleWaveVisualizer(VisualizerBase):
         self._attention_preview_time = None
         self.attention_scores = None
         self._belief_frame = None
+        self.visual_prediction = None
         self._update_attention_overlay()
         if self.belief_diagnostics is not None:
             self.belief_diagnostics.clear()
@@ -590,7 +595,11 @@ class RippleWaveVisualizer(VisualizerBase):
         precision = orchestrator.visual_readout.config.spatial_precision
         if precision is None:
             precision = GaussianSpatialPrecision(baseline=1, peak=0)
-        self.attention_scores = orchestrator.visual_information_gain(replace(precision, sample=True))
+        self.attention_scores = (
+            orchestrator.gaze_scores
+            if orchestrator.gaze_scores is not None else
+            orchestrator.visual_information_gain(replace(precision, sample=True))
+        )
         self._attention_preview_time = now
         self._update_attention_overlay()
         if beliefs_visible:
@@ -622,10 +631,10 @@ class RippleWaveVisualizer(VisualizerBase):
         graph = orchestrator.sensory_graph
         joint = graph.belief_snapshot()
         hidden = slice(*joint["hidden_slice"])
-        mean, covariance = joint["mean"], joint["covariance"]
+        mean, covariance = joint["mean"], joint["hidden_covariance"]
         common = dict(
             mean=mean[hidden], variance=joint["variance"][hidden],
-            covariance=covariance[hidden, hidden],
+            covariance=covariance,
         )
         (row, col), pixel = orchestrator.graph_io.nearest_pixel(precision.gaze)
         start = (row*graph.visual_shape[1]+col)*3
@@ -633,9 +642,9 @@ class RippleWaveVisualizer(VisualizerBase):
         return BeliefDiagnosticsFrame(
             scores=self.attention_scores, gaze=precision.gaze,
             dt=orchestrator._uncertainty_dt, sampling=precision.sample,
-            visual=dict(common, sensory_mean=mean[visual_nodes], sensory_covariance=covariance[visual_nodes, visual_nodes]),
-            audio=dict(common, sensory_mean=mean[graph.audio_slice], sensory_covariance=covariance[graph.audio_slice, graph.audio_slice]),
-            visual_location=f"RGB sample {pixel} ({joint['stage']})",
+            visual=dict(common, sensory_mean=mean[visual_nodes], sensory_covariance=graph.sensory_covariance(visual_nodes)),
+            audio=dict(common, sensory_mean=mean[graph.audio_slice], sensory_covariance=graph.sensory_covariance(graph.audio_slice)),
+            visual_location=f"Foveal center pixel {pixel} ({joint['stage']})",
             audio_gain=graph.information_gain(np.arange(graph.audio_slice.start, graph.audio_slice.stop)),
             joint=joint,
         )

@@ -82,16 +82,16 @@ class RippleSourceOrchestrator:
         self.sensory_graph = None
         self.graph_io = None
         if shared_sensory_graph is not None:
-            visual_shape = tuple(min(4, side) for side in resolution)
+            self.graph_io = SharedSensoryIO(
+                self.canvas_shape, radius=shared_sensory_graph.foveal_radius,
+                backend=engine.backend,
+                device=self.shader_model.device if self.shader_model is not None else None,
+            )
             self.sensory_graph = SharedPredictiveCodingGraph(
-                visual_shape=visual_shape, backend=engine.backend,
+                visual_shape=self.graph_io.visual_shape, backend=engine.backend,
                 hidden_nodes=config.visual_pathway.hidden_channels,
                 config=replace(config.visual_pathway, dtype="float64", spatial_precision=None),
                 memory_time_constant=shared_sensory_graph.memory_time_constant,
-            )
-            self.graph_io = SharedSensoryIO(
-                self.canvas_shape, visual_shape, backend=engine.backend,
-                device=self.shader_model.device if self.shader_model is not None else None,
             )
         self.visual_readout = (
             SharedSensoryBranch(self.sensory_graph, replace(config.visual_pathway, dtype="float64"), self.canvas_shape, engine.backend)
@@ -206,10 +206,15 @@ class RippleSourceOrchestrator:
                 raise ValueError("visual uncertainty requires a finite, positive timestep")
             self._uncertainty_dt = float(dt)
         if self.sensory_graph is not None:
-            canvas = self.graph_io.sample(self.engine.get_prior())
-            visual, self.audio_prediction = self.sensory_graph.forecast(canvas, self._uncertainty_dt)
             if self.gaze_policy is not None:
                 self._select_visual_gaze(self.gaze_policy)
+            precision = self.visual_readout.config.spatial_precision
+            self.graph_io.set_gaze(precision.gaze if precision is not None else (.5, .5))
+            canvas = self.graph_io.sample(self.engine.get_prior())
+            visual, self.audio_prediction = self.sensory_graph.forecast(
+                canvas, self._uncertainty_dt,
+                aperture_mask=self.graph_io.valid.reshape(self.graph_io.visual_shape),
+            )
             return self.graph_io.render(visual)
         if self.gaze_policy is not None:
             self._select_visual_gaze(self.gaze_policy)
@@ -248,16 +253,14 @@ class RippleSourceOrchestrator:
             return self.visual_uncertainty.expected_information_gain(
                 precision, prior=self.engine.get_prior(), dt=self._uncertainty_dt,
             )
-        scores = np.empty((9, 13), dtype=np.float64)
-        cache = {}
-        for row, y in enumerate(np.linspace(0, 1, scores.shape[0])):
-            for col, x in enumerate(np.linspace(0, 1, scores.shape[1])):
-                mask = self.graph_io.visual_mask(replace(precision, gaze=(float(x), float(y))))
-                indices = tuple(np.flatnonzero(np.repeat(mask.ravel(), 3)))
-                if indices not in cache:
-                    cache[indices] = self.sensory_graph.information_gain(indices)
-                scores[row, col] = cache[indices]
-        return scores
+        score_shape = (9, 13)
+        gazes = [(float(x), float(y)) for y in np.linspace(0, 1, score_shape[0])
+                 for x in np.linspace(0, 1, score_shape[1])]
+        patches, masks = self.graph_io.sample_candidates(self.engine.get_prior(), gazes)
+        return self.sensory_graph.candidate_information_gains(
+            patches.reshape(*score_shape, *self.graph_io.visual_shape, 3), self._uncertainty_dt,
+            aperture_masks=masks.reshape(*score_shape, *self.graph_io.visual_shape),
+        )
 
     def enable_visual_uncertainty(
         self, *, dt, initial_variance=1.0, process_variance=0.01, memory_time_constant=1/3,
@@ -320,20 +323,22 @@ class RippleSourceOrchestrator:
 
     def correct_from_observations(self) -> np.ndarray:
         if self.sensory_graph is not None:
+            precision = self.visual_readout.config.spatial_precision
+            observing = precision is None or precision.sample
             self.visual_observation = (
                 self.camera_source.excitation()
-                if self.prediction_error_transform.applies_to("camera_frame") else None
+                if observing and self.prediction_error_transform.applies_to("camera_frame") else None
             )
             visual = (
                 self.graph_io.sample(self.visual_observation)
                 if self.visual_observation is not None else None
             )
-            precision = self.visual_readout.config.spatial_precision
-            if precision is None:
-                precision = GaussianSpatialPrecision(baseline=1, peak=0)
+            mask = self.graph_io.valid.reshape(self.graph_io.visual_shape)
+            if not observing:
+                mask = np.zeros_like(mask)
             canvas_direction = self.sensory_graph.condition(
                 visual, self.audio_source.observation(),
-                visual_mask=self.graph_io.visual_mask(precision),
+                visual_mask=mask,
             )
             correction = self.graph_io.scatter(
                 canvas_direction*self.visual_readout.config.canvas_rate,
@@ -455,6 +460,7 @@ class RippleSourceOrchestrator:
     def reset_readouts(self) -> None:
         if self.sensory_graph is not None:
             self.sensory_graph.reset()
+            self.graph_io.reset()
             self.audio_prediction = self.visual_observation = self.gaze_scores = None
             return
         self.visual_readout.set_spatial_preview_enabled(False)

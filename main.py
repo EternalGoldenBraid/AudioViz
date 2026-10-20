@@ -89,6 +89,7 @@ RIPPLE_CONFIG = {
         "memory_time_constant": 1/3,
         "audio_precision": None,
         "shared_sensory_graph": False,
+        "foveal_radius": 8,
     },
     "field": {
         "n_sources": 5,
@@ -216,6 +217,7 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             memory_time_constant=gaze["memory_time_constant"],
             audio_precision=audio_precision,
             shared_sensory_graph=gaze.get("shared_sensory_graph", False),
+            foveal_radius=gaze.get("foveal_radius", 8),
         )
 
     return {
@@ -402,13 +404,15 @@ def main(argv=None):
     )
     parser.add_argument(
         "--shared-sensory-graph", action="store_true",
-        help="Use shared predictive coding: canvas root, dense hidden network, sensory clamps; requires --active-vision.",
+        help="Use shared foveal predictive coding: fixed circular sampling, shared weights, persistent image predictions; requires mouse or autonomous --active-vision.",
     )
     args = parser.parse_args(argv)
     if args.active_audio and args.active_vision is None:
         parser.error("--active-audio requires --active-vision")
     if args.shared_sensory_graph and args.active_vision is None:
         parser.error("--shared-sensory-graph requires --active-vision")
+    if args.shared_sensory_graph and args.active_vision == "full":
+        parser.error("--shared-sensory-graph uses a bounded circular fovea; choose mouse or autonomous")
     app_config, source_config = deepcopy(APP_CONFIG), deepcopy(RIPPLE_CONFIG)
     if args.active_vision is not None:
         source_config["active_vision"].update(enabled=True, mode=args.active_vision)
@@ -431,7 +435,11 @@ def main(argv=None):
             app_config["windows"][name]["enabled"] = False
         app_config["windows"]["ripples"]["enabled"] = True
         if source_config["active_vision"].get("shared_sensory_graph", False):
-            logger.info("Shared predictive coding: canvas root -> dense shared hidden -> camera/audio predictions; errors update the root.")
+            logger.info(
+                "Shared foveal PC: radius {} pixels, uniform circular evidence; "
+                "canvas -> shared hidden -> sensory predictions; outside-fovea predictions persist.",
+                source_config["active_vision"].get("foveal_radius", 8),
+            )
     windows = app_config["windows"]
     ripple_config = build_ripple_visualizer_config(source_config) if windows["ripples"]["enabled"] else None
     camera_only = (

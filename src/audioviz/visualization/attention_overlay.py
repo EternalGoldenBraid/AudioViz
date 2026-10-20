@@ -39,6 +39,7 @@ class AttentionOverlay(QtWidgets.QWidget):
         self.precision: GaussianSpatialPrecision | None = None
         self.target: tuple[float, float] | None = None
         self.sample_points: tuple[tuple[float, float], ...] = ()
+        self.hard_fovea = False
         self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
         self.setAttribute(QtCore.Qt.WA_NoSystemBackground)
         self.setGeometry(parent.rect())
@@ -56,9 +57,11 @@ class AttentionOverlay(QtWidgets.QWidget):
     def set_attention(
         self, precision: GaussianSpatialPrecision | None, scores: np.ndarray | None = None,
         *, available: bool = False, sample_points: tuple[tuple[float, float], ...] = (),
+        hard_fovea: bool = False,
     ) -> None:
         self.precision = precision
         self.sample_points = sample_points
+        self.hard_fovea = hard_fovea
         self.target = (
             preferred_gain_position(scores, precision.gaze)
             if precision is not None and precision.peak > 0 and available and scores is not None else None
@@ -92,7 +95,9 @@ class AttentionOverlay(QtWidgets.QWidget):
         if self.precision.peak > 0:
             radius = self.precision.sigma*min(rows, cols)
             for pen_color, width in ((QtCore.Qt.black, 4), (color, 2)):
-                painter.setPen(QtGui.QPen(pen_color, width, QtCore.Qt.DashLine))
+                painter.setPen(QtGui.QPen(
+                    pen_color, width, QtCore.Qt.SolidLine if self.hard_fovea else QtCore.Qt.DashLine,
+                ))
                 painter.drawEllipse(center, radius*rect.width()/cols, radius*rect.height()/rows)
                 painter.drawLine(center+QtCore.QPointF(-9, 0), center+QtCore.QPointF(9, 0))
                 painter.drawLine(center+QtCore.QPointF(0, -9), center+QtCore.QPointF(0, 9))
@@ -108,7 +113,7 @@ class AttentionOverlay(QtWidgets.QWidget):
                         painter.drawLine(end, end-unit*12+side*6)
                         painter.drawLine(end, end-unit*12-side*6)
         caption = (
-            "Model gaze / 1-sigma fovea"
+            ("Model gaze / hard circular fovea" if self.hard_fovea else "Model gaze / 1-sigma fovea")
             if self.precision.peak > 0 else "Full-canvas attention"
         )
         if self.sample_points:

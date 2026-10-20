@@ -125,14 +125,15 @@ class RippleSourceControlBinding:
                 SourceControl(
                     key="graph_size", label="Shared Graph", kind="text",
                     default=(
-                        f"{graph.visual_nodes} canvas root ports -> {graph.hidden_nodes} dense recurrent hidden "
-                        f"-> {graph.visual_nodes} RGB + {graph.audio_nodes} audio terminals."
+                        f"{visualizer.source_orchestrator.graph_io.radius}-pixel radius, "
+                        f"{graph.visual_nodes//3} circular slots -> {graph.hidden_nodes} dense hidden "
+                        f"-> routed RGB + {graph.audio_nodes} audio terminals; full-image prediction memory."
                     ),
                 ),
                 SourceControl(
                     key="graph_backend", label="Graph Backend", kind="text",
                     default=(
-                        "CPU float64 PC / curvature; GPU pixels; at most 48 values per gather."
+                        "CPU float64 PC / hidden curvature; GPU pixels; only foveal gathers."
                         if visualizer.use_shader else
                         "CuPy float64 GPU PC; float32 pixels." if visualizer.use_gpu else
                         "NumPy float64 PC; float32 pixels."

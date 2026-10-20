@@ -61,24 +61,34 @@ class SharedSensoryIO:
         self.positions, self.valid = self.route(self.gaze)
         self._previous_positions = self.positions.copy()
         self._previous_valid = np.zeros(len(self.offsets), dtype=bool)
+        self._candidate_indices = None
+        self._candidate_samples = None
         if device is None:
             self._prediction = backend.full(shape, .5, dtype=backend.float32)
             self._correction = backend.zeros(shape, dtype=backend.float32)
         else:
-            self._indices = GLArray(device, (len(self.offsets), 3))
+            self._indices = GLArray(
+                device, (len(self.offsets), 3), np.column_stack((self.positions, self.valid)),
+            )
             self._samples = GLArray(device, (*self.visual_shape, 3))
             self._render_values = GLArray(device, (*self.visual_shape, 3))
             self._prediction = GLArray(device, shape, np.full(shape, .5, dtype=np.float32))
             self._correction = GLArray(device, shape)
-        self.set_gaze(self.gaze)
 
     def route(self, gaze):
-        if len(gaze) != 2 or any(not np.isfinite(v) or not 0 <= v <= 1 for v in gaze):
-            raise ValueError("gaze must contain two normalized coordinates")
-        center = np.rint(np.asarray(gaze)[::-1]*(np.asarray(self.shape[:2])-1)).astype(np.intp)
-        positions = self.offsets+center
-        valid = np.all((positions >= 0) & (positions < self.shape[:2]), axis=1)
-        return positions, valid
+        positions, valid = self._routes([gaze])
+        return positions[0], valid[0]
+
+    def _routes(self, gazes):
+        values = np.asarray(gazes, dtype=np.float64)
+        if (
+            values.ndim != 2 or values.shape[1] != 2 or not len(values)
+            or not np.isfinite(values).all() or np.any((values < 0) | (values > 1))
+        ):
+            raise ValueError("gazes must contain pairs of normalized coordinates")
+        centers = np.rint(values[:, ::-1]*(np.asarray(self.shape[:2])-1)).astype(np.intp)
+        positions = self.offsets[None, :, :]+centers[:, None, :]
+        return positions, np.all((positions >= 0) & (positions < self.shape[:2]), axis=-1)
 
     def set_gaze(self, gaze):
         self.gaze = tuple(gaze)
@@ -118,19 +128,20 @@ class SharedSensoryIO:
         ).reshape(*self.visual_shape, 3)
 
     def sample_candidates(self, image, gazes):
-        routes = [self.route(gaze) for gaze in gazes]
-        positions = np.stack([route[0] for route in routes])
-        valid = np.stack([route[1] for route in routes])
+        positions, valid = self._routes(gazes)
         if self.device is None:
             return self._gather(image, positions, valid), valid
-        indices = GLArray(self.device, (*valid.shape, 3), np.concatenate(
-            (positions, valid[..., None]), axis=-1,
-        ))
-        samples = GLArray(self.device, (*valid.shape, 3))
-        try:
-            return self._gather(image, positions, valid, indices, samples), valid
-        finally:
-            self.device.release(indices, samples)
+        values = np.concatenate((positions, valid[..., None]), axis=-1)
+        if self._candidate_indices is None or self._candidate_indices.shape != values.shape:
+            if self._candidate_indices is not None:
+                self.device.release(self._candidate_indices, self._candidate_samples)
+            self._candidate_indices = GLArray(self.device, values.shape, values)
+            self._candidate_samples = GLArray(self.device, values.shape)
+        else:
+            self._candidate_indices.upload(values)
+        return self._gather(
+            image, positions, valid, self._candidate_indices, self._candidate_samples,
+        ), valid
 
     def nearest_pixel(self, gaze):
         index = int(np.flatnonzero(np.all(self.offsets == 0, axis=1))[0])
