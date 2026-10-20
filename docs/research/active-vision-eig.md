@@ -1,7 +1,19 @@
 # Active vision through expected information gain
 
-Status: research proposal — not an implementation specification.
-Planning branch: `research/active-vision-eig`
+Status: living research/design document; the shared branch also contains implementation and experiments.
+Shared branch: `research/active-vision-eig`
+
+The former `feature/active-vision-precision` implementation history has been
+merged into this branch. Draft PR #1 now covers research, implementation, and
+experiments together, not documentation alone. Use this branch for ongoing
+agent work and coordinate through PR comments.
+
+The proposal below retains the earlier circular-dot/Gaussian-precision design.
+For the current hard-circular-fovea predictive-coding application and static
+scene bench, see the [README](../../README.md) and
+[experiment report](../static-world-experiment-report.md). Further stochastic
+world/observer and sampling-policy implementation is paused; those questions
+remain open.
 
 ## Literature and conceptual grounding for coding agents
 

@@ -47,6 +47,11 @@ Adjust runtime settings in `main.py`, including resolution, plane size, and opti
 
 ### Feature application and baseline
 
+The shared research and implementation branch is **`research/active-vision-eig`**,
+tracked by draft [PR #1](https://github.com/EternalGoldenBraid/AudioViz/pull/1).
+It includes the former `feature/active-vision-precision` history. Both agents
+should work on this shared branch; the PR is no longer documentation-only.
+
 On this feature branch, ordinary `python main.py` runs the **foveal predictive-coding
 application**. Model-selection flags (`--active-vision`, `--active-audio`,
 `--shared-sensory-graph`) have been removed. The established per-pixel model belongs

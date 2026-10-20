@@ -3,6 +3,11 @@
 Date: 2026-10-20. Branch: `feature/active-vision-precision`.
 Runtime snapshot: `c494c32`.
 
+Research and implementation histories have since been combined on the shared
+branch **`research/active-vision-eig`** in draft PR #1. The branch and commit
+labels in this report identify the original experimental snapshot. Branch
+consolidation does not change the implementation pause below.
+
 ## Decision at this pause
 
 Pause implementation of stochastic gaze/world dynamics. The user does **not**
