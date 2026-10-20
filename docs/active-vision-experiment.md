@@ -15,7 +15,14 @@ terms/distributions, visual forecast/conditioning, the sensory information
 objective, the common-mode temporal Gaussian audio filter over a shared latent
 wave medium, and the opt-in shared learned Gaussian sensory/latent graph with
 exact hard evidence clamps. The diagram describes the implementation at code
-snapshot `c36a20a`, including its approximation boundaries.
+snapshot `c36a20a`, including its approximation boundaries. **Page 5 is historical:**
+the shared runner now uses the generative predictive-coding model described
+[below](#shared-generative-predictive-coding-shared-sensory-graph), not that joint
+Gaussian experiment. The source-map line anchors below also refer to that
+snapshot; current shared PC code is in
+[`shared_predictive_coding.py`](../src/audioviz/readouts/shared_predictive_coding.py),
+with compact root sampling and its adjoint in
+[`shared_sensory_io.py`](../src/audioviz/readouts/shared_sensory_io.py).
 
 Each blue code label is a clickable `vscode://file/...:line:column` link into
 this checkout at `/home/nicklas/Projects/AudioViz`. These local links work
@@ -137,11 +144,11 @@ Passing `--active-vision {mouse,autonomous,full}` (or enabling
 `RIPPLE_CONFIG["active_vision"]` in `main.py`, disabled by default with knobs
 `mode`, `gaze`, `sigma`, `baseline`, `peak`, `initial_variance`,
 `process_variance`, `memory_time_constant`, optional `audio_precision`, and
-optional `shared_sensory_graph`) launches a live temporal-Gaussian session in
+optional `shared_sensory_graph`) launches a live active-vision session in
 `RippleWaveVisualizer` using the shared `GazeControls` widget and either the
 fixed-weight two-branch filter (`GaussianSensoryUncertainty` + optional
-`GaussianAudioUncertainty`) or the opt-in compact learned joint graph
-(`SharedSensoryGraph` + `SharedSensoryIO`):
+`GaussianAudioUncertainty`) or the opt-in compact generative PC network
+(`SharedPredictiveCodingGraph` + `SharedSensoryIO`):
 
 - **Default camera-only profile (`--active-vision` without `--active-audio`, `audio_precision=None`):**
   skips audio hardware/device initialization (`_create_audio_processor` is not
@@ -161,16 +168,18 @@ fixed-weight two-branch filter (`GaussianSensoryUncertainty` + optional
   **Audio** source toggle remain independent gates.
 - **Opt-in shared learned sensory/latent graph (`--active-vision ... --shared-sensory-graph`, with `--active-audio` optional):**
   replaces the separate per-pixel visual and common-mode audio hidden fields
-  with a single compact learned Gaussian graph (`SharedSensoryGraph` +
-  `SharedSensoryBranch` + `SharedSensoryIO`, detailed below and on **Page 5** of
-  [`predictive-uncertainty-math.drawio`](predictive-uncertainty-math.drawio)).
+  with one compact generative network (`SharedPredictiveCodingGraph` +
+  `SharedSensoryBranch` + `SharedSensoryIO`, detailed below). The canvas is its
+  root, not an auxiliary display downstream of a Gaussian filter.
   `GazeControls.use_hard_clamps()` hides the peripheral/foveal precision
   spinboxes (`baseline`, `peak`) because observed sensory ports are hard-clamped
   rather than weighted by assigned observation precision (`ActiveVisionConfig`
   rejects custom `audio_precision not in (None, 1.0)` when
   `shared_sensory_graph=True`), while `sigma` controls the `1-sigma` foveal
-  sample radius and **Pathway Learning** / `learning_rate` in **Controls** drive
-  the graph's online moment/EM updates (`SharedSensoryGraph.set_learning`).
+  sample radius. **Shared Predictive Coding** in **Controls** exposes the
+  active settling-step count/rate, generative weight learning, and canvas
+  gradient-feedback rate. It honors the prediction-error learning configuration;
+  learning is not silently enabled by this flag.
 - **Interactive gaze, foveal profile, and overlays:** `GazeControls` is hosted
   inside the **Controls** panel (preserving widget state when closing/reopening)
   and exposes live `pg.SpinBox` controls for foveal width (`sigma`), peripheral
@@ -187,12 +196,13 @@ fixed-weight two-branch filter (`GaussianSensoryUncertainty` + optional
   command.
 - **Camera failure latching:** if camera open or frame read fails,
   `CameraFrameSource` logs once, releases the failed handle, and latches into a
-  no-evidence state without retrying hardware opens on every frame. The filter
+  no-evidence state without retrying hardware opens on every frame. The default filter
   continues its OU forecast (`delta_m = 0`, `delta_canvas = 0`), and the UI
-  prompts to toggle **Camera Frame** off and on to retry.
+  prompts to toggle **Camera Frame** off and on to retry. Shared PC instead
+  continues intrinsic energy settling without a visual evidence term.
 - **Toolbar and live numerical diagnostics (`BeliefDiagnosticsView`):** the
   canvas toolbar provides **Controls**, **Predictions**, and **Diagnostics**
-  plus a compact mode/status footer. While **Diagnostics** is visible, it polls
+  plus a compact mode/status footer. In the default filter profile, **Diagnostics** polls
   bounded `10 Hz` host snapshots (`VisualBeliefSnapshot` and
   `AudioBeliefSnapshot` via `belief_snapshot()`) and prospective `10 Hz` visual
   / scalar audio EIG scores (evaluated on the current stored posterior with held
@@ -202,7 +212,7 @@ fixed-weight two-branch filter (`GaussianSensoryUncertainty` + optional
   Gaussian marginal mean/std/variance, stored diagonal hidden covariance, and
   linearized sensory signal covariance `V = J P J^T` (**excluding** observation
   noise `R`), along with exact-pixel and `forecast`/`posterior` stage metadata.
-- **Clock and scope boundaries:** advances the live hidden-state filter timestep
+- **Clock and scope boundaries (default filter):** advances the live hidden-state filter timestep
   `dt` by the nominal timer interval (`timer.interval() / 1000` s) on the first
   frame and immediately after reset, and by monotonic frame-to-frame elapsed
   time (`time.monotonic()`) at each subsequent prediction step
@@ -522,11 +532,104 @@ filter (visualized on **Page 4** of
    precision metadata), gathering only the single nearest-gaze pixel `(2 * H,)`
    on OpenGL.
 
-### Opt-in shared learned Gaussian sensory/latent graph (`--shared-sensory-graph`)
+### Shared generative predictive coding (`--shared-sensory-graph`)
 
-When `--shared-sensory-graph` (or `RIPPLE_CONFIG["active_vision"]["shared_sensory_graph"] = True`)
-is passed alongside `--active-vision` (with `--active-audio` optional), the
-orchestrator constructs a single compact fully connected learned Gaussian graph
+This section describes shared PC runtime snapshot `4b68883`.
+
+The shared runner uses a directed generative model with dense hidden recurrence.
+Its compact root `c` is sampled from the current wave canvas, its shared hidden
+state is `h`, and sensory terminals `s = (v, a)` are camera RGB and global audio:
+
+```text
+predicted_hidden = W_c tanh(c) + R tanh(h) + b_h
+predicted_sensory = sigmoid(W_s tanh(h) + b_s)
+e_h = h - predicted_hidden
+e_O = y_O - predicted_sensory[O]
+E = 0.5 * ||e_h||^2 + 0.5 * ||e_O||^2
+```
+
+This recurrent residual-energy model is not a normalized Bayesian DAG.
+Learning minimizes residual energy, not an exact normalized likelihood;
+normalization terms are not included. The generative direction specifies
+which states predict which others, while dense hidden recurrence adds cycles.
+
+`O` contains only currently observed sensory coordinates. Fresh silent audio
+clamps to zero; unavailable, disabled or stale audio supplies no constraint.
+Unobserved terminals freely take their decoded predictions, contribute no
+sensory residual, and are never used as pseudo-observed training targets.
+The existing nearest-plus-one-sigma visual selection and full-canvas compact
+sample selection are unchanged.
+
+**Connection boundary:** the canvas has no incoming generative weights. It
+keeps its wave dynamics and receives error-driven corrections. Shared hidden
+units predict one another through dense off-diagonal `R` and predict both
+sensory modalities through `W_s`; sensory terminals have no outgoing
+generative weights. Error feedback is the derivative of these same
+connections, not another sensory-to-hidden recognition network.
+
+Hidden inference holds the canvas and weights fixed and descends `E`.
+`inference_steps` and `inference_rate` control settling; weight learning occurs
+once afterward when evidence exists and learning is enabled. Generative
+weight updates use derivatives of the same energy, with the configured
+gradient clipping, weight clipping and decay. The diagonal of `R` is zero
+and its Frobenius norm is constrained to at most `0.5`, keeping the hidden
+residual Jacobian nonsingular; this is a stability restriction, not pruning.
+Reset clears transient states/clamps but preserves all weights and update
+counts. Elapsed time and `memory_time_constant` control the forecast warm start,
+not an independent OU covariance process.
+Snapshots retain the same pre-learning parameters, residuals and energy
+trajectory used for that frame's root gradient; updated weights become active
+for the next forecast.
+
+**Canvas feedback is an actual root gradient.** With `c = G C`, where `G`
+gathers root samples from the full wave canvas `C`, the correction is
+`-canvas_rate * G^T dE/dc`, evaluated before learning changes the weights.
+`SharedSensoryIO.scatter` is exactly the adjoint `G^T`. It places corrections
+at the sampled root ports and leaves other pixels to the wave dynamics.
+Bilinear visual prediction rendering is not this gradient and is not used as
+error feedback. Camera and audio errors both affect the root through the
+shared hidden residual; there is no direct sensory-residual-to-canvas bypass.
+
+**Uncertainty belongs to this model.** Let
+`A = I - R diag(1 - tanh(h)^2)` and let `J` be the sensory decoder Jacobian.
+The local Gauss-Newton hidden precision for observed coordinates is
+`Q = A^T A + J_O^T J_O`, with `P_h = inverse(Q)`. Assigned hidden and sensory
+residual variances are one. Free sensory local covariance includes
+`J_U P_h J_U^T + I`, with cross-covariance `P_h J_U^T`; ideal clamped sensory
+rows/columns are zero. These are local Gaussian approximations around settled
+states with fixed root and weights, not exact nonlinear posterior moments,
+temporal covariance propagation, or calibrated certainty.
+
+Gaze scores use the **pre-evidence** linearization of this same generative
+energy: `0.5 * (logdet(A^T A + J_S^T J_S) - logdet(A^T A))` for candidate
+sensory coordinates `S`. This finite hidden-target score uses unit residual
+noise; it is not infinite self-information about the clamped variable.
+The policy chooses a gaze after the root-driven forecast and before capture.
+The **Joint Graph** diagnostics show states/clamps, local covariance,
+`W_c`, `R`, `W_s`, biases, prediction errors, root gradient and the inference
+energy trajectory. Both sensory tabs view the same hidden state.
+
+The bounded representation remains at most `4 x 4` RGB root/sample positions,
+16 audio terminals and `hidden_channels` shared hidden units (default 6 in the
+runner, hence 70 sensory/hidden states). It does not infer
+every 1080p camera pixel or guarantee emergent modality territories.
+NumPy/CuPy run the compact PC model on their array backend. OpenGL keeps
+pixel preprocessing, bounded gathers (at most 48 floats each for root and
+camera), preview interpolation and gradient scatter on the GPU; compact
+hidden inference, weight learning and curvature calculations run on the CPU.
+Legacy per-pixel hidden buffers are not allocated in this mode.
+The compact PC state/weights and curvature use float64 for numerical stability;
+the adapter explicitly promotes the inference configuration for this mode only,
+while pixel buffers and prediction rendering remain float32.
+The `initial_variance` and `process_variance` active-vision options belong to
+the separate temporal Gaussian baseline, not this local-curvature model.
+
+### Historical joint Gaussian experiment (`SharedSensoryGraph`)
+
+At snapshot `c36a20a`, `--shared-sensory-graph` selected the following joint
+Gaussian model. It remains available as a Python API and tested experiment,
+but is **not the current runner's generative model**. The historical
+orchestrator constructed a single compact fully connected learned Gaussian graph
 (`SharedSensoryGraph`, `SharedSensoryBranch`, and `SharedSensoryIO`, visualized
 on **Page 5** of [`predictive-uncertainty-math.drawio`](predictive-uncertainty-math.drawio))
 instead of the fixed-weight two-branch filter (`GaussianSensoryUncertainty` /
