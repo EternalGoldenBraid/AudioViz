@@ -21,7 +21,8 @@ the shared runner now uses the generative predictive-coding model described
 Gaussian experiment. The source-map line anchors below also refer to that
 snapshot; current shared PC code is in
 [`shared_predictive_coding.py`](../src/audioviz/readouts/shared_predictive_coding.py),
-with compact root sampling and its adjoint in
+with circular foveal root routing, persistent full-image prediction buffer updates,
+and adjoint gradient scatter in
 [`shared_sensory_io.py`](../src/audioviz/readouts/shared_sensory_io.py).
 
 Each blue code label is a clickable `vscode://file/...:line:column` link into
@@ -142,12 +143,12 @@ python main.py --active-vision mouse --active-audio --shared-sensory-graph
 
 Passing `--active-vision {mouse,autonomous,full}` (or enabling
 `RIPPLE_CONFIG["active_vision"]` in `main.py`, disabled by default with knobs
-`mode`, `gaze`, `sigma`, `baseline`, `peak`, `initial_variance`,
+`mode`, `gaze`, `foveal_radius`, `sigma`, `baseline`, `peak`, `initial_variance`,
 `process_variance`, `memory_time_constant`, optional `audio_precision`, and
 optional `shared_sensory_graph`) launches a live active-vision session in
 `RippleWaveVisualizer` using the shared `GazeControls` widget and either the
 fixed-weight two-branch filter (`GaussianSensoryUncertainty` + optional
-`GaussianAudioUncertainty`) or the opt-in compact generative PC network
+`GaussianAudioUncertainty`) or the opt-in foveal generative PC network
 (`SharedPredictiveCodingGraph` + `SharedSensoryIO`):
 
 - **Default camera-only profile (`--active-vision` without `--active-audio`, `audio_precision=None`):**
@@ -166,20 +167,24 @@ fixed-weight two-branch filter (`GaussianSensoryUncertainty` + optional
   alongside `GaussianAudioUncertainty` (default `audio_precision = 1.0` when
   `--active-audio` is passed). **Observe vision** in `GazeControls` and the
   **Audio** source toggle remain independent gates.
-- **Opt-in shared learned sensory/latent graph (`--active-vision ... --shared-sensory-graph`, with `--active-audio` optional):**
+- **Opt-in shared generative predictive-coding graph (`--active-vision {mouse,autonomous} --shared-sensory-graph`, with `--active-audio` optional):**
   replaces the separate per-pixel visual and common-mode audio hidden fields
-  with one compact generative network (`SharedPredictiveCodingGraph` +
-  `SharedSensoryBranch` + `SharedSensoryIO`, detailed below). The canvas is its
-  root, not an auxiliary display downstream of a Gaussian filter.
-  `GazeControls.use_hard_clamps()` hides the peripheral/foveal precision
-  spinboxes (`baseline`, `peak`) because observed sensory ports are hard-clamped
-  rather than weighted by assigned observation precision (`ActiveVisionConfig`
-  rejects custom `audio_precision not in (None, 1.0)` when
-  `shared_sensory_graph=True`), while `sigma` controls the `1-sigma` foveal
-  sample radius. **Shared Predictive Coding** in **Controls** exposes the
-  active settling-step count/rate, generative weight learning, and canvas
-  gradient-feedback rate. It honors the prediction-error learning configuration;
-  learning is not silently enabled by this flag.
+  with one foveal generative network (`SharedPredictiveCodingGraph` +
+  `SharedSensoryBranch` + `SharedSensoryIO`, detailed below) over a fixed integer
+  circular disk stencil configured by `active_vision.foveal_radius` (default `8`
+  pixels, integer `1..16`, yielding `K = 197` static RGB disk slots = `591`
+  visual nodes by default, passed to `SharedPredictiveCodingGraph` as
+  `visual_shape=(K, 1)`). The routed wave canvas patch is its root, not an
+  auxiliary display downstream of a Gaussian filter. `full` gaze mode is
+  explicitly rejected in `--shared-sensory-graph` (only `mouse` and `autonomous`
+  are valid; there is no full-image weight expansion), and `GazeControls` hides
+  the Gaussian `sigma`, `baseline`, `peak`, and `full`-mode controls because
+  evidence is gathered uniformly over the in-bounds circular disk (`ActiveVisionConfig`
+  also rejects custom `audio_precision not in (None, 1.0)` when
+  `shared_sensory_graph=True`). **Shared Predictive Coding** in **Controls**
+  exposes the active settling-step count/rate, generative weight learning, and
+  canvas gradient-feedback rate. It honors the prediction-error learning
+  configuration; learning is not silently enabled by this flag.
 - **Interactive gaze, foveal profile, and overlays:** `GazeControls` is hosted
   inside the **Controls** panel (preserving widget state when closing/reopening)
   and exposes live `pg.SpinBox` controls for foveal width (`sigma`), peripheral
@@ -534,14 +539,24 @@ filter (visualized on **Page 4** of
 
 ### Shared generative predictive coding (`--shared-sensory-graph`)
 
-This section describes shared PC runtime snapshot `4b68883`.
+This section describes shared PC runtime snapshot `46f2897`.
 
-The shared runner uses a directed generative model with dense hidden recurrence.
-Its compact root `c` is sampled from the current wave canvas, its shared hidden
-state is `h`, and sensory terminals `s = (v, a)` are camera RGB and global audio:
+The shared runner uses a directed generative model with dense hidden recurrence
+and a **routed circular foveal stencil**. Integer disk offsets
+`D_r = {(dy, dx) in Z^2 : dy^2 + dx^2 <= r^2}` are fixed at construction by
+`active_vision.foveal_radius` (default `r = 8` pixels, integer `1 <= r <= 16`,
+giving `K = 197` static RGB slots = `591` visual nodes by default, supplied to
+`SharedPredictiveCodingGraph` as `visual_shape=(K, 1)` with bounded capacity
+`MAX_VISUAL_SLOTS = 4096`). At gaze `g_t`, `SharedSensoryIO` routes the
+in-bounds world pixels `(y_k, x_k) = round(g_t) + (dy_k, dx_k)` into the fixed
+slot vector `c_g in R^{3K}` alongside a boolean boundary validity mask
+`m_ap in {0, 1}^{3K}` (`aperture_mask`), without renumbering slots when the disk
+clips an image border. Its shared hidden state is `h in R^H`, and sensory
+terminals `s = (v, a)` are the `3K` foveal RGB slots and `16` global audio bands:
 
 ```text
-predicted_hidden = W_c tanh(c) + R tanh(h) + b_h
+r = m_ap * tanh(c_g)
+predicted_hidden = W_c r + R tanh(h) + b_h
 predicted_sensory = sigmoid(W_s tanh(h) + b_s)
 e_h = h - predicted_hidden
 e_O = y_O - predicted_sensory[O]
@@ -553,76 +568,125 @@ Learning minimizes residual energy, not an exact normalized likelihood;
 normalization terms are not included. The generative direction specifies
 which states predict which others, while dense hidden recurrence adds cycles.
 
-`O` contains only currently observed sensory coordinates. Fresh silent audio
-clamps to zero; unavailable, disabled or stale audio supplies no constraint.
-Unobserved terminals freely take their decoded predictions, contribute no
-sensory residual, and are never used as pseudo-observed training targets.
-The existing nearest-plus-one-sigma visual selection and full-canvas compact
-sample selection are unchanged.
+`O` contains only currently observed sensory coordinates. When **Observe vision**
+is on, `O` clamps the in-bounds circular foveal RGB slots (`visual_mask = m_ap`);
+there is no Gaussian spatial falloff (`sigma`, `baseline`, and `peak` controls
+are hidden) and `full` gaze mode is explicitly rejected in `--shared-sensory-graph`
+(`mouse` and `autonomous` only, with no full-image weight expansion). Fresh
+silent audio clamps to zero; unavailable, disabled, or stale audio supplies no
+constraint. Unobserved terminals freely take their decoded predictions,
+contribute no sensory residual, and are never used as pseudo-observed training
+targets.
 
-**Connection boundary:** the canvas has no incoming generative weights. It
-keeps its wave dynamics and receives error-driven corrections. Shared hidden
-units predict one another through dense off-diagonal `R` and predict both
-sensory modalities through `W_s`; sensory terminals have no outgoing
-generative weights. Error feedback is the derivative of these same
-connections, not another sensory-to-hidden recognition network.
+**Persistent full-image prediction buffer vs. evolving wave canvas:**
+`SharedSensoryIO` maintains a persistent full-frame visual prediction buffer
+initialized to `0.5`. After each pre-evidence forecast (`forecast(c_g, dt,
+aperture_mask=m_ap)`), only the in-bounds circular gaze patch `F_valid(g_t)` is
+overwritten with the fresh foveal RGB forecast; pixels outside the current
+fovea retain their previously stored predictions rather than being freshly
+decoded or bilinearly interpolated from the fovea. The 2D wave canvas `C` is a
+separate dynamical field that evolves across the entire image under the wave
+equation and receives root-error feedback only on `F_valid(g_t)`. Renderer
+captions explicitly distinguish the fresh foveal forecast patch from retained
+outside-fovea predictions.
 
-Hidden inference holds the canvas and weights fixed and descends `E`.
+**Connection boundary and retinotopic weight reuse:** the canvas has no incoming
+generative weights. It keeps its wave dynamics and receives error-driven
+corrections. Shared hidden units predict one another through dense off-diagonal
+`R` and predict both sensory modalities through `W_s`; sensory terminals have no
+outgoing generative weights. Error feedback is the derivative of these same
+connections, not another sensory-to-hidden recognition network. Because `W_c`
+and `W_s` are indexed by fixed retinotopic slot offsets `(dy_k, dx_k)` and feed
+a single shared hidden state `h`, moving gaze changes which world coordinates
+are routed into those slots (`c_g = R_g C`). World-coordinate routing and the
+persistent full-image prediction buffer anchor spatial coordinates on the
+canvas and display, but shared `h` and reused offset weights do **not** prevent
+retinotopic transfer across gaze locations or guarantee location-specific memory
+recall.
+
+Hidden inference holds the routed canvas patch and weights fixed and descends
+`E`. During `forecast` (and candidate gaze scoring), no sensory evidence is
+clamped (`e_O = 0`), so relaxation operates purely on the `H`-dimensional hidden
+residual `e_h` at fixed root drive `W_c r + b_h` (`_relax_unclamped`).
 `inference_steps` and `inference_rate` control settling; weight learning occurs
 once afterward when evidence exists and learning is enabled. Generative
-weight updates use derivatives of the same energy, with the configured
-gradient clipping, weight clipping and decay. The diagonal of `R` is zero
+weight updates use exact derivatives of the same energy, with the configured
+gradient clipping, weight clipping, and decay. Inactive out-of-bounds root slots
+(`~m_ap`) have identically zero root activity `r_i = 0` and therefore zero
+evidence/residual gradient `dE/dW_c[:, i] = 0`, though global weight decay still
+scales existing non-zero weights when learning runs. The diagonal of `R` is zero
 and its Frobenius norm is constrained to at most `0.5`, keeping the hidden
 residual Jacobian nonsingular; this is a stability restriction, not pruning.
-Reset clears transient states/clamps but preserves all weights and update
-counts. Elapsed time and `memory_time_constant` control the forecast warm start,
-not an independent OU covariance process.
-Snapshots retain the same pre-learning parameters, residuals and energy
-trajectory used for that frame's root gradient; updated weights become active
-for the next forecast.
+Reset clears transient states/clamps (and resets the persistent full-image
+prediction buffer to `0.5`) while preserving all weights and update counts.
+Elapsed time and `memory_time_constant` control the forecast warm start, not an
+independent OU covariance process. Snapshots retain the same pre-learning
+parameters, residuals, and energy trajectory used for that frame's root
+gradient; updated weights become active for the next forecast.
 
-**Canvas feedback is an actual root gradient.** With `c = G C`, where `G`
-gathers root samples from the full wave canvas `C`, the correction is
-`-canvas_rate * G^T dE/dc`, evaluated before learning changes the weights.
-`SharedSensoryIO.scatter` is exactly the adjoint `G^T`. It places corrections
-at the sampled root ports and leaves other pixels to the wave dynamics.
-Bilinear visual prediction rendering is not this gradient and is not used as
-error feedback. Camera and audio errors both affect the root through the
-shared hidden residual; there is no direct sensory-residual-to-canvas bypass.
+**Canvas feedback is an exact masked root gradient.** With `c_g = R_g C` and
+`r = m_ap * tanh(c_g)`, the root derivative is
+`dE/dc_g = -m_ap * (W_c^T e_h) * (1 - tanh(c_g)^2)`, which is identically zero
+on out-of-bounds slots (`~m_ap`), and the canvas correction is
+`-canvas_rate * R_g^T dE/dc_g`, evaluated before learning changes the weights.
+`SharedSensoryIO.scatter` is the exact adjoint `R_g^T`, accumulating corrections
+only at the in-bounds circular foveal pixels and leaving outside pixels to the
+wave dynamics. Camera and audio errors both affect the root through the shared
+hidden residual; there is no direct sensory-residual-to-canvas bypass.
 
-**Uncertainty belongs to this model.** Let
-`A = I - R diag(1 - tanh(h)^2)` and let `J` be the sensory decoder Jacobian.
-The local Gauss-Newton hidden precision for observed coordinates is
-`Q = A^T A + J_O^T J_O`, with `P_h = inverse(Q)`. Assigned hidden and sensory
-residual variances are one. Free sensory local covariance includes
-`J_U P_h J_U^T + I`, with cross-covariance `P_h J_U^T`; ideal clamped sensory
-rows/columns are zero. These are local Gaussian approximations around settled
-states with fixed root and weights, not exact nonlinear posterior moments,
-temporal covariance propagation, or calibrated certainty.
+**Hidden-only Gauss-Newton covariance and per-sensory variances:** let
+`A = I_H - R diag(1 - tanh(h)^2)` and let `J` be the `(3K + 16) x H` sensory
+decoder Jacobian. Rather than allocating a dense all-sensory `N x N` covariance
+matrix, `SharedPredictiveCodingGraph` maintains only the `H x H` local
+Gauss-Newton hidden precision `Q = A^T A + J_O^T J_O` and hidden covariance
+`P_h = inverse(Q)` (`covariance` / `hidden_covariance`, shape `(H, H)`), along
+with exact per-node marginal variances (`variance`, shape `(3K + 16 + H,)`)
+where free sensory nodes have marginal variance
+`Var(s_i) = j_i^T P_h j_i + 1` and clamped sensory nodes (`i in O`) have
+`Var(s_i) = 0`. Small sensory covariance submatrices (`<= 64` nodes, such as the
+`3 x 3` center-slot RGB covariance or `16 x 16` audio covariance) are computed
+on demand via `sensory_covariance(indices, stage="current" | "prior")` as
+`J_sub P_h J_sub^T + I` (with zero rows/columns on clamped coordinates). These
+are local Gaussian approximations around settled states with fixed root and
+weights, not exact nonlinear posterior moments, temporal covariance propagation,
+or calibrated certainty.
 
-Gaze scores use the **pre-evidence** linearization of this same generative
-energy: `0.5 * (logdet(A^T A + J_S^T J_S) - logdet(A^T A))` for candidate
-sensory coordinates `S`. This finite hidden-target score uses unit residual
-noise; it is not infinite self-information about the clamped variable.
-The policy chooses a gaze after the root-driven forecast and before capture.
-The **Joint Graph** diagnostics show states/clamps, local covariance,
-`W_c`, `R`, `W_s`, biases, prediction errors, root gradient and the inference
-energy trajectory. Both sensory tabs view the same hidden state.
+**Prospective gaze scoring via exact non-mutating candidate forecasts:**
+because changing gaze changes the routed canvas patch `c_{g'} = R_{g'} C` and
+its boundary mask `m_ap(g')`, candidate gaze evaluation in
+`candidate_information_gain(canvas, dt, aperture_mask=...)` and its vectorized
+batch counterpart `candidate_information_gains(canvases, dt, aperture_masks=...)`
+runs the **exact same held-parameter leaky-integrator warm start and
+hidden-only relaxation** from `_forecast_base_hidden` for each candidate patch
+without camera evidence and without mutating graph state. At each candidate's
+settled forecast state `h_{g'}^-`, with `A_{g'} = I_H - R diag(1 - tanh(h_{g'}^-)^2)`
+and active visual decoder rows `J_{vis, valid}(h_{g'}^-)`, the prospective hidden
+information gain is:
 
-The bounded representation remains at most `4 x 4` RGB root/sample positions,
-16 audio terminals and `hidden_channels` shared hidden units (default 6 in the
-runner, hence 70 sensory/hidden states). It does not infer
-every 1080p camera pixel or guarantee emergent modality territories.
-NumPy/CuPy run the compact PC model on their array backend. OpenGL keeps
-pixel preprocessing, bounded gathers (at most 48 floats each for root and
-camera), preview interpolation and gradient scatter on the GPU; compact
-hidden inference, weight learning and curvature calculations run on the CPU.
-Legacy per-pixel hidden buffers are not allocated in this mode.
-The compact PC state/weights and curvature use float64 for numerical stability;
-the adapter explicitly promotes the inference configuration for this mode only,
-while pixel buffers and prediction rendering remain float32.
-The `initial_variance` and `process_variance` active-vision options belong to
-the separate temporal Gaussian baseline, not this local-curvature model.
+```text
+IG(g') = 0.5 * (logdet(A_{g'}^T A_{g'} + J_{vis, valid}(h_{g'}^-)^T J_{vis, valid}(h_{g'}^-)) - logdet(A_{g'}^T A_{g'}))
+```
+
+On a homogeneous canvas with shared retinotopic weights, interior candidates
+whose circular disks lie fully in-bounds produce equal candidate IG; the policy
+preserves exact ties without inventing a spatial preference. `information_gain(indices)`
+remains available for counterfactual subsets at the already-stored prior state
+(such as global 16-band audio EIG). The **Joint Graph** diagnostics show
+states/clamps, `H x H` hidden covariance, marginal sensory variances, `W_c`,
+`R`, `W_s`, biases, prediction errors, root gradient, and the inference energy
+trajectory. Both sensory tabs view the same hidden state.
+
+With default `foveal_radius = 8` (`K = 197` RGB slots = `591` visual nodes), `16`
+audio terminals, and `hidden_channels = 6` shared hidden units (`613` total
+nodes, `6 x 6` hidden covariance), NumPy/CuPy run the model on their array
+backend while evaluating unclamped hidden relaxation and batched `9 x 13`
+candidate gaze forecasts directly in float64. OpenGL keeps pixel preprocessing,
+bounded circular-stencil gathers/scatters, and persistent full-frame prediction
+textures on the GPU while running compact hidden inference, weight learning,
+and `H x H` curvature calculations on the host; legacy per-pixel hidden buffers
+are not allocated in this mode. The `initial_variance` and `process_variance`
+active-vision options belong to the separate temporal Gaussian baseline, not
+this local-curvature model.
 
 ### Historical joint Gaussian experiment (`SharedSensoryGraph`)
 

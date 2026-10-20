@@ -56,9 +56,9 @@ to opt into the common-mode temporal Gaussian audio filter alongside active visi
 python main.py --active-vision mouse --active-audio
 ```
 Add `--shared-sensory-graph` (or set `RIPPLE_CONFIG["active_vision"]["shared_sensory_graph"] = True`;
-requires `--active-vision`, with `--active-audio` optional) to opt into a
-compact **generative predictive-coding network** with a canvas root, dense shared
-recurrent hidden units, and terminal sensory clamps instead of the fixed-weight
+requires `--active-vision {mouse,autonomous}`, with `--active-audio` optional) to opt into a
+compact **foveal generative predictive-coding network** with a routed circular canvas root patch,
+dense shared recurrent hidden units, and hard-disk sensory clamps instead of the fixed-weight
 two-branch filter:
 ```bash
 python main.py --active-vision mouse --active-audio --shared-sensory-graph
@@ -66,38 +66,57 @@ python main.py --active-vision mouse --active-audio --shared-sensory-graph
 Without `--active-audio`, the explicit camera-only profile skips audio
 device/hardware initialization, disables the spectrogram and pitch-helix windows
 and ripple audio, and enables camera/ripple with the shared `GazeControls` panel
-(including live `sigma` / `baseline` / `peak` foveal `pg.SpinBox` controls),
-on-canvas/2D-preview gaze/fovea/advisory-IG overlay (`AttentionOverlay`), and
-temporal Gaussian filter. Passing `--active-audio` initializes audio capture and
-routes freshness-gated 16-band spectral observations through
-`GaussianAudioUncertainty` into the shared deterministic wave medium (without
-claiming physical sound localization or learned modality-specialized regions).
-When `--shared-sensory-graph` is enabled, `SharedPredictiveCodingGraph` generates
-predictions from at most `4 x 4` RGB **canvas root ports**, through the configured shared hidden
-units, to 48 RGB and 16 global audio terminals. Hidden recurrence is dense
-off-diagonal, with no pruning or assigned modality territories. The existing
-`hidden_channels` setting selects the compact hidden count (default 6). The same
-prediction-error energy drives hidden inference, generative weight learning,
-and feedback to the canvas via its root gradient. Sampling's adjoint scatters
-that gradient to the canvas ports; the wave dynamics propagate it. Bilinear
-interpolation is for prediction previews, not a shortcut for error feedback.
-Missing/disabled sensory terminals remain free decoder predictions, never
-zero-valued evidence. Assigned-precision controls are hidden in favor of
-`1-sigma` foveal / full-canvas hard clamps. Weight learning follows the existing
+(including live `sigma` / `baseline` / `peak` foveal `pg.SpinBox` controls in the
+default Gaussian mode), on-canvas/2D-preview gaze/fovea/advisory-IG overlay
+(`AttentionOverlay`), and temporal Gaussian filter. Passing `--active-audio`
+initializes audio capture and routes freshness-gated 16-band spectral
+observations through `GaussianAudioUncertainty` into the shared deterministic
+wave medium (without claiming physical sound localization or learned
+modality-specialized regions).
+When `--shared-sensory-graph` is enabled, `SharedSensoryIO` routes a fixed
+integer circular foveal stencil configured by
+`RIPPLE_CONFIG["active_vision"]["foveal_radius"]` (default `8` pixels, integer
+`1..16`, giving `K = 197` static disk RGB slots = `591` visual nodes by default,
+passed to `SharedPredictiveCodingGraph` as `visual_shape=(K, 1)`). Only `mouse`
+and `autonomous` gaze modes are supported in shared mode (`full` mode is
+explicitly rejected so weights never expand to the full image, and Gaussian
+`sigma` / `baseline` / `peak` / `full` controls are hidden). At each step,
+`SharedPredictiveCodingGraph` forecasts from the routed in-bounds circular
+canvas patch through `hidden_channels` shared hidden units (default `6`, with
+dense off-diagonal recurrence) to `3K` RGB and `16` global audio terminals.
+Out-of-bounds stencil slots near image borders are masked by `aperture_mask`
+without renumbering slot indices, yielding identically zero root activity and
+zero root/evidence gradients on inactive slots. A persistent full-image visual
+prediction buffer (initialized to `0.5`) is updated pre-evidence **only** on the
+in-bounds circular gaze patch, retaining prior predictions outside the fovea
+without fresh full-frame decoding, while the 2D wave canvas evolves separately
+and receives adjoint root-gradient scatter (`-dE/dc_g`) only on valid foveal
+slots. World-coordinate routing and the persistent prediction buffer anchor
+spatial coordinates, but reused retinotopic offset weights and shared hidden
+state `h` do not prevent retinotopic transfer across gaze locations or guarantee
+location-specific recall. Missing/disabled sensory terminals remain free decoder
+predictions, never zero-valued evidence. Weight learning follows the existing
 prediction-error learning settings and can be enabled in **Controls**.
-Uncertainty and prospective gaze scores are explicitly local Gauss-Newton
-approximations of this generative energy, conditional on fixed canvas and
-weights with assigned unit residual noise, not an independent learned Gaussian
-population model. The earlier `SharedSensoryGraph` remains an experimental
-Python API, but no longer powers this launch flag.
+Uncertainty and prospective gaze scores use a **hidden-only `(H x H)` local
+Gauss-Newton precision/covariance** (`hidden_covariance`), exact per-node
+marginal `variance`, small on-demand sensory covariance submatrices
+(`sensory_covariance` for `3 x 3` RGB or `16 x 16` audio), and non-mutating
+candidate gaze forecasts (`candidate_information_gain` /
+`candidate_information_gains`) that run the exact held-parameter no-evidence
+forecast rule per candidate patch—never allocating a dense all-sensory `N x N`
+covariance matrix. The earlier `SharedSensoryGraph` remains an experimental
+Python API (Page 5 of `docs/predictive-uncertainty-math.drawio`), but no longer
+powers this launch flag.
 The canvas toolbar provides **Controls**, **Predictions**, and **Diagnostics**
 (`BeliefDiagnosticsView`, polling bounded `10 Hz` host snapshots of hidden
 mean/variance, linearized sensory signal covariance `J P J^T` without
-observation noise in the default filter, or the shared PC **Joint Graph** local
-covariance, generative weight matrices, prediction errors, canvas gradient and
-settling-energy trajectory, plus prospective visual/audio EIG). Failed camera opens or
-reads latch cleanly without per-frame hardware retry loops until **Camera
-Frame** is toggled off and on. Ordinary `python main.py` remains unchanged.
+observation noise in the default filter, or the shared PC **Joint Graph**
+`H x H` hidden covariance, per-node marginal variances, `3 x 3` / `16 x 16`
+sensory covariance submatrices, generative weight matrices, prediction errors,
+canvas gradient, and settling-energy trajectory, plus prospective visual/audio
+EIG). Failed camera opens or reads latch cleanly without per-frame hardware
+retry loops until **Camera Frame** is toggled off and on. Ordinary
+`python main.py` remains unchanged.
 Explicit Linux `/dev/videoN` camera paths use OpenCV's V4L2 backend, keeping
 camera controls available instead of automatically selecting a file backend.
 
