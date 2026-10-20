@@ -156,22 +156,7 @@ class WavePropagatorOpenGL:
     def step(self) -> None:
         self._ensure_initialized()
         gl = self._gl
-
-        if self._pending_has_excitation:
-            self._upload_texture(self._tex_excitation, self._pending_excitation)
-            self._pending_excitation.fill(0.0)
-            self._pending_has_excitation = False
-            self._excitation_is_zero = False
-        elif not self._excitation_is_zero:
-            self._bind_image(0, self._tex_excitation, gl.GL_WRITE_ONLY)
-            self.compute.run(
-                f"""layout({self._format_name},binding=0) uniform writeonly image2D excitation;
-                uniform int width,count;
-                void main(){{int p=int(gl_GlobalInvocationID.x);if(p<count)
-                imageStore(excitation,ivec2(p%width,p/width),vec4(0.0));}}""",
-                [], self._rows * self._cols, width=self._cols, count=self._rows * self._cols,
-            )
-            self._excitation_is_zero = True
+        self._prepare_excitation()
 
         gl.glUseProgram(self._program)
         gl.glUniform2i(
@@ -214,6 +199,48 @@ class WavePropagatorOpenGL:
             self._tex_next,
             self._tex_old,
             self._tex_current,
+        )
+        self._copy_to_native()
+
+    def _prepare_excitation(self):
+        gl = self._gl
+        if self._pending_has_excitation:
+            self._upload_texture(self._tex_excitation, self._pending_excitation)
+            self._pending_excitation.fill(0.0)
+            self._pending_has_excitation = False
+            self._excitation_is_zero = False
+        elif not self._excitation_is_zero:
+            self._bind_image(0, self._tex_excitation, gl.GL_WRITE_ONLY)
+            self.compute.run(
+                f"""layout({self._format_name},binding=0) uniform writeonly image2D excitation;
+                uniform int width,count;
+                void main(){{int p=int(gl_GlobalInvocationID.x);if(p<count)
+                imageStore(excitation,ivec2(p%width,p/width),vec4(0.0));}}""",
+                [], self._rows * self._cols, width=self._cols, count=self._rows * self._cols,
+            )
+            self._excitation_is_zero = True
+
+    def hold(self, excitation=None):
+        """Keep the corrected field stationary, with zero wave velocity."""
+        self._ensure_initialized()
+        if excitation is not None:
+            self.add_excitation(excitation)
+        self._prepare_excitation()
+        gl = self._gl
+        self._bind_image(0, self._tex_current, gl.GL_READ_WRITE)
+        self._bind_image(1, self._tex_old, gl.GL_WRITE_ONLY)
+        self._bind_image(2, self._tex_excitation, gl.GL_READ_ONLY)
+        self.compute.run(
+            f"""
+            layout({self._format_name},binding=0) uniform image2D current;
+            layout({self._format_name},binding=1) uniform writeonly image2D previous;
+            layout({self._format_name},binding=2) uniform readonly image2D excitation;
+            uniform int width,count;
+            void main(){{int p=int(gl_GlobalInvocationID.x);if(p>=count)return;
+            ivec2 xy=ivec2(p%width,p/width);
+            vec4 value=imageLoad(current,xy)+imageLoad(excitation,xy);
+            imageStore(current,xy,value);imageStore(previous,xy,value);}}
+            """, [], self._rows*self._cols, width=self._cols, count=self._rows*self._cols,
         )
         self._copy_to_native()
 

@@ -33,6 +33,7 @@ class RippleEngine:
         body_boundary_transmission: float = 0.0,
         body_boundary_dissipation: float = 1.0,
         use_external_opengl_context: bool = False,
+        wave_propagation_enabled: bool = True,
     ):
         if use_gpu and use_shader:
             raise ValueError("Choose either use_gpu=True or use_shader=True, not both.")
@@ -60,6 +61,7 @@ class RippleEngine:
             name="body_boundary_dissipation",
         )
         self.use_external_opengl_context = use_external_opengl_context
+        self.set_wave_propagation(wave_propagation_enabled)
 
         self.backend = load_cupy() if use_gpu else np
         self.dx = self.plane_size_m[0] / self.resolution[0]
@@ -165,6 +167,11 @@ class RippleEngine:
         self.damping = damping
         self.propagator.damping = damping
 
+    def set_wave_propagation(self, enabled: bool) -> None:
+        if not isinstance(enabled, bool):
+            raise ValueError("wave_propagation_enabled must be a boolean")
+        self.wave_propagation_enabled = enabled
+
     def set_body_boundary_transmission(self, transmission: float) -> None:
         self.body_boundary_transmission = self._validate_unit_interval(
             transmission,
@@ -205,6 +212,16 @@ class RippleEngine:
             else self._coerce_grid_excitation(excitation_grid)
             * np.float32(self.amplitude)
         )
+        if not self.wave_propagation_enabled:
+            if self.use_shader:
+                self.propagator.hold(excitation)
+            else:
+                if excitation is not None:
+                    self.Z += excitation
+                self.Z_old[...] = self.Z
+                self.propagator.Z[...] = self.Z
+                self.propagator.Z_old[...] = self.Z
+            return self._capture_prior()
         if self._uses_custom_grid_step():
             self._step_cpu_grid(excitation=excitation)
             return self._capture_prior()
