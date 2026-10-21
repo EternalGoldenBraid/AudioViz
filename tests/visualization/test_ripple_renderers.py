@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from audioviz.visualization.ripple_renderers import (
     _canvas_to_rgb,
@@ -67,3 +68,47 @@ def test_resolve_auto_level_limit_uses_active_limit_above_threshold():
     )
 
     assert limit == 0.3
+
+
+@pytest.mark.parametrize("rgb", (False, True))
+@pytest.mark.parametrize("auto", (False, True))
+def test_gpu_presentation_matches_numpy_without_downloading_float_rgb(
+    cupy_backend, qapp, monkeypatch, rgb, auto,
+):
+    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
+
+    cp = cupy_backend
+    field = np.random.default_rng(10).normal(size=(11, 17, 3)).astype(np.float32)
+    reference = NumpyImageRenderer(rgb_canvas_enabled=rgb, auto_percentile_levels=auto)
+    actual = NumpyImageRenderer(rgb_canvas_enabled=rgb, auto_percentile_levels=auto)
+    transfers = []
+    asnumpy = cp.asnumpy
+
+    def download(values, *args, **kwargs):
+        transfers.append((values.shape, values.dtype))
+        return asnumpy(values, *args, **kwargs)
+
+    try:
+        reference.render(field)
+        with monkeypatch.context() as patch:
+            patch.setattr(cp, "asnumpy", download)
+            actual.render(cp.asarray(field))
+        np.testing.assert_allclose(actual._display_limit, reference._display_limit, rtol=1e-6)
+        np.testing.assert_allclose(
+            actual.image_item.image, reference.image_item.image,
+            rtol=1e-6, atol=1 if rgb else 1e-7,
+        )
+        if rgb:
+            np.testing.assert_array_equal(actual.image_item.levels, (0, 255))
+        assert transfers == (
+            [((11, 17, 3), cp.dtype("uint8"))] if rgb else [((11, 17), cp.dtype("float32"))]
+        )
+    finally:
+        reference.widget.close()
+        actual.widget.close()
+
+
+def test_gpu_rgb_conversion_preserves_nonfinite_and_clipping_behavior(cupy_backend):
+    cp = cupy_backend
+    values = np.array([[[np.nan, np.inf, -np.inf], [-1, .5, 2]]], dtype=np.float32)
+    np.testing.assert_array_equal(_canvas_to_rgb(cp.asarray(values), limit=1), _canvas_to_rgb(values, limit=1))

@@ -26,6 +26,18 @@ def qapp():
 
 
 @pytest.fixture
+def cupy_backend():
+    cp = pytest.importorskip("cupy")
+    try:
+        device_count = cp.cuda.runtime.getDeviceCount()
+    except cp.cuda.runtime.CUDARuntimeError as exc:
+        pytest.skip(f"CUDA is unavailable: {exc}")
+    if not device_count:
+        pytest.skip("No CUDA device is available.")
+    return cp
+
+
+@pytest.fixture
 def layer_view_stub(qapp, monkeypatch):
     from PyQt5 import QtCore, QtWidgets
     from audioviz.visualization.prediction_scene_window import PredictionSceneWindow

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Protocol
+from types import ModuleType
 
 import numpy as np
 
@@ -13,6 +14,10 @@ class VisualReadout(Protocol):
     diagnostics: PredictiveCodingDiagnostics | None
     hidden: np.ndarray
     stream_state_prediction: float | None
+
+    @property
+    def backend(self) -> ModuleType:
+        """Array module owning the persistent numerical state."""
 
     def predict(self, prior: np.ndarray) -> np.ndarray:
         """Advance hidden belief from a canvas prior and predict RGB evidence."""

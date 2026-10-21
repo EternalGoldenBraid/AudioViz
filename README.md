@@ -20,10 +20,10 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 - Real-time wave propagation visualized on a 2D surface
 - Flexible audio input: default is microphone via `sounddevice`, but any input device can be configured
 - Optional synthetic tone generator for testing
-- Optional GPU acceleration (via CuPy); CPU wave propagation is the default
+- Optional GPU wave propagation and predictive inference (via CuPy); NumPy is the default
 - Adjustable wave physics: damping, decay, speed, amplitude
-- Three-channel wave surface with independent persistent visual/audio hidden belief states
-- Local nonlinear predictive coding: sensory surprise revises hidden states and the canvas
+- Three-channel wave surface with a shared recurrent audiovisual hidden state
+- Foveal nonlinear predictive coding: sensory surprise revises hidden states and the canvas
 - Learned sensory pathways with fixed substrate conductances; the rendered image is the canvas surface
 - Modular audio processor and visualizer structure
 
@@ -45,10 +45,233 @@ python main.py
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
+### Feature application and baseline
+
+The shared research and implementation branch is **`research/active-vision-eig`**,
+tracked by draft [PR #1](https://github.com/EternalGoldenBraid/AudioViz/pull/1).
+It includes the former `feature/active-vision-precision` history. Both agents
+should work on this shared branch; the PR is no longer documentation-only.
+
+On this feature branch, ordinary `python main.py` runs the **foveal predictive-coding
+application**. Model-selection flags (`--active-vision`, `--active-audio`,
+`--shared-sensory-graph`) have been removed. The established per-pixel model belongs
+to the baseline branch/worktree; choosing an application means choosing its worktree,
+not changing a model flag. For the local comparison, `../AudioViz-baseline` is checked
+out at local `main`, commit `e0994e8`. Run each worktree with its own project environment
+so an editable package installation does not accidentally import the other worktree.
+
+```bash
+# Feature application, from AudioViz
+.venv/bin/python main.py
+
+# Established application, in a separate shell
+cd ../AudioViz-baseline
+.venv/bin/python main.py
+```
+
+The sizes are together in `main.py`:
+
+```python
+RIPPLE_CONFIG["model"] = {
+    "foveal_radius": 32,
+    "hidden_units": 6,
+    "memory_time_constant": 1/3,
+}
+```
+
+`hidden_units` is the **total number of shared recurrent hidden units**, not a
+number of layers or channels at every image pixel. Radius is measured in image
+pixels; radius `32` contains `3,209` RGB locations (`9,627` visual values).
+Both sizes are startup settings: change them and restart. Any positive integer
+radius whose disk fits `4,096` locations is accepted (currently through radius
+`36`, with `4,053` locations); hidden units must be in `1..64`. These are explicit
+software allocation guards, **not measured hardware limits**. The former independent
+16-pixel application-radius restriction is gone.
+
+Set `RIPPLE_CONFIG["gaze"]["mode"]` to `"mouse"` or `"autonomous"`; initial normalized
+coordinates are in `["gaze"]["position"]`. Image resolution remains in
+`RIPPLE_CONFIG["field"]["resolution"]` (or the visualizer default when omitted).
+Audio and camera availability come from `RIPPLE_CONFIG["sources"]`, and window
+visibility from `APP_CONFIG["windows"]`; startup does not silently change them.
+For camera-only operation, disable the audio source and both audio windows.
+These are currently disabled by default, so no audio devices are initialized.
+**Observe vision** and **Audio** remain
+independent live evidence gates. Weight learning follows
+`RIPPLE_CONFIG["transforms"]["prediction_error"]["learning"]` and can be enabled in
+**Controls**; the startup log reports whether it is enabled.
+
+The current hidden population has dense off-diagonal recurrence, with no imposed
+sequence of hidden layers. Both edge directions exist, but their weights are not
+constrained to be equal. Canvas-root and sensory-terminal roles remain prescribed.
+Geometric embedding, cylindrical squeezing, and distance-based edge pruning are
+not implemented. Observing an entire small image with this graph would **not**
+recover the baseline per-pixel model.
+
+`SharedSensoryIO` routes the fixed integer disk through world coordinates.
+At each step, `SharedPredictiveCodingGraph` forecasts from the routed in-bounds
+canvas patch through the recurrent hidden state to foveal RGB and `16` global audio
+terminals. The numerical graph uses float64; native OpenGL camera, canvas, and
+routing buffers use float32.
+Out-of-bounds stencil slots near image borders are masked by `aperture_mask`
+without renumbering slot indices, yielding identically zero root activity and
+zero root/evidence gradients on inactive slots. A persistent full-image visual
+prediction buffer (initialized to `0.5`) is updated pre-evidence **only** on the
+in-bounds circular gaze patch, retaining prior predictions outside the fovea
+without fresh full-frame decoding. The 2D root canvas receives adjoint
+root-gradient scatter (`-dE/dc_g`) only on valid foveal slots; wave-equation
+evolution is now **off by default** in main and the test-world bench.
+World-coordinate routing and the persistent prediction buffer anchor
+spatial coordinates, but reused retinotopic offset weights and shared hidden
+state `h` do not prevent retinotopic transfer across gaze locations or guarantee
+location-specific recall. Missing/disabled sensory terminals remain free decoder
+predictions, never zero-valued evidence. Weight learning follows the existing
+prediction-error learning settings and can be enabled in **Controls**.
+Uncertainty and prospective gaze scores use a **hidden-only `(H x H)` local
+Gauss-Newton precision/covariance** (`hidden_covariance`), exact per-node
+marginal `variance`, small on-demand sensory covariance submatrices
+(`sensory_covariance` for `3 x 3` RGB or `16 x 16` audio), and non-mutating
+candidate gaze forecasts (`candidate_information_gain` /
+`candidate_information_gains`) that run the exact held-parameter no-evidence
+forecast rule per candidate patch—never allocating a dense all-sensory `N x N`
+covariance matrix. The earlier `SharedSensoryGraph` remains an experimental
+Python API (Page 5 of `docs/predictive-uncertainty-math.drawio`), but no longer
+powers the main application.
+The canvas toolbar provides **Controls**, **Predictions**, and **Diagnostics**
+(`BeliefDiagnosticsView`, polling bounded `10 Hz` host snapshots of hidden
+mean/variance, shared PC **Joint Graph** `H x H` hidden covariance,
+per-node marginal variances, `3 x 3` / `16 x 16`
+sensory covariance submatrices, generative weight matrices, prediction errors,
+canvas gradient, and settling-energy trajectory, plus prospective visual/audio
+EIG). Failed camera opens or reads latch cleanly without per-frame hardware
+retry loops until **Camera Frame** is toggled off and on.
+Explicit Linux `/dev/videoN` camera paths use OpenCV's V4L2 backend, keeping
+camera controls available instead of automatically selecting a file backend.
+
+**Controls > Surprise: wave dynamics OFF/ON** enables the optional wave
+equation. Off means no autonomous spatial propagation or wave damping: the
+root holds its current state while explicit source drives and sensory-gradient
+corrections can still update it. Model inference, learning, observation, and
+scene motion continue. A held step clears wave velocity, so enabling waves
+starts from the current field without replaying old momentum. Low-level
+`RippleEngine` and legacy visualizer defaults retain waves for existing physics
+experiments; the vision application's `dynamics.wave_propagation_enabled`
+configuration and bench choose the held-root default.
+
+**Prediction persistence:** the full-image display is a cache of foveal
+forecasts, not a continuously recomputed world model. Outside-fovea entries
+do not age or fade. The live hidden population has an exponential warm start
+(`memory_time_constant`), followed by hidden-energy relaxation; its time
+constant is therefore not a display-cache lifetime. Learned decoder biases
+can continue predicting a patch even after hidden activity relaxes. Neither
+cached pixels nor learned weights have been given an arbitrary forgetting
+rule. A spike-based message representation alone would not supply one.
+
+For the deterministic synthetic circular-dot stimulus, conditional Gaussian
+information-gain heatmap, mouse/autonomous/full-canvas gaze modes, common-mode
+audio filter equations, opt-in shared learned sensory/latent graph, and headless
+policy comparison, see
+[the active-vision and audio uncertainty documentation](docs/active-vision-experiment.md)
+and [the editable five-page predictive-uncertainty mathematics diagram](docs/predictive-uncertainty-math.drawio)
+(Page 5 documents the historical Gaussian experiment, not the current shared PC runner).
+Both run on OpenGL, NumPy, or CuPy without a physical camera or microphone.
+
 For live streaming, the first run prompts for audio devices and stores the
 machine-local selection in `config/audio_devices.json`. The file is ignored by
 Git; `config/audio_devices.example.json` documents its structure and safe null
-device values.
+device values. The command-line device picker uses `-1` for the Null Device,
+including when no physical devices are listed. Disabling both audio devices
+allows processing to start without opening audio streams.
+
+### Test-world predictive-coding bench
+
+See the [experiment report and open sampling questions](docs/static-world-experiment-report.md)
+for measured results and the current gaze-policy design pause.
+
+Run the **continuous whole-scene baseline** against a static geometric scene,
+without camera or microphone hardware:
+
+```bash
+.venv/bin/python -m audioviz.visualization.static_world_bench
+# Alternative execution backend and integration settings:
+.venv/bin/python -m audioviz.visualization.static_world_bench \
+    --backend numpy --resolution 80 120 --foveal-radius 16 --hidden-units 6 \
+    --steps 8 --rate 0.1 --dt 0.03333333333333333
+```
+
+There is **one active bench model**, with no `--model` selector or spike
+threshold/capacitance controls. Production `main.py` remains unchanged.
+The older retinotopic PC and RC-spiking implementations remain available as
+research code, not alternate modes of this baseline.
+
+Each world RGB coordinate has a signed, continuous neural state `z`; the
+predicted intensity is `sigmoid(z)`. The complete field is coupled to one
+shared dense recurrent hidden population `h`. These neural states evolve
+every step, including outside the fovea. The forecast image is decoded from
+the complete field each time: **there is no last-visit image cache**.
+The circular fovea gates camera evidence only; it does not move neural
+state slots or their learned connections to another world location.
+
+The bench starts **paused**, with mouse gaze unlocked, learning disabled,
+canvas feedback zero, scene motion off, and no wave dynamics. **Step** advances the world/model
+once and consumes an observation when Observe is enabled; **Run/Pause**
+controls playback.
+**Model controls** exposes integration microsteps/gain, connection learning,
+learning rate and root-feedback rate. The leak time constant is also
+adjustable live or with `--memory-time-constant`. Learned connections persist;
+neural activity is transient, with neutral RGB `0.5` at zero state. There are
+no learned constant bias drives. Radius and hidden count are startup arguments.
+The current scene prototype bounds allocations at `16,384` world pixels and
+`64` shared hidden units; these are software guards, not measured hardware
+limits. Unlike the older retinotopic graph, its state and connection storage
+scale with the world image dimensions.
+Move the mouse over the world, prediction, error image, or embedded canvas to
+select gaze. While paused this selects the next sample without consuming
+evidence; **Step/Run** conditions on the selected patch through the shared router.
+**Lock gaze** holds that position; turn scene motion off as well for a fixed-patch
+trial. You can also expand **Gaze and Observation** for **Observe vision**, which independently
+gates evidence. **Autonomous gaze is intentionally paused** until its single
+epistemic objective is derived for this scene model. No random fallback,
+mixture-of-Gaussians model or fabricated information score is used.
+
+The world, live whole-scene pre-evidence prediction, and observed-pixel forecast RGB
+RMSE are shown together. The world's magenta circle marks the selected next gaze;
+prediction/error circles mark the latest sampled aperture. Gray error
+pixels are **unobserved**, not error-free. Plots separate:
+
+- Across-step **forecast MSE before evidence** from **settled decoder MSE
+  before that observation's weight update**, on observed RGB coordinates only.
+- The latest interval's energy trajectory and the whole-scene neural-field,
+  shared-hidden-state and neutral-distance histories.
+
+To inspect genuine decay, observe a patch, then disable Observe and continue
+stepping. To inspect peripheral evolution, move gaze to a different patch:
+the previous location retains its own evolving neural state, not a frozen
+rendered value. A nonzero root can still force the graph, so keep feedback
+off for an unforced trial. Fitting a static patch does not establish
+generalization, and MSE is not guaranteed to improve across changing targets.
+Zero inference gain removes inference currents but leaves passive leak active.
+
+**New trial (fresh weights)** restores seed-0 parameters, the complete scene
+field, hidden state and zero canvas, retaining model settings and gaze.
+The ordinary Controls reset retains learned weights,
+so it is not a fresh trial. Every step uses the fixed `--dt` for model
+forecasting, independently of pause duration. Forecast and conditioned replay
+resolve the same physical interval, not two successive intervals.
+**Save trace** writes JSON containing the latest
+**512 steps**, including recorded model settings, energy trajectories, gaze, Brownian
+settings, continuous/rendered scene offsets, the per-step wave enable state,
+and missing-error values as `null`.
+The world seed and clock are also recorded. This is a metric log, not a
+complete replay of arbitrary source/wave-control interventions.
+
+Motion is deferred by default. The existing Brownian experiment remains
+explicitly opt-in via its checkbox or `--moving-scene`; `--static-scene`
+is accepted for the default. Its seed, scale and trace metadata are unchanged.
+
+The [experimental RC-spiking explainer](docs/rc-spiking-predictive-coding.html)
+and Page 6 of `docs/predictive-uncertainty-math.drawio` document the historical
+spiking prototype, including its retinotopic/cache limitation. They are
+reference artifacts, not the current continuous-scene architecture.
 
 ---
 
@@ -95,9 +318,33 @@ Accessible from GUI sliders:
 * **Sensory Inference and Learning**: Shared controls for camera/audio hidden-state inference, canvas correction, and weight learning
 * **Substrate Conductances (Fixed)**: Diagnostic overlay of the wave operator, not the learned visual weights
 * **Show Inference / Learning Plots**: Opens the energy / 2D weight plot catalogue
-* **Show Multimodal 3D Scene**: Opens an independent, rotatable view of the shared canvas and every source
+* **Show Predictions / 3D Scene**: Opens a popup with selectable prediction layouts
+* **Show FPS**: Toggles the main window's FPS and average ms/frame readout
+
+FPS counts newly presented canvas frames over wall-clock time, averaged over
+about one second. OpenGL counts swaps after a fresh draw; NumPy/CuPy count fresh
+image viewport paints. Coalesced updates count once, and redraws of unchanged
+data do not count. The displayed ms/frame is the presentation interval, not
+inference/GPU kernel time. Hiding the window or disabling the counter clears
+the sample; collecting the counter does not synchronize the GPU.
+
+The prediction popup's **Layout** selector offers the existing **3D graph**,
+a **2D comparison** of the corrected canvas, pre-evidence camera prediction,
+camera evidence and audio spectra, and a large **Prediction only** image.
+Predictions are genuine pre-evidence expectations, not a copy of the camera or
+the corrected surface. Missing evidence is cleared instead of retaining a stale
+target. The 2D layouts do not need an OpenGL context and remain available if the
+3D renderer fails. Image previews preserve aspect ratio and are limited to 512
+pixels per side at 10 Hz; the 3D graph retains its 64-pixel limit. Switching
+layouts, minimizing, hiding and resetting release the old preview.
 
 ## Predictive canvas
+
+The OpenGL inference architecture is documented in the
+[shader architecture and implementation plan](docs/shader-inference-plan.md),
+with an editable three-page draw.io diagram and rendered previews. The existing
+RGB predictive model now runs on OpenGL compute shaders; arbitrary sparse
+neighborhoods remain a separate extension.
 
 The wave surface has two learned sensory branches:
 
@@ -188,10 +435,165 @@ of the camera residual.
 Disabling **Pathway Learning** freezes weights, not state inference. Start with
 hidden rate `0.1`, canvas rate `0.01`, eight inference steps, and weight-learning
 rate `0.01`; a weight rate near `1` is an experiment, not a stability guarantee.
-The pathways run in NumPy for CPU/GPU wave backends; OpenGL sensory correction
-remains unsupported and is explicitly rejected. Inference cost scales with
-image size and step count; reduce inference steps or resolution when exploring
-the live loop at high resolutions.
+The pathways use the wave engine's array backend: NumPy when the renderer's
+`backend` is `"numpy"`, and CuPy when it is `"gpu"`. Selecting `"gpu"` keeps the
+canvas, hidden states, errors, predictive weights, optional cross-modal coupling,
+inference, and learning on the GPU. Inference defaults to float64; set
+`transforms.prediction_error.inference.dtype` to `"float32"` explicitly for GPU
+throughput. Both backends support both precisions. Changing precision requires
+rebuilding the readouts; wave states and returned predictions/corrections remain
+float32. Selecting `"opengl"` runs RGB wave propagation, prediction, joint
+camera/audio inference, stream-state nodes, optional hidden coupling and learning
+in OpenGL 4.3 compute shaders, with direct texture presentation. This backend
+requires explicitly configured `"float32"` inference; it never silently converts
+float64 to float32 or falls back to CPU inference. The startup configuration
+selects float32 explicitly; `PredictiveCodingConfig` retains its float64 default.
+Pose-medium coupling still requires the CPU backend.
+
+Numerical graph state stays on its selected backend. Host/device transfers belong
+only at sensor and presentation boundaries: OpenCV capture and audio analysis
+run on the CPU. The GPU backend uploads raw camera frames and performs RGB
+conversion, normalization and resizing on the GPU. RGB canvas display also
+computes automatic levels and color conversion there, downloading packed uint8
+pixels rather than the full floating-point field. Grayscale display downloads
+only its single channel. Diagnostics export host snapshots, and spatial previews
+are sampled on-device before downloading. The 2D popup does not enable energy
+diagnostics; the 3D graph collects them on preview frames unless the plot catalogue
+is also open. Keep diagnostic plots closed when measuring throughput. Finite-state validation runs
+at settling boundaries rather than synchronizing the GPU on every inference
+step, and still raises explicitly on divergence before weight learning.
+
+The OpenGL path has no CuPy/CUDA dependency. Python/Qt owns capture, audio
+analysis and frame scheduling; shader-storage buffers own hidden states, weights,
+errors and reductions. Camera samples are uploaded in float32 raw-value storage;
+RGB conversion, normalization, resizing and gain run in a shader. Direct display
+downloads no image. Exact automatic percentile levels use radix histograms with
+small counter readbacks, not full-field transfers. Prediction popups and plots
+retain their bounded snapshot behavior. Resources are allocated lazily under the
+renderer-owned context and released before its destruction. Drivers without the
+required OpenGL version or buffer limits fail explicitly.
+
+Benchmark the numerical path without live camera/audio devices or a GUI:
+
+```bash
+uv run python scripts/benchmark_predictive_inference.py --backend both
+uv run python scripts/benchmark_predictive_inference.py --backend gpu --resolution 300 400 --inference-steps 8 --learning --cross-modal
+uv run python scripts/benchmark_predictive_inference.py --backend gpu --resolution 1080 1920 --dtype float32 --render --profile /tmp/inference.prof
+QT_QPA_PLATFORM=xcb uv run python scripts/benchmark_predictive_inference.py --backend opengl --resolution 1080 1920 --dtype float32 --render
+```
+
+The benchmark uses deterministic camera/audio evidence, warmup frames, and
+explicit GPU synchronization for stage timings. It includes camera preprocessing
+and the final field download. `--render` instead includes an RGB display,
+automatic levels and Qt paint events. Camera capture and audio analysis remain
+excluded, so neither mode is a claim about live device FPS. `--profile` saves
+per-backend cProfile data after warmup. Python profiles attribute asynchronous
+GPU wait time to synchronization points such as finite checks; synchronized
+stage timings are more useful for locating the actual cost.
+
+### Profile the current live application
+
+```bash
+.venv/bin/python scripts/profile_live.py --backend opengl --warmup 10 --frames 120 --output /tmp/audioviz-live.prof
+```
+
+This runs the current `main.py` configuration, including its camera/source
+settings, and reports update-call duration and wall-clock update rate after
+warmup. `--backend` accepts `numpy`, `gpu` (CuPy), or `opengl`; omitting it
+preserves the configured backend. The actual visualizer resolution is printed.
+It saves cProfile data and a sibling text report. These update timings are not
+synchronized per-kernel GPU timings or a count of presented display frames.
+
+### Foveal graph memory sweep
+
+Measure the numerical foveal graph independently of image resolution:
+
+```bash
+python scripts/benchmark_foveal_memory.py --radii 8 16 24 32 64 --hidden-sizes 6 16 32
+python scripts/benchmark_foveal_memory.py --backend cupy --radii 8 16 32 --hidden-sizes 6 16
+python scripts/benchmark_foveal_memory.py --radii 16 32 --hidden-sizes 16 32 --candidates 0 --json
+```
+
+Each case runs in a fresh process and constructs the real float64 model, performs
+one forecast/evidence update (learning enabled by default; `--no-learning`
+disables it), and evaluates the requested number of distinct candidate patches
+(`117` by default, matching autonomous gaze; `0` omits that phase). The circular
+radius is in pixels, with full interior support and float32 input fixtures.
+The table distinguishes parameter bytes, unique retained graph array storage
+(including cached weights and Jacobians), peak traced host allocations, and
+CuPy pool peak/reserved bytes. `--json` also includes per-phase host peaks.
+Whole-process peak RSS includes Python, libraries, native workspaces and CUDA
+context costs; it is **not** graph-only memory. Traced host peaks include
+synthetic inputs and cold operator allocations but exclude untraced native
+workspaces. Gaze scoring currently uses NumPy on the host even for a CuPy model.
+The OpenGL runner uses the NumPy numerical graph, so the default sweep covers
+that graph without creating a renderer or camera.
+
+For `K` RGB foveal locations, `H` hidden units and `A` audio terminals, parameter
+storage is exactly `8 * (H*3K + (3K+A)*H + H*H + H + 3K+A)` bytes. Image dimensions
+do not enter this expression or the measured graph workload. Full-image
+prediction buffers, camera preprocessing, wave simulation and rendering remain
+resolution-dependent and are excluded. `--image-shape ROWS COLS` only accounts
+for one full RGB float32 buffer (23.73 MiB at 1080x1920); it allocates no image
+and does not estimate total application memory.
+
+The application and numerical graph share the same software limits:
+`4096` foveal locations and `64` hidden units. The script measures circles
+within those limits without changing application settings.
+Above-limit cases (including radius `64`) are clearly labeled **parameter
+estimates only**, with no fabricated graph/peak measurements. `--estimate-only`
+performs parameter accounting without allocating any model.
+
+### Established per-pixel model: native 1080p profiling
+
+These measurements describe the established per-pixel model, not the feature
+application's foveal graph. Measured on an RTX 3060 with two six-channel hidden fields, synthetic camera/audio
+evidence, no learning or cross-modal loop, and closed diagnostic windows:
+
+| Configuration | Mean frame time | Throughput |
+|---|---:|---:|
+| Before these optimizations: float64, 8 steps, no GUI | 1269 ms | 0.8 frames/s |
+| Optimized float64, 8 steps, no GUI | 455 ms | 2.2 frames/s |
+| Optimized float32, 8 steps, no GUI | 88 ms | 11.4 frames/s |
+| Optimized float32, 8 steps, offscreen Qt rendering | 108 ms | 9.2 frames/s |
+| Optimized float32, 2 steps, offscreen Qt rendering | 58 ms | 17.3 frames/s |
+
+The rendered float32 run used about 546 MiB of live GPU arrays and 1186 MiB of
+reserved CuPy pool memory. Capacity is not the primary limitation: eight-step
+inference still takes about 70 ms and Qt presentation about 18 ms. Native 1080p
+is substantially faster, but **30 frames/s at eight inference steps is not yet
+achieved**. Small shared-channel projections use a local GPU kernel, local state
+directions are fused, and spatial pooling reduces rows before reducing the image;
+large channel counts retain matrix multiplication.
+
+Enabling both weight learning and the camera/audio hidden loop at eight steps
+measured 152 ms/frame (6.6 frames/s), including offscreen Qt rendering, with about
+1281 MiB of reserved pool memory.
+
+The restored OpenGL path at native 1080p/eight steps measured **117 ms/frame
+(8.6 frames/s)** with direct RGB rendering, or **208 ms/frame (4.8 frames/s)**
+with learning and the hidden loop. These initial measurements used three warmup
+and six measured frames, X11 Qt presentation, exact automatic levels and
+synthetic sensors on the same RTX 3060. They establish a working shader baseline,
+not a speedup over CuPy or a 30 FPS result. The implementation also passes
+numerical parity on Mesa software OpenGL; that is a portability check, not an
+AMD/Intel hardware performance claim.
+
+For a throughput-oriented configuration, set these values in `main.py` before
+starting the application:
+
+```python
+RIPPLE_CONFIG["field"]["resolution"] = (1080, 1920)
+RIPPLE_CONFIG["renderer"]["backend"] = "gpu"
+RIPPLE_CONFIG["transforms"]["prediction_error"]["inference"].update(
+    dtype="float32", steps=2,
+)
+```
+
+Float32 reduces precision, and fewer settling steps change the inference dynamics
+and total per-frame correction; this is an explicit speed/quality tradeoff, not
+an equivalent result obtained by upscaling a smaller simulation. Default precision
+and inference step count are unchanged.
 
 Hover a source/inference control or its label for its update semantics,
 zero-value behavior, and stability caveats. **Canvas Correction Rate** is the
@@ -275,7 +677,7 @@ Enable **Pathway Learning** with paired camera/audio evidence to learn the
 connections, then freeze learning to probe them. In startup configuration,
 `transforms.prediction_error.inference.cross_modal_enabled` enables the same mode.
 An audio processor must exist, but its observation toggle can be off.
-The shader-only backend does not support the loop.
+The NumPy, CuPy and OpenGL backends support the loop.
 
 With `h` the camera hidden field and `a` the audio hidden field:
 
@@ -467,20 +869,31 @@ incompatible PyOpenGL platform can be corrected by restarting with
 
 ---
 
-## 🖼️ Gallery (placeholder)
+## 🖼️ Active Vision Experimentation Bench & Architecture Visuals
 
-*Add demo visuals here.*
+![Active vision experimentation bench](docs/active-vision-bench.png)
 
-| Audio Stimulus | Ripple Response                   |
-| -------------- | --------------------------------- |
-| "S" sound      | ![img1](images/demo_s_ripple.png) |
-| Percussive hit | ![img2](images/demo_hit.png)      |
+The [active-vision experimentation bench](docs/active-vision-experiment.md)
+(`uv run python -m audioviz.visualization.active_vision_experiment --backend opengl --gaze-mode autonomous`)
+pairs the predictive-coding wave canvas with a conditional Gaussian sensory
+uncertainty filter:
 
----
+- **Top-left (`Ground truth + advisory gain`):** evaluator-only stimulus frame
+  overlaid with the expected sensory information-gain (`IG`) heatmap, current-to-target
+  gaze arrow, and maximizing candidate marker.
+- **Top-center (`Observation precision and gaze`):** spatial precision envelope
+  `Pi(r)` and gaze crosshair (`+`), controlled via **Mouse gaze**, **Autonomous
+  gaze** (greedy one-step `IG` maximization before camera capture), or **Full
+  canvas** (uniform unit precision `Pi(r) = 1`, `R = I_3`), with an independent
+  **Observe** gate (`sample=False` sets `Pi(r) = 0`).
+- **Top-right (`Prediction before current evidence`):** pre-observation RGB
+  expectation `g(m^-)` rendered before the current frame is incorporated.
+- **Bottom (`Ripple Simulation`):** corrected 3-channel predictive wave surface.
 
-## 🎥 Demo (placeholder)
+Companion mathematical and architectural diagrams in `docs/`:
 
-> *Insert phone-recorded demo or YouTube link here.*
+- [Predictive uncertainty mathematics (`docs/predictive-uncertainty-math.drawio`)](docs/predictive-uncertainty-math.drawio) — three-page editable draw.io diagram with clickable local VS Code source links covering terms/distributions (including why deterministic stimulus frames do not imply `R = I_3`), forecast/conditioning, and the sensory mutual-information objective.
+- [Shader inference architecture (`docs/shader-inference-architecture.drawio`)](docs/shader-inference-architecture.drawio) and rendered SVG views ([system](docs/shader-inference-system.svg), [model](docs/shader-inference-model.svg), [phases](docs/shader-inference-phases.svg)).
 
 ---
 
@@ -506,14 +919,16 @@ This project is meant to be more than a tool—it's a medium. Imagine walking in
 ## 🧠 Project Structure
 
 ```
-audioviz/
-├── audio_processing/
-│   └── audio_processor.py
-├── visualization/
-│   ├── ripple_wave_visualizer.py
-│   └── spectrogram_visualizer.py
-├── utils/
-│   └── signal_processing.py
+src/audioviz/
+├── audio_processing/          # Real-time STFT/mel audio analysis
+├── engine/                    # 2D wave propagation (NumPy, CuPy, OpenGL compute)
+├── offline/                   # Headless active-vision policy comparison & renderers
+├── pose/                      # MediaPipe pose graph & body-mask medium coupling
+├── readouts/                  # Predictive coding, OpenGL shaders, Gaussian precision & uncertainty
+├── sources/                   # Camera, audio, synthetic, circular-dot stimulus, gaze policies & orchestrator
+├── transforms/                # Sensory prediction-error transform configuration
+├── utils/                     # Array backends, OpenGL compute helpers, spatial previews
+└── visualization/             # Main Qt/OpenGL visualizer, active-vision bench, 2D/3D diagnostics
 main.py
 ```
 

@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 
 from audioviz.engine import RippleEngine
 from audioviz.source_controls import ControlValue, SourceControl
+from audioviz.ui.gaze_controls import GazeControls
 
 
 @dataclass(frozen=True)
@@ -172,8 +173,13 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_source_toggle_changed: Optional[Callable[[str, bool], None]] = None,
         before_reset: Optional[Callable[[], bool]] = None,
         on_reset: Optional[Callable[[], None]] = None,
+        gaze_controls: GazeControls | None = None,
+        gaze_description: str = "",
+        parent: QtWidgets.QWidget | None = None,
+        on_belief_diagnostics: Callable[[], None] | None = None,
     ):
-        super().__init__()
+        super().__init__(parent, Qt.Window)
+        self.gaze_controls = gaze_controls
         self.engine = engine
         self.on_speed_changed = on_speed_changed
         self.on_amplitude_changed = on_amplitude_changed
@@ -208,20 +214,48 @@ class RippleControlPanel(QtWidgets.QWidget):
         scroll_area.setWidget(content)
         layout.addWidget(scroll_area)
 
-        info_label = QLabel("Wave physics controls for the ripple field.")
+        info_label = QLabel("Observation, sensory inference, wave physics and display.")
+        info_label.setWordWrap(True)
         content_layout.addWidget(info_label)
 
-        wave_section = CollapsibleSection("Wave Physics", expanded=True)
+        self.reset_button = QtWidgets.QPushButton("Reset Field and Beliefs")
+        self.reset_button.setToolTip(self._tooltip_text(
+            "Clear the field and belief states, retaining learned sensory-pathway weights."
+        ))
+        self.reset_button.clicked.connect(self.reset_field)
+        content_layout.addWidget(self.reset_button)
+        self.wave_dynamics_button = QtWidgets.QPushButton()
+        self.wave_dynamics_button.setCheckable(True)
+        self.wave_dynamics_button.setChecked(engine.wave_propagation_enabled)
+        self.wave_dynamics_button.setToolTip(self._tooltip_text(
+            "Optional wave-equation evolution of the root canvas. Off holds its state "
+            "between explicit drives and sensory corrections, without wave damping or "
+            "spatial propagation. Hidden inference and learning continue. "
+            "Switching off clears wave velocity on the next step."
+        ))
+        self._update_wave_dynamics(engine.wave_propagation_enabled)
+        self.wave_dynamics_button.toggled.connect(self._update_wave_dynamics)
+        content_layout.addWidget(self.wave_dynamics_button)
+        if on_belief_diagnostics is not None:
+            self.beliefs_button = QtWidgets.QPushButton("Attention / Belief Diagnostics")
+            self.beliefs_button.clicked.connect(on_belief_diagnostics)
+            content_layout.addWidget(self.beliefs_button)
+
+        if gaze_controls is not None:
+            gaze_section = CollapsibleSection("Gaze and Observation", expanded=True)
+            self.section_widgets["gaze"] = gaze_section
+            self.section_toggle_keys["gaze"] = None
+            gaze_section.content_layout.addWidget(gaze_controls)
+            gaze_controls.show()
+            description = QLabel(gaze_description)
+            description.setWordWrap(True)
+            gaze_section.content_layout.addWidget(description)
+            content_layout.addWidget(gaze_section)
+
+        wave_section = CollapsibleSection("Wave Physics", expanded=gaze_controls is None)
         self.section_widgets["wave-physics"] = wave_section
         self.section_toggle_keys["wave-physics"] = None
         group_layout = wave_section.content_layout
-
-        reset_button = QtWidgets.QPushButton("Reset Field")
-        reset_button.setToolTip(self._tooltip_text(
-            "Clear the field and belief states, retaining learned sensory-pathway weights."
-        ))
-        reset_button.clicked.connect(self.reset_field)
-        group_layout.addWidget(reset_button)
 
         self.decay_label, self.decay_slider = self._add_slider(
             group_layout,
@@ -308,6 +342,11 @@ class RippleControlPanel(QtWidgets.QWidget):
             on_change=lambda raw: self.update_boundary_dissipation(raw / 100.0),
         )
 
+        display_section = CollapsibleSection("Display", expanded=False)
+        self.section_widgets["display"] = display_section
+        self.section_toggle_keys["display"] = None
+        group_layout = display_section.content_layout
+
         self.rgb_canvas_checkbox = QCheckBox("RGB Canvas")
         self.rgb_canvas_checkbox.setToolTip(self._tooltip_text(
             "Display the three canvas-state channels directly as red, green, and blue. "
@@ -370,8 +409,6 @@ class RippleControlPanel(QtWidgets.QWidget):
             on_change=lambda raw: self.update_auto_color_floor(raw / 100.0),
         )
 
-        content_layout.addWidget(wave_section)
-
         source_controls_group = QtWidgets.QGroupBox("Source Controls")
         source_controls_layout = QtWidgets.QVBoxLayout(source_controls_group)
         if self.source_toggles:
@@ -384,6 +421,7 @@ class RippleControlPanel(QtWidgets.QWidget):
                 self.section_toggle_keys[section.key] = section.toggle_key
                 source_group_layout = QtWidgets.QFormLayout()
                 source_group_layout.setContentsMargins(0, 0, 0, 0)
+                source_group_layout.setRowWrapPolicy(QtWidgets.QFormLayout.WrapLongRows)
                 if section.controls:
                     for control in section.controls:
                         widget = self._create_source_control_widget(section.key, control)
@@ -412,6 +450,8 @@ class RippleControlPanel(QtWidgets.QWidget):
                 )
             )
         content_layout.addWidget(source_controls_group)
+        content_layout.addWidget(wave_section)
+        content_layout.addWidget(display_section)
 
         content_layout.addStretch(1)
 
@@ -455,6 +495,12 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.engine.reset()
         if self.on_reset is not None:
             self.on_reset()
+
+    def _update_wave_dynamics(self, enabled: bool) -> None:
+        self.engine.set_wave_propagation(enabled)
+        self.wave_dynamics_button.setText(
+            f"Surprise: wave dynamics {'ON' if enabled else 'OFF'}"
+        )
 
     def update_speed(self, val: float) -> None:
         self.engine.set_speed(val)
@@ -639,11 +685,11 @@ class RippleControlPanel(QtWidgets.QWidget):
 
     def _add_source_toggle_controls(self, layout: QtWidgets.QVBoxLayout) -> None:
         row = QtWidgets.QWidget()
-        row_layout = QtWidgets.QHBoxLayout(row)
+        row_layout = QtWidgets.QGridLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(8)
-        row_layout.addWidget(QLabel("Active Sources:"))
-        for toggle in self.source_toggles:
+        row_layout.addWidget(QLabel("Active Sources:"), 0, 0, 1, 2)
+        for index, toggle in enumerate(self.source_toggles):
             checkbox = QCheckBox(toggle.label)
             checkbox.setChecked(toggle.enabled)
             checkbox.setEnabled(toggle.available)
@@ -651,8 +697,7 @@ class RippleControlPanel(QtWidgets.QWidget):
                 lambda checked, key=toggle.key: self._emit_source_toggle_change(key, checked)
             )
             self.source_toggle_checkboxes[toggle.key] = checkbox
-            row_layout.addWidget(checkbox)
-        row_layout.addStretch(1)
+            row_layout.addWidget(checkbox, 1 + index // 2, index % 2)
         layout.addWidget(row)
 
     def _emit_source_toggle_change(self, source_key: str, enabled: bool) -> None:
