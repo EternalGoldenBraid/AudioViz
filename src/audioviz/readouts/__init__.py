@@ -15,6 +15,10 @@ from audioviz.readouts.rc_spiking_predictive_coding import (
     RCSpikingPredictiveCodingGraph,
     RCSpikingSnapshot,
 )
+from audioviz.readouts.continuous_scene_predictive_coding import (
+    ContinuousScenePredictiveCodingGraph,
+    ContinuousSceneSnapshot,
+)
 
 __all__ = [
     "IdentityRGBReadout",
@@ -33,4 +37,6 @@ __all__ = [
     "SharedPredictiveCodingSnapshot",
     "RCSpikingPredictiveCodingGraph",
     "RCSpikingSnapshot",
+    "ContinuousScenePredictiveCodingGraph",
+    "ContinuousSceneSnapshot",
 ]
