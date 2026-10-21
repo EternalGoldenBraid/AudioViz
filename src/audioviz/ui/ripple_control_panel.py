@@ -237,9 +237,9 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.wave_dynamics_button.toggled.connect(self._update_wave_dynamics)
         content_layout.addWidget(self.wave_dynamics_button)
         if on_belief_diagnostics is not None:
-            beliefs_button = QtWidgets.QPushButton("Attention / Belief Diagnostics")
-            beliefs_button.clicked.connect(on_belief_diagnostics)
-            content_layout.addWidget(beliefs_button)
+            self.beliefs_button = QtWidgets.QPushButton("Attention / Belief Diagnostics")
+            self.beliefs_button.clicked.connect(on_belief_diagnostics)
+            content_layout.addWidget(self.beliefs_button)
 
         if gaze_controls is not None:
             gaze_section = CollapsibleSection("Gaze and Observation", expanded=True)

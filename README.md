@@ -267,6 +267,53 @@ and missing-error values as `null`.
 The world seed and clock are also recorded. This is a metric log, not a
 complete replay of arbitrary source/wave-control interventions.
 
+#### Continuous RC-spiking prototype
+
+The bench model selector also provides an **RC-spiking prototype**, without
+changing production `main.py` or the default PC control:
+
+```bash
+.venv/bin/python -m audioviz.visualization.static_world_bench \
+    --model rc-spiking --static-scene
+```
+
+Switching models starts a fresh seeded trial. Live controls expose the RC time
+constant `tau = R*C`, capacitance `C` in model units, derived resistance `R`,
+and ternary spike threshold. Defaults are `tau=1/3` seconds, `C=0.02` and
+threshold `0.02`; CLI options are `--memory-time-constant`,
+`--membrane-capacitance` and `--spike-threshold`.
+**Model controls** exposes RC microsteps and current gain, plus learning and
+canvas feedback. Microsteps subdivide one fixed `--dt`; zero current gain
+still permits passive leak. Forecast and conditioned replay cover the **same**
+physical interval, not two successive intervals.
+
+Membrane voltage, emitted signed spikes and the decoded leaky hidden state are
+distinct. This is not DiffPC, a monotone energy solver, or a fully event-driven
+implementation: dense numerical computations remain. RC has no Gaussian
+covariance or expected-information-gain policy; autonomous gaze and unsupported
+diagnostic popups are disabled.
+
+The RC model is **bias-free**: learning changes connection weights, not a
+constant hidden drive or output offset. Learned connections persist when
+Observe is off, while unforced hidden activity returns to a neutral-gray
+foveal prediction. This restriction is specific to RC; the PC control retains
+its existing bias learning.
+
+**Observe off is not the same as unforced.** A held nonzero canvas, residual
+membrane charge and recurrent pulses can still produce spikes. To isolate
+decay, keep canvas feedback off, gaze locked and the root canvas at zero,
+observe for a few steps, then turn Observe off while continuing to step/run.
+Once spikes stop, hidden activity decays exactly by `exp(-dt/tau)`.
+**Outside-fovea pixels remain cached; they are not aged or faded.**
+
+RC plots separate counterfactual forecast hidden spikes from committed hidden
+spikes, show committed hidden-state magnitude, and measure the current valid
+foveal forecast's distance from `0.5`. That forecast precedes evidence and
+can differ from the same step's committed state. Residual energy is diagnostic,
+not guaranteed to decrease. JSON also records sensory-error spikes, voltages,
+RC parameters and committed total spikes; counterfactual and conditioned spike
+counts are never added as though both trajectories physically occurred.
+
 ---
 
 ## 🧍 Pose Model

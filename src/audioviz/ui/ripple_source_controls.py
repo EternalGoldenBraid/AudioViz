@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from audioviz.readouts.rc_spiking_predictive_coding import RCSpikingPredictiveCodingGraph
 
 from audioviz.source_controls import (
     CameraFrameSourceControls,
@@ -154,6 +155,38 @@ class RippleSourceControlBinding:
                 ) if control.key == "inference_steps" else control
                 for control in learning_controls if control.key != "cross_modal_enabled"
             )
+            if isinstance(graph, RCSpikingPredictiveCodingGraph):
+                descriptions = {
+                    "graph_backend": (
+                        None,
+                        "CPU float64 RC-spiking; GPU pixels; foveal gathers."
+                        if visualizer.use_shader else
+                        "CuPy float64 RC-spiking; float32 pixels." if visualizer.use_gpu else
+                        "NumPy float64 RC-spiking; float32 pixels.",
+                        "Bias-free RC dynamics; no Gaussian covariance or expected information gain.",
+                    ),
+                    "inference_steps": (
+                        "RC Microsteps", None,
+                        "Subdivide one fixed physical interval; this is not an energy-minimizing solver budget.",
+                    ),
+                    "inference_rate": (
+                        "RC Current Gain", None,
+                        "Gain of the RC driving currents; zero removes current integration, not passive RC leak.",
+                    ),
+                    "learning_enabled": (
+                        "Learn Connection Weights", None,
+                        "Update RC connection weights after observed evidence. Biases stay zero; learned connections persist when Observe is off.",
+                    ),
+                }
+                learning_controls = tuple(
+                    replace(
+                        control,
+                        label=descriptions[control.key][0] or control.label,
+                        default=descriptions[control.key][1] or control.default,
+                        tooltip=descriptions[control.key][2],
+                    ) if control.key in descriptions else control
+                    for control in learning_controls
+                )
         elif uncertainty_active:
             learning_controls = tuple(
                 replace(

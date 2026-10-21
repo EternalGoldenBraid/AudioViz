@@ -115,6 +115,47 @@ def test_bench_uses_actual_model_fixed_clock_and_missing_evidence_gaps(qapp, req
         bench.close()
 
 
+@pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
+def test_learned_rc_foveal_prediction_decays_without_erasing_connections(qapp, request, backend):
+    if backend == "cupy":
+        request.getfixturevalue("cupy_backend")
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("Native widget requires a window-system context")
+    bench = StaticWorldBench(
+        resolution=(40, 60), foveal_radius=4, backend=backend,
+        model="rc-spiking", motion_enabled=False,
+    )
+    bench.lock_gaze.setChecked(True)
+    bench.show()
+    qapp.processEvents()
+    try:
+        source = bench.visualizer.source_orchestrator
+        graph = source.sensory_graph
+        initial_weights = to_numpy(graph.sensory_weights).copy()
+        source.update_pathway_config(learning_enabled=True)
+        for _ in range(160):
+            observed = bench.step_once()
+        assert observed.learning_updates == 160
+        assert observed.decoded_hidden_norm > .01
+        np.testing.assert_array_equal(to_numpy(graph.hidden_bias), 0.)
+        np.testing.assert_array_equal(to_numpy(graph.sensory_bias), 0.)
+        assert not np.array_equal(to_numpy(graph.sensory_weights), initial_weights)
+        learned = {name: to_numpy(getattr(graph, name)).copy() for name in graph._PARAMETERS}
+        bench.visualizer.gaze_controls.observe.setChecked(False)
+        first_free = bench.step_once()
+        for _ in range(89):
+            resting = bench.step_once()
+        assert bench.capture.read_count == 160
+        assert resting.forecast_mse is None and resting.learning_updates == 160
+        assert resting.condition_error_spikes == 0 and resting.committed_hidden_spikes == 0
+        assert resting.decoded_hidden_norm < observed.decoded_hidden_norm * .01
+        assert resting.neutral_visual_mae < first_free.neutral_visual_mae * .01
+        for name, weights in learned.items():
+            np.testing.assert_array_equal(to_numpy(getattr(graph, name)), weights)
+    finally:
+        bench.close()
+
+
 def spatial_field(value):
     if hasattr(value, "download"):
         return value.download()
@@ -361,5 +402,107 @@ def test_cli_static_control_reaches_the_same_bench(qapp, monkeypatch):
         assert module.main(["--static-scene", "--brownian-scale", "6", "--backend", "numpy"]) == 0
         assert created[0]["motion_enabled"] is False
         assert created[0]["brownian_scale"] == 6 and created[0]["backend"] == "numpy"
+        assert created[0]["model"] == "pc"
+        assert module.main([
+            "--model", "rc-spiking", "--memory-time-constant", ".7",
+            "--spike-threshold", ".01", "--membrane-capacitance", ".03",
+        ]) == 0
+        assert created[1]["model"] == "rc-spiking"
+        assert created[1]["memory_time_constant"] == .7
+        assert created[1]["spike_threshold"] == .01 and created[1]["membrane_capacitance"] == .03
     finally:
         qapp.setStyleSheet(old_style)
+
+
+@pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
+def test_rc_bench_routes_real_evidence_exposes_live_parameters_and_records_unforced_decay(
+    qapp, request, backend, tmp_path,
+):
+    from audioviz.readouts import RCSpikingPredictiveCodingGraph
+    from audioviz.visualization.static_world_bench import RCSceneStepMetrics
+
+    if backend == "cupy":
+        request.getfixturevalue("cupy_backend")
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("Native widget requires a window-system context")
+    bench = StaticWorldBench(
+        resolution=(40, 60), foveal_radius=4, backend=backend, model="rc-spiking",
+        inference_rate=1., spike_threshold=.001, memory_time_constant=.2, motion_enabled=False,
+    )
+    bench.lock_gaze.setChecked(True)
+    bench.show()
+    qapp.processEvents()
+    try:
+        source = bench.visualizer.source_orchestrator
+        graph, io = source.sensory_graph, source.graph_io
+        assert isinstance(graph, RCSpikingPredictiveCodingGraph)
+        assert not bench.visualizer.gaze_controls.autonomous_gaze.isEnabled()
+        assert not bench.visualizer.diagnostics_button.isEnabled()
+        assert not bench.visualizer.scene_button.isEnabled()
+        assert bench.rc_controls.isVisible() and bench.rc_plots.isVisible()
+        bench.lock_gaze.setChecked(False)
+        assert not bench.visualizer.gaze_controls.autonomous_gaze.isEnabled()
+        bench.lock_gaze.setChecked(True)
+        first = bench.step_once()
+        assert isinstance(first, RCSceneStepMetrics) and first.observed_rgb == 49*3
+        assert first.condition_error_spikes > 0
+        np.testing.assert_array_equal(
+            to_numpy(graph.evidence[graph.visual_slice]).reshape(-1, 3)[io.valid],
+            bench.scene[tuple(io.positions[io.valid].T)].astype(np.float32)/255,
+        )
+        bench.controls_button.click()
+        panel = bench.visualizer.control_panel
+        assert not panel.beliefs_button.isEnabled()
+        assert "RC-spiking" in panel.source_control_widgets["learning-dynamics", "graph_backend"].text()
+        assert "curvature" not in panel.source_control_widgets["learning-dynamics", "graph_backend"].text()
+        bench.rc_tau.setValue(.8)
+        bench.rc_threshold.setValue(.003)
+        bench.rc_capacitance.setValue(.04)
+        assert graph.memory_time_constant == .8 and graph.spike_threshold == .003
+        assert graph.membrane_capacitance == .04 and graph.membrane_resistance == 20.
+        source.update_pathway_config(inference_rate=0.)
+        bench.visualizer.gaze_controls.observe.setChecked(False)
+        graph.mean[graph.hidden_slice] = .4
+        graph.hidden_potential.fill(0)
+        graph.error_potential.fill(0)
+        graph.last_hidden_spikes.fill(0)
+        graph.last_error_spikes.fill(0)
+        before = to_numpy(graph.mean[graph.hidden_slice]).copy()
+        missing = bench.step_once()
+        assert missing.forecast_mse is None and missing.settled_mse is None
+        assert missing.condition_error_spikes == 0 and missing.condition_hidden_spikes == 0
+        assert bench.capture.read_count == 1 and graph.updates == 0
+        np.testing.assert_allclose(
+            to_numpy(graph.mean[graph.hidden_slice]), before*np.exp(-bench.dt/.8), atol=1e-12,
+        )
+        assert bench.neutral_curve.getData()[1][-1] == missing.neutral_visual_mae
+        assert bench.hidden_norm_curve.getData()[1][-1] == missing.decoded_hidden_norm
+        assert bench.spike_curves[0].getData()[1][-1] == missing.forecast_hidden_spikes
+        assert bench.spike_curves[1].getData()[1][-1] == missing.committed_hidden_spikes
+        path = tmp_path / "rc-trace.json"
+        bench.save_trace(path)
+        trace = json.loads(path.read_text())
+        assert trace["model"] == "rc-spiking" and trace["memory_time_constant"] == .8
+        assert trace["spike_threshold"] == .003
+        assert trace["membrane_capacitance"] == .04 and trace["membrane_resistance"] == 20.
+        assert trace["frames"][-1]["neutral_visual_mae"] == missing.neutral_visual_mae
+        bench.new_trial()
+        qapp.processEvents()
+        graph = bench.visualizer.source_orchestrator.sensory_graph
+        assert isinstance(graph, RCSpikingPredictiveCodingGraph)
+        assert graph.memory_time_constant == .8 and graph.spike_threshold == .003
+        assert graph.membrane_capacitance == .04
+        assert not bench.history and bench.capture.read_count == 0
+        np.testing.assert_array_equal(to_numpy(graph.hidden_potential), 0)
+        np.testing.assert_array_equal(to_numpy(graph.mean[graph.hidden_slice]), 0)
+        bench.model_selector.setCurrentIndex(bench.model_selector.findData("pc"))
+        qapp.processEvents()
+        assert not isinstance(bench.visualizer.source_orchestrator.sensory_graph, RCSpikingPredictiveCodingGraph)
+        assert not bench.rc_controls.isVisible() and not bench.rc_plots.isVisible()
+        bench.lock_gaze.setChecked(False)
+        assert bench.visualizer.gaze_controls.autonomous_gaze.isEnabled()
+        assert bench.visualizer.diagnostics_button.isEnabled()
+        bench.visualizer.gaze_controls.observe.setChecked(True)
+        assert not bench.history and bench.step_once().observed_rgb > 0
+    finally:
+        bench.close()

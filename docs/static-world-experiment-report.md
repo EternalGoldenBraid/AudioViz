@@ -10,6 +10,9 @@ consolidation did not change the implementation pause recorded below.
 
 ## Current canvas ablation and prediction-persistence boundary
 
+This section describes the unchanged PC control. The bias-free RC experiment
+and its different resting-state contract are recorded separately below.
+
 Main and the bench now default to a **held root canvas**, with no autonomous
 wave propagation or damping. **Controls > Surprise: wave dynamics OFF/ON**
 restores the existing wave equation. Explicit drives and sensory-gradient
@@ -47,6 +50,61 @@ DiffPC uses non-leaky difference accumulators and signed ternary spikes to
 communicate state changes. The reconstructed signal persists when spike
 traffic stops; threshold refinement is not prediction decay. Spiking alone
 does not expire stale display history or define temporal-world dynamics.
+
+## Follow-up: continuous RC-spiking bench prototype
+
+The bench now offers an explicit `--model rc-spiking` experiment alongside the
+unchanged default PC control. It reuses the production camera routing, foveal
+gather/scatter and renderer. Production main remains on the PC model.
+The numerical graph runs on NumPy or CuPy; OpenGL retains the existing
+CPU-float64 graph with GPU pixel routing.
+
+The RC model separates leaky membrane voltages, ternary threshold/reset spikes,
+and a leaky decoded hidden state. For `M` microsteps over one physical `dt`,
+`alpha = exp(-dt/(M*tau))` and the zero-order-hold current multiplier is
+`tau*(1-alpha)*gain/C`. Constant subthreshold current is invariant to
+microstep count; discrete spike timing remains resolution-dependent.
+Forecast computes the no-evidence counterfactual, and conditioning replays the
+same interval from its saved start with evidence. Observe off commits the
+forecast without a second interval of leak.
+
+Initial bias-enabled prototype, native Qt/OpenGL-rendered validation at
+80x120, radius32, six hidden units,
+locked central gaze, static world, `dt=1/30`, `tau=1/3`, `C=.02`,
+threshold `.02`, eight microsteps and current gain `.1`:
+
+| Intervention | Result |
+| --- | --- |
+| Fresh trial, learning/feedback off, eight observed steps | 63 hidden spikes, 234,791 sensory-error spikes; final hidden L2 norm `0.135587` |
+| Observe off for 90 further steps, without clearing any model state | Hidden norm `0.000016733`; current foveal forecast MAE from neutral `0.0000006837`; camera reads remain eight |
+| Separate fresh trial, learning on for 553 observed steps | Hidden norm `3.943730`; learned hidden-bias norm `2.914397`, output-bias norm `37.494134` |
+| Then Observe off for 90 steps | Hidden norm still `3.943730`, 48 committed hidden spikes per step; forecast MAE from neutral `0.349088` |
+
+That learned plateau reproduced the user's report: hidden biases supplied
+tonic currents and output biases defined a learned resting image. The user
+subsequently chose a **bias-free RC model**: only connection weights learn,
+both bias arrays remain zero, and unforced predictions have a neutral `0.5`
+resting value. The original PC model retains its biases. Connection weights
+are not forgotten, and outside-fovea display pixels remain a last-visit cache
+with no cosmetic fade. The bias-enabled measurements above record the
+diagnosis, not the corrected model's learning behavior.
+
+The corrected bias-free model was then run with the same 553-step learned
+trial. Hidden magnitude at the end of observation was `3.943730`; after
+90 Observe-off steps it was `0.000499016`, with zero committed hidden spikes
+and current foveal forecast MAE from neutral `0.0000949386`. Both bias arrays
+remained zero, and all learned connection matrices were unchanged throughout
+the no-evidence interval. The rendered foveal forecast returned to gray
+without clearing state or fading the display. NumPy, CuPy and OpenGL bench
+regressions also exercise actual camera-routed learning followed by decay.
+
+Controls expose tau, capacitance, derived resistance and spike threshold.
+Plots/export distinguish counterfactual and committed spike counts, committed
+hidden magnitude and valid-aperture pre-evidence distance from neutral.
+Residual energy is not monotonic. Gaussian covariance, EIG and autonomous
+gaze are unavailable for this prototype. These results establish its RC
+integration and persistence boundaries, not DiffPC equivalence, generalization,
+event-driven hardware efficiency or real-time throughput.
 
 ## Follow-up: Brownian scene-motion experiment
 
