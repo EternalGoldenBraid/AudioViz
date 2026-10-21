@@ -106,6 +106,38 @@ gaze are unavailable for this prototype. These results establish its RC
 integration and persistence boundaries, not DiffPC equivalence, generalization,
 event-driven hardware efficiency or real-time throughput.
 
+### Design checkpoint: gaze objective and peripheral state
+
+The intended live interface has only **mouse** and **autonomous** gaze.
+Autonomous gaze must follow one explicitly defined active-inference
+epistemic objective: expected reduction of uncertainty about the modeled
+state before observing a candidate patch. Random exploration is not a
+substitute for that objective. Fixed/random policies used by offline
+comparisons do not define additional live behavior.
+
+The PC control currently approximates uncertainty with a single local
+Gauss-Newton Gaussian about its hidden state, not a mixture of Gaussians.
+Its expected information gain is an epistemic objective, not a complete
+expected-free-energy formulation with outcome preferences. The RC graph
+does not yet supply the corresponding uncertainty model, so its autonomous
+toggle remains disabled pending that formulation.
+
+Observation support and dynamical support are separate: **evidence enters
+only through the fovea, while every represented dynamical belief must
+continue evolving without evidence**. The present implementation has a
+dynamic foveal graph and a last-visit image cache. Its peripheral cached
+pixels are not continuously decoded world-coordinate beliefs and have no
+transition or decay law. They cannot be made dynamical by changing the
+hidden leak constant.
+
+Bias-free learning removes the original constant-current memorization
+mechanism, but fitting one static patch still does not establish
+generalization. Negative resting voltage, additional scene noise and a
+cosmetic peripheral fade do not resolve the missing world-state boundary.
+No such changes have been introduced. A whole-scene dynamical belief
+requires an explicit state representation and transition law before its
+uncertainty can meaningfully guide the single autonomous gaze policy.
+
 ## Follow-up: Brownian scene-motion experiment
 
 After branch consolidation, the user authorized making the test world move
