@@ -282,7 +282,7 @@ def test_unforced_exact_exponential_rc_decay_toward_neutral_half():
 
 def test_tonic_forcing_sustains_predictions_when_observe_is_off():
     dt = 1 / 30
-    # 1. Held nonzero root canvas sustains tonic hidden spikes and non-neutral predictions
+    # Held nonzero root canvas sustains tonic hidden spikes and non-neutral predictions
     root_forced = _make_rc_graph(
         radius=2,
         hidden_nodes=6,
@@ -305,27 +305,8 @@ def test_tonic_forcing_sustains_predictions_when_observe_is_off():
     assert np.linalg.norm(root_forced.mean[root_forced.hidden_slice]) > 0.01
     assert float(np.mean(np.abs(root_forced.visual_prediction - 0.5))) > 1e-3
 
-    # 2. Learned/nonzero sensory_bias sustains non-neutral prediction even when h -> 0
-    bias_forced = _make_rc_graph(
-        radius=2,
-        hidden_nodes=6,
-        inference_steps=6,
-        inference_rate=0.1,
-        memory_time_constant=0.05,
-        spike_threshold=0.02,
-        seed=3,
-    )
-    bias_forced.sensory_bias[: bias_forced.visual_nodes] = 0.8
-    zero_canvas = np.zeros(bias_forced.visual_shape + (3,))
-    for _ in range(6):
-        bias_forced.forecast(zero_canvas, dt=dt)
-        bias_forced.condition(None, None)
-    np.testing.assert_allclose(bias_forced.mean[bias_forced.hidden_slice], 0.0, atol=1e-15)
-    expected_val = 1.0 / (1.0 + np.exp(-0.8))
-    np.testing.assert_allclose(bias_forced.visual_prediction, expected_val, atol=1e-6)
 
-
-def test_learned_biases_remain_tonic_drives_without_observation():
+def test_learned_weights_preserved_with_zero_biases_and_observe_off_decay():
     graph = _make_rc_graph(
         radius=2, audio_nodes=0, learning_enabled=True, learning_rate=.03,
         memory_time_constant=1/3,
@@ -335,19 +316,23 @@ def test_learned_biases_remain_tonic_drives_without_observation():
     for _ in range(160):
         graph.forecast(canvas, dt=1/30)
         graph.condition(target)
-    assert np.linalg.norm(graph.hidden_bias) > .1
-    assert np.linalg.norm(graph.sensory_bias) > .1
+    # Biases are permanently disabled (zero DC battery) while synaptic weights learn
+    np.testing.assert_allclose(graph.hidden_bias, 0.0, atol=1e-15)
+    np.testing.assert_allclose(graph.sensory_bias, 0.0, atol=1e-15)
+    assert np.linalg.norm(graph.mean[graph.hidden_slice]) > 0.05
+    initial_post_learn_mae = float(np.mean(np.abs(posterior_visual_prediction(graph) - 0.5)))
+    assert initial_post_learn_mae > 0.02
     learned = {name: getattr(graph, name).copy() for name in graph._PARAMETERS}
-    graph.set_learning(False)
 
-    # Disabling learning stops parameter updates, not currents from learned biases.
+    # Without artificial state clearing, Observe off lets residual membrane potential
+    # and decoded RC state leak to 0 and predictions decay back to neutral 0.5
     for _ in range(90):
         graph.forecast(canvas, dt=1/30)
         graph.condition()
         assert graph.condition_error_spikes == 0
-    assert graph.committed_hidden_spikes > 0
-    assert np.linalg.norm(graph.mean[graph.hidden_slice]) > .1
-    assert np.mean(np.abs(graph.visual_prediction - .5)) > .1
+    assert graph.committed_hidden_spikes == 0
+    assert np.linalg.norm(graph.mean[graph.hidden_slice]) < 1e-3
+    assert float(np.mean(np.abs(graph.visual_prediction - 0.5))) < 1e-3
     assert graph.updates == 160
     for name, parameter in learned.items():
         np.testing.assert_array_equal(getattr(graph, name), parameter)

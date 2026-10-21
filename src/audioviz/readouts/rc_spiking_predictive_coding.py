@@ -72,16 +72,16 @@ class RCSpikingPredictiveCodingGraph:
        $s_e \\in \\{-1, 0, +1\\}^S$, representing discrete current pulses.
     3. **Decoded RC belief state** $h = \\text{mean}[\\text{hidden\\_slice}] \\in \\mathbb{R}^H$,
        a leaky postsynaptic RC capacitor ($h \\leftarrow \\alpha_{\\text{sub}} h + \\theta s_h$)
-       decoded into sensory predictions $\\hat{y}_s = \\sigma(W_s \\tanh(h) + b_s)$.
+       decoded into bias-free sensory predictions $\\hat{y}_s = \\sigma(W_s \\tanh(h))$.
 
-    Subtractive reset reduces $v_h$ while transferring charge $\\theta s_h$ into $h$,
-    so spike emission advances the decoded belief rather than erasing it. When
-    external/tonic forcing is zero ($r_{\\mathcal{A}} = 0, b_h = 0$, no clamped
-    evidence) and $|v_h| < \\theta$, no spikes fire and $h$ decays over each frame
-    by the exact RC factor $\\exp(-\\Delta t / \\tau_m)$, driving $\\hat{y}_v \\to \\sigma(b_s)$
-    (neutral $0.5$ when $b_s = 0$). Maintaining a non-neutral belief against the
-    $1/R$ leak requires ongoing tonic spiking from sensory evidence, held root
-    canvas $r_{\\mathcal{A}} \\neq 0$, or nonzero biases.
+    Biases are disabled ($b_h = 0, b_s = 0$) because constant DC offsets do not
+    decay across the $1/R$ membrane leak. Subtractive reset reduces $v_h$ while
+    transferring charge $\\theta s_h$ into $h$, so spike emission advances the
+    decoded belief rather than erasing it. When external forcing is zero
+    ($r_{\\mathcal{A}} = 0$, no clamped evidence) and $|v_h| < \\theta$, no spikes
+    fire and $h$ decays over each frame by the exact RC factor
+    $\\exp(-\\Delta t / \\tau_m)$, driving $\\hat{y}_v \\to \\sigma(0) = 0.5$ even after
+    synaptic weight learning.
 
     This prototype does not fabricate a Gaussian posterior covariance or expected
     information gain; ``candidate_information_gains`` is explicitly unavailable.
@@ -95,7 +95,6 @@ class RCSpikingPredictiveCodingGraph:
     has_gaussian_uncertainty = False
     _PARAMETERS = (
         "canvas_weights", "recurrent_weights", "sensory_weights",
-        "hidden_bias", "sensory_bias",
     )
 
     def __init__(
@@ -275,9 +274,9 @@ class RCSpikingPredictiveCodingGraph:
         root_activity = xp.where(aperture_mask, raw_root_activity, 0.0)
         hidden_error = (
             hidden - self.canvas_weights @ root_activity
-            - self.recurrent_weights @ activity - self.hidden_bias
+            - self.recurrent_weights @ activity
         )
-        logits = self.sensory_weights @ activity + self.sensory_bias
+        logits = self.sensory_weights @ activity
         prediction = 0.5 * (1 + xp.tanh(0.5 * logits))
         sensory_error = xp.where(
             clamped[:self._sensory_nodes],
@@ -317,7 +316,7 @@ class RCSpikingPredictiveCodingGraph:
         root_activity = xp.where(self.aperture_mask, xp.tanh(self.canvas), 0.0)
         return (
             -xp.outer(eh, root_activity), recurrent,
-            -xp.outer(sensory_delta, xp.tanh(hidden)), -eh, -sensory_delta,
+            -xp.outer(sensory_delta, xp.tanh(hidden)),
         )
 
     def _emit_ternary_spikes(self, potential):
@@ -339,7 +338,8 @@ class RCSpikingPredictiveCodingGraph:
             observed, self.evidence[:self._sensory_nodes], prediction,
         )
         self._snapshot_weights = {
-            name: getattr(self, name).copy() for name in self._PARAMETERS
+            name: getattr(self, name).copy()
+            for name in (*self._PARAMETERS, "hidden_bias", "sensory_bias")
         }
         return prediction
 
@@ -356,6 +356,8 @@ class RCSpikingPredictiveCodingGraph:
         """Clear membrane potentials, decoded state, and spike histories, retaining weights."""
         xp = self.backend
         self._pending = False
+        self.hidden_bias.fill(0.0)
+        self.sensory_bias.fill(0.0)
         self.canvas = xp.zeros(self.visual_nodes, dtype=xp.float64)
         self.aperture_mask = xp.ones(self.visual_nodes, dtype=bool)
         self.mean = xp.zeros(self.total_nodes, dtype=xp.float64)
@@ -450,7 +452,7 @@ class RCSpikingPredictiveCodingGraph:
         clip = self.config.gradient_clip
 
         root_activity = xp.where(aperture, xp.tanh(self.canvas), 0.0)
-        external_drive = self.canvas_weights @ root_activity + self.hidden_bias
+        external_drive = self.canvas_weights @ root_activity
 
         hidden, v_h, v_e, prev_spikes = (arr.copy() for arr in self._interval_start)
         forecast_spikes_per_step: list[int] = []
@@ -539,7 +541,7 @@ class RCSpikingPredictiveCodingGraph:
             hidden, v_h, v_e_start, prev_spikes = (arr.copy() for arr in self._interval_start)
             v_e = xp.where(sensory_observed, v_e_start, 0.0)
             root_activity = xp.where(self.aperture_mask, xp.tanh(self.canvas), 0.0)
-            external_drive = self.canvas_weights @ root_activity + self.hidden_bias
+            external_drive = self.canvas_weights @ root_activity
 
             for _ in range(steps):
                 (
