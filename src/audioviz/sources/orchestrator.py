@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import Callable
 
 import numpy as np
 
@@ -15,6 +16,7 @@ from audioviz.readouts.predictive_coding import PredictiveCodingHiddenCoupling, 
 from audioviz.readouts.gaussian_audio_uncertainty import GaussianAudioUncertainty
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
+from audioviz.readouts.rc_spiking_predictive_coding import RCSpikingPredictiveCodingGraph
 from audioviz.readouts.shared_sensory_io import SharedSensoryBranch, SharedSensoryIO
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
 from audioviz.sources.gaze import ActiveVisionConfig, GazePolicy
@@ -22,6 +24,9 @@ from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceCon
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 from audioviz.transforms.prediction_error import PredictionErrorTransform
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
+
+
+SharedGraphFactory = Callable[..., SharedPredictiveCodingGraph | RCSpikingPredictiveCodingGraph]
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,7 @@ class RippleSourceOrchestrator:
         camera_capture=None,
         visual_readout: VisualReadout | None = None,
         shared_sensory_graph: ActiveVisionConfig | None = None,
+        shared_graph_factory: SharedGraphFactory = SharedPredictiveCodingGraph,
     ) -> None:
         self.config = config
         self.engine = engine
@@ -87,7 +93,7 @@ class RippleSourceOrchestrator:
                 backend=engine.backend,
                 device=self.shader_model.device if self.shader_model is not None else None,
             )
-            self.sensory_graph = SharedPredictiveCodingGraph(
+            self.sensory_graph = shared_graph_factory(
                 visual_shape=self.graph_io.visual_shape, backend=engine.backend,
                 hidden_nodes=config.visual_pathway.hidden_channels,
                 config=replace(config.visual_pathway, dtype="float64", spatial_precision=None),

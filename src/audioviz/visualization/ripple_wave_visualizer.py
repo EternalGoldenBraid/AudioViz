@@ -7,6 +7,8 @@ from PyQt5 import QtCore, QtWidgets
 from audioviz.engine import RippleEngine
 from audioviz.physics import BoundaryCondition
 from audioviz.sources import RippleSourceOrchestrator, RippleSourceOrchestratorConfig
+from audioviz.sources.orchestrator import SharedGraphFactory
+from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
 from audioviz.sources.gaze import ActiveVisionConfig, GazePolicy
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
@@ -142,6 +144,7 @@ class RippleWaveVisualizer(VisualizerBase):
                  active_vision: ActiveVisionConfig | None = None,
                  forecast_dt: float | None = None,
                  wave_propagation_enabled: bool = True,
+                 shared_graph_factory: SharedGraphFactory = SharedPredictiveCodingGraph,
                  **kwargs):
         if forecast_dt is not None and (
             isinstance(forecast_dt, bool) or not np.isfinite(forecast_dt) or forecast_dt <= 0
@@ -255,6 +258,7 @@ class RippleWaveVisualizer(VisualizerBase):
             resolution=self.resolution,
             n_sources=self.n_sources,
             camera_capture=camera_capture,
+            shared_graph_factory=shared_graph_factory,
             shared_sensory_graph=(
                 active_vision if active_vision is not None and active_vision.shared_sensory_graph else None
             ),
