@@ -4,11 +4,14 @@ import numpy as np
 import pytest
 
 from audioviz.offline.static_world_metrics import (
+    RCSpikingWorldMetrics,
     StaticWorldMetrics,
+    measure_rc_spiking_step,
     measure_static_world_step,
     posterior_visual_prediction,
 )
 from audioviz.readouts.predictive_coding import PredictiveCodingConfig
+from audioviz.readouts.rc_spiking_predictive_coding import RCSpikingPredictiveCodingGraph
 from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
 from audioviz.readouts.shared_sensory_io import circular_foveal_offsets
 
@@ -372,3 +375,78 @@ def test_cupy_backend_parity():
         posterior_visual_prediction(np_graph),
         atol=1e-14,
     )
+
+
+def test_rc_spiking_metrics_and_tonic_vs_unforced_decay():
+    rng = np.random.default_rng(73)
+    offsets = circular_foveal_offsets(3)
+    cfg = PredictiveCodingConfig(
+        dtype="float64",
+        hidden_channels=6,
+        inference_steps=8,
+        inference_rate=0.12,
+        learning_enabled=False,
+        learning_rate=0.05,
+    )
+    graph = RCSpikingPredictiveCodingGraph(
+        visual_shape=(len(offsets), 1),
+        audio_nodes=8,
+        hidden_nodes=6,
+        config=cfg,
+        memory_time_constant=0.18,
+        spike_threshold=0.02,
+        seed=23,
+    )
+    zero_canvas = np.zeros((len(offsets), 1, 3))
+    target = rng.uniform(0.75, 0.95, size=(len(offsets), 1, 3))
+
+    with pytest.raises(RuntimeError, match="requires a posterior graph"):
+        measure_rc_spiking_step(graph, step=0, dt=1 / 30, gaze=(0.5, 0.5))
+
+    # Active observation phase: tonic error/hidden spikes counter the RC leak
+    observed_metrics: list[RCSpikingWorldMetrics] = []
+    for step_idx in range(4):
+        graph.forecast(zero_canvas, dt=1 / 30)
+        graph.condition(target)
+        m = measure_rc_spiking_step(graph, step=step_idx, dt=1 / 30, gaze=(0.5, 0.5))
+        assert isinstance(m, StaticWorldMetrics)
+        assert m.observed_rgb == len(offsets) * 3
+        assert m.forecast_mse is not None and m.settled_mse is not None
+        assert m.total_spikes > 0
+        assert len(m.hidden_spike_trajectory) == 8
+        assert len(m.error_spike_trajectory) == 8
+        observed_metrics.append(m)
+
+    assert observed_metrics[-1].settled_mse < observed_metrics[0].forecast_mse
+    post_pred = posterior_visual_prediction(graph)
+    assert post_pred.shape == (len(offsets), 1, 3)
+
+    # Unforced no-evidence phase: MSEs are None, conditioning spikes are 0,
+    # and neutral_visual_mae decays toward 0 as h leaks toward 0 without manual state clearing
+    decay_maes = []
+    decay_norms = []
+    for step_idx in range(4, 10):
+        graph.forecast(zero_canvas, dt=1 / 30)
+        graph.condition(None, None)
+        m = measure_rc_spiking_step(graph, step=step_idx, dt=1 / 30, gaze=(0.5, 0.5))
+        assert m.observed_rgb == 0
+        assert m.forecast_mse is None and m.settled_mse is None
+        assert m.condition_error_spikes == 0
+        assert m.condition_hidden_spikes == 0
+        assert m.total_spikes == m.committed_hidden_spikes
+        assert m.sensory_energy == 0.0
+        decay_maes.append(m.neutral_visual_mae)
+        decay_norms.append(m.decoded_hidden_norm)
+
+    assert decay_maes[-1] < decay_maes[0]
+    assert decay_norms[-1] < decay_norms[0]
+
+    # Boundary aperture_mask check: neutral_visual_mae averages only valid aperture slots
+    aperture = np.zeros((len(offsets), 1), dtype=bool)
+    aperture[:5] = True
+    graph.forecast(zero_canvas, dt=1 / 30, aperture_mask=aperture)
+    graph.condition(None, None)
+    m_boundary = measure_rc_spiking_step(graph, step=10, dt=1 / 30, gaze=(0.0, 0.0))
+    prior_vis = graph.prior_mean[graph.visual_slice].reshape(len(offsets), 3)
+    expected_boundary_mae = float(np.mean(np.abs(prior_vis[:5] - 0.5)))
+    assert m_boundary.neutral_visual_mae == pytest.approx(expected_boundary_mae, abs=1e-15)
