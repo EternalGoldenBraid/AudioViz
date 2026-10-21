@@ -63,17 +63,23 @@ class SharedSensoryBranch:
 class SharedSensoryIO:
     """Route fixed circular slots through world coordinates without resizing weights."""
 
-    def __init__(self, shape, *, radius=8, backend=np, device=None):
+    def __init__(self, shape, *, radius=8, backend=np, device=None, world_anchored=False):
         self.shape = shape
         self.backend = backend
         self.device = device
+        if not isinstance(world_anchored, bool):
+            raise ValueError("world_anchored must be a boolean")
+        self.world_anchored = world_anchored
+        self._world_positions = (
+            np.indices(shape[:2]).reshape(2, -1).T if world_anchored else None
+        )
         self.offsets = circular_foveal_offsets(radius)
         self.radius = radius
-        self.visual_shape = (len(self.offsets), 1)
+        self.visual_shape = tuple(shape[:2]) if world_anchored else (len(self.offsets), 1)
         self.gaze = (.5, .5)
         self.positions, self.valid = self.route(self.gaze)
         self._previous_positions = self.positions.copy()
-        self._previous_valid = np.zeros(len(self.offsets), dtype=bool)
+        self._previous_valid = np.zeros(len(self.positions), dtype=bool)
         self._candidate_indices = None
         self._candidate_samples = None
         if device is None:
@@ -81,7 +87,7 @@ class SharedSensoryIO:
             self._correction = backend.zeros(shape, dtype=backend.float32)
         else:
             self._indices = GLArray(
-                device, (len(self.offsets), 3), np.column_stack((self.positions, self.valid)),
+                device, (len(self.positions), 3), np.column_stack((self.positions, self.valid)),
             )
             self._samples = GLArray(device, (*self.visual_shape, 3))
             self._render_values = GLArray(device, (*self.visual_shape, 3))
@@ -99,15 +105,26 @@ class SharedSensoryIO:
             or not np.isfinite(values).all() or np.any((values < 0) | (values > 1))
         ):
             raise ValueError("gazes must contain pairs of normalized coordinates")
+        if self.world_anchored:
+            positions = np.broadcast_to(self._world_positions, (len(values), *self._world_positions.shape))
+            return positions, np.ones(positions.shape[:-1], dtype=bool)
         centers = np.rint(values[:, ::-1]*(np.asarray(self.shape[:2])-1)).astype(np.intp)
         positions = self.offsets[None, :, :]+centers[:, None, :]
         return positions, np.all((positions >= 0) & (positions < self.shape[:2]), axis=-1)
 
     def set_gaze(self, gaze):
+        positions, valid = self.route(gaze)
         self.gaze = tuple(gaze)
-        self.positions, self.valid = self.route(gaze)
+        self.positions, self.valid = positions, valid
         if self.device is not None:
             self._indices.upload(np.column_stack((self.positions, self.valid)))
+
+    @property
+    def observation_mask(self):
+        if not self.world_anchored:
+            return self.valid.reshape(self.visual_shape)
+        center = np.rint(np.asarray(self.gaze)[::-1]*(np.asarray(self.shape[:2])-1))
+        return (np.sum((self.positions-center)**2, axis=1) <= self.radius**2).reshape(self.visual_shape)
 
     def _gather(self, image, positions, valid, indices=None, output=None):
         if tuple(image.shape) != tuple(self.shape):
@@ -141,6 +158,8 @@ class SharedSensoryIO:
         ).reshape(*self.visual_shape, 3)
 
     def sample_candidates(self, image, gazes):
+        if self.world_anchored:
+            raise RuntimeError("Whole-scene candidate scoring needs a separate observation-mask model")
         positions, valid = self._routes(gazes)
         if self.device is None:
             return self._gather(image, positions, valid), valid
@@ -157,6 +176,10 @@ class SharedSensoryIO:
         ), valid
 
     def nearest_pixel(self, gaze):
+        if self.world_anchored:
+            self.route(gaze)
+            row, col = np.rint(np.asarray(gaze)[::-1]*(np.asarray(self.shape[:2])-1)).astype(int)
+            return (int(row), int(col)), (int(row), int(col))
         index = int(np.flatnonzero(np.all(self.offsets == 0, axis=1))[0])
         return (index, 0), tuple(int(v) for v in self.route(gaze)[0][index])
 

@@ -17,6 +17,7 @@ class ActiveVisionConfig:
     memory_time_constant: float = 1/3
     audio_precision: float | None = None
     shared_sensory_graph: bool = False
+    world_anchored: bool = False
     foveal_radius: int = 8
 
     def __post_init__(self):
@@ -24,6 +25,10 @@ class ActiveVisionConfig:
             raise ValueError("gaze mode must be mouse, autonomous or full")
         if not isinstance(self.shared_sensory_graph, bool):
             raise ValueError("shared_sensory_graph must be a boolean")
+        if not isinstance(self.world_anchored, bool):
+            raise ValueError("world_anchored must be a boolean")
+        if self.world_anchored and not self.shared_sensory_graph:
+            raise ValueError("world_anchored requires a shared sensory graph")
         circular_foveal_offsets(self.foveal_radius)
         if self.shared_sensory_graph and self.mode == "full":
             raise ValueError("Shared foveal PC supports mouse or autonomous gaze, not full-image observation")

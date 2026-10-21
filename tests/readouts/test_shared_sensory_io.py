@@ -68,3 +68,27 @@ def test_larger_disks_keep_fixed_weight_slots_when_gaze_clips_image():
     np.testing.assert_array_equal(samples[~io.valid], 0)
     np.testing.assert_array_equal(samples[io.valid], world[tuple(io.positions[io.valid].T)])
     assert SharedSensoryIO((80, 96, 3), radius=36).visual_shape == (4053, 1)
+
+
+@pytest.mark.parametrize("backend", ("numpy", "cupy"))
+def test_world_anchored_slots_keep_full_domain_and_only_move_observation_mask(request, backend):
+    xp = np if backend == "numpy" else request.getfixturevalue("cupy_backend")
+    io = SharedSensoryIO((15, 21, 3), radius=2, backend=xp, world_anchored=True)
+    world = xp.arange(15*21*3, dtype=xp.float32).reshape(15, 21, 3)
+    assert io.visual_shape == (15, 21) and io.valid.all()
+    positions = io.positions.copy()
+    assert io.observation_mask.sum() == 13
+    np.testing.assert_array_equal(to_numpy(io.sample(world)), to_numpy(world))
+    io.render(world)
+    io.set_gaze((0., 0.))
+    assert io.observation_mask.sum() == 6
+    np.testing.assert_array_equal(io.positions, positions)
+    assert io.nearest_pixel((1., 1.)) == ((14, 20), (14, 20))
+    current_prediction = world*.25
+    np.testing.assert_array_equal(to_numpy(io.render(current_prediction)), to_numpy(current_prediction))
+    np.testing.assert_array_equal(to_numpy(io.scatter(current_prediction)), to_numpy(current_prediction))
+    io.reset()
+    np.testing.assert_array_equal(to_numpy(io._prediction), .5)
+    np.testing.assert_array_equal(to_numpy(io._correction), 0)
+    with pytest.raises(RuntimeError, match="observation-mask"):
+        io.sample_candidates(world, [(.5, .5)])
