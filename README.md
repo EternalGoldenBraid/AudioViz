@@ -187,132 +187,91 @@ allows processing to start without opening audio streams.
 See the [experiment report and open sampling questions](docs/static-world-experiment-report.md)
 for measured results and the current gaze-policy design pause.
 
-Run the **same foveal model and wave pipeline** against a geometric scene with
-seeded Brownian translation, without camera or microphone hardware:
+Run the **continuous whole-scene baseline** against a static geometric scene,
+without camera or microphone hardware:
 
 ```bash
 .venv/bin/python -m audioviz.visualization.static_world_bench
-# Original static-scene control:
-.venv/bin/python -m audioviz.visualization.static_world_bench --static-scene
-# Smaller graph or alternative execution backend:
+# Alternative execution backend and integration settings:
 .venv/bin/python -m audioviz.visualization.static_world_bench \
     --backend numpy --resolution 80 120 --foveal-radius 16 --hidden-units 6 \
     --steps 8 --rate 0.1 --dt 0.03333333333333333
 ```
 
-**Brownian scene motion** starts enabled, with scale `4` pixels/sqrt(second).
-Each step adds independent per-axis `Normal(0, scale^2 * dt)` displacements.
-The world uses seed `0`; its clock advances even with **Observe vision** off.
-Motion belongs to the scene, not the gaze policy, and no independent pixel
-noise or stochastic action selector is added.
+There is **one active bench model**, with no `--model` selector or spike
+threshold/capacitance controls. Production `main.py` remains unchanged.
+The older retinotopic PC and RC-spiking implementations remain available as
+research code, not alternate modes of this baseline.
 
-The scale is adjustable live or with `--brownian-scale`. Displacement is
-continuous, but rendering rounds it to integer pixels, crops at image edges,
-and fills exposed pixels with the scene's dark background. It does not wrap,
-reflect, or clamp the random walk; objects can leave the view. Uncheck the
-motion control to freeze the current position. **New trial** resets the world
-position and RNG along with the model, retaining the chosen motion settings.
+Each world RGB coordinate has a signed, continuous neural state `z`; the
+predicted intensity is `sigmoid(z)`. The complete field is coupled to one
+shared dense recurrent hidden population `h`. These neural states evolve
+every step, including outside the fovea. The forecast image is decoded from
+the complete field each time: **there is no last-visit image cache**.
+The circular fovea gates camera evidence only; it does not move neural
+state slots or their learned connections to another world location.
 
 The bench starts **paused**, with mouse gaze unlocked, learning disabled,
-canvas feedback zero, and wave dynamics off. **Step** advances the world/model
+canvas feedback zero, scene motion off, and no wave dynamics. **Step** advances the world/model
 once and consumes an observation when Observe is enabled; **Run/Pause**
 controls playback.
-**Model controls** opens the application's existing Controls panel: settling
-steps/rate, generative learning, learning rate, and canvas-feedback rate act on
-the actual model. Radius and total hidden count remain startup arguments.
+**Model controls** exposes integration microsteps/gain, connection learning,
+learning rate and root-feedback rate. The leak time constant is also
+adjustable live or with `--memory-time-constant`. Learned connections persist;
+neural activity is transient, with neutral RGB `0.5` at zero state. There are
+no learned constant bias drives. Radius and hidden count are startup arguments.
+The current scene prototype bounds allocations at `16,384` world pixels and
+`64` shared hidden units; these are software guards, not measured hardware
+limits. Unlike the older retinotopic graph, its state and connection storage
+scale with the world image dimensions.
 Move the mouse over the world, prediction, error image, or embedded canvas to
 select gaze. While paused this selects the next sample without consuming
-evidence; **Step/Run** gathers the selected patch through the production router.
+evidence; **Step/Run** conditions on the selected patch through the shared router.
 **Lock gaze** holds that position; turn scene motion off as well for a fixed-patch
 trial. You can also expand **Gaze and Observation** for **Observe vision**, which independently
-gates evidence. Mouse/locked trials skip prospective gaze searches unless joint
-belief diagnostics are explicitly opened. **Autonomous gaze** uses the same
-information-gain policy as main: it can hold its current position when equally
-best-scoring candidates include it. A zero root canvas with shared retinotopic
-weights can produce such ties; stationary gaze alone is not a routing failure.
+gates evidence. **Autonomous gaze is intentionally paused** until its single
+epistemic objective is derived for this scene model. No random fallback,
+mixture-of-Gaussians model or fabricated information score is used.
 
-The world, persistent pre-evidence prediction, and observed-pixel forecast RGB
+The world, live whole-scene pre-evidence prediction, and observed-pixel forecast RGB
 RMSE are shown together. The world's magenta circle marks the selected next gaze;
 prediction/error circles mark the latest sampled aperture. Gray error
 pixels are **unobserved**, not error-free. Plots separate:
 
 - Across-step **forecast MSE before evidence** from **settled decoder MSE
   before that observation's weight update**, on observed RGB coordinates only.
-- The latest observation's **total residual-energy trajectory**, with final
-  hidden and sensory components. Backtracking makes this held-objective total
-  energy non-increasing; sensory MSE alone need not decrease.
+- The latest interval's energy trajectory and the whole-scene neural-field,
+  shared-hidden-state and neutral-distance histories.
 
-With scene motion off, gaze locked, learning and feedback off, expect settling
-within observations and a possible warm-start transient, **not guaranteed
-improvement of future forecasts**.
-Enable learning with feedback still zero to isolate weight adaptation.
-Moving gaze or moving the scene changes the evaluated target, so its MSE curve
-is not a fixed-target learning curve and need not decrease.
-Improvement on one fixed patch can be decoder-bias memorization; it does not
-establish generalization or location-specific scene memory. Positive canvas
-feedback changes the root state; enabling **Surprise** additionally introduces
-wave propagation and damping. A zero settling rate is the no-relaxation
-control; the maximum step count applies to both forecast and conditioning.
+To inspect genuine decay, observe a patch, then disable Observe and continue
+stepping. To inspect peripheral evolution, move gaze to a different patch:
+the previous location retains its own evolving neural state, not a frozen
+rendered value. A nonzero root can still force the graph, so keep feedback
+off for an unforced trial. Fitting a static patch does not establish
+generalization, and MSE is not guaranteed to improve across changing targets.
+Zero inference gain removes inference currents but leaves passive leak active.
 
-**New trial (fresh weights)** restores seed-0 parameters, hidden state, and a
-zero canvas while retaining model settings, gaze, motion settings, and the
-wave enable switch; other source/wave settings return to bench defaults.
+**New trial (fresh weights)** restores seed-0 parameters, the complete scene
+field, hidden state and zero canvas, retaining model settings and gaze.
 The ordinary Controls reset retains learned weights,
 so it is not a fresh trial. Every step uses the fixed `--dt` for model
-forecasting and world motion, independently of pause duration; wave physics
-retains its own CFL timestep. **Save trace** writes JSON containing the latest
+forecasting, independently of pause duration. Forecast and conditioned replay
+resolve the same physical interval, not two successive intervals.
+**Save trace** writes JSON containing the latest
 **512 steps**, including recorded model settings, energy trajectories, gaze, Brownian
 settings, continuous/rendered scene offsets, the per-step wave enable state,
 and missing-error values as `null`.
 The world seed and clock are also recorded. This is a metric log, not a
 complete replay of arbitrary source/wave-control interventions.
 
-#### Continuous RC-spiking prototype
+Motion is deferred by default. The existing Brownian experiment remains
+explicitly opt-in via its checkbox or `--moving-scene`; `--static-scene`
+is accepted for the default. Its seed, scale and trace metadata are unchanged.
 
-The bench model selector also provides an **RC-spiking prototype**, without
-changing production `main.py` or the default PC control:
-
-```bash
-.venv/bin/python -m audioviz.visualization.static_world_bench \
-    --model rc-spiking --static-scene
-```
-
-Switching models starts a fresh seeded trial. Live controls expose the RC time
-constant `tau = R*C`, capacitance `C` in model units, derived resistance `R`,
-and ternary spike threshold. Defaults are `tau=1/3` seconds, `C=0.02` and
-threshold `0.02`; CLI options are `--memory-time-constant`,
-`--membrane-capacitance` and `--spike-threshold`.
-**Model controls** exposes RC microsteps and current gain, plus learning and
-canvas feedback. Microsteps subdivide one fixed `--dt`; zero current gain
-still permits passive leak. Forecast and conditioned replay cover the **same**
-physical interval, not two successive intervals.
-
-Membrane voltage, emitted signed spikes and the decoded leaky hidden state are
-distinct. This is not DiffPC, a monotone energy solver, or a fully event-driven
-implementation: dense numerical computations remain. RC has no Gaussian
-covariance or expected-information-gain policy; autonomous gaze and unsupported
-diagnostic popups are disabled.
-
-The RC model is **bias-free**: learning changes connection weights, not a
-constant hidden drive or output offset. Learned connections persist when
-Observe is off, while unforced hidden activity returns to a neutral-gray
-foveal prediction. This restriction is specific to RC; the PC control retains
-its existing bias learning.
-
-**Observe off is not the same as unforced.** A held nonzero canvas, residual
-membrane charge and recurrent pulses can still produce spikes. To isolate
-decay, keep canvas feedback off, gaze locked and the root canvas at zero,
-observe for a few steps, then turn Observe off while continuing to step/run.
-Once spikes stop, hidden activity decays exactly by `exp(-dt/tau)`.
-**Outside-fovea pixels remain cached; they are not aged or faded.**
-
-RC plots separate counterfactual forecast hidden spikes from committed hidden
-spikes, show committed hidden-state magnitude, and measure the current valid
-foveal forecast's distance from `0.5`. That forecast precedes evidence and
-can differ from the same step's committed state. Residual energy is diagnostic,
-not guaranteed to decrease. JSON also records sensory-error spikes, voltages,
-RC parameters and committed total spikes; counterfactual and conditioned spike
-counts are never added as though both trajectories physically occurred.
+The [experimental RC-spiking explainer](docs/rc-spiking-predictive-coding.html)
+and Page 6 of `docs/predictive-uncertainty-math.drawio` document the historical
+spiking prototype, including its retinotopic/cache limitation. They are
+reference artifacts, not the current continuous-scene architecture.
 
 ---
 

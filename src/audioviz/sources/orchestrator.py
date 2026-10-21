@@ -17,6 +17,7 @@ from audioviz.readouts.gaussian_audio_uncertainty import GaussianAudioUncertaint
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
 from audioviz.readouts.rc_spiking_predictive_coding import RCSpikingPredictiveCodingGraph
+from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
 from audioviz.readouts.shared_sensory_io import SharedSensoryBranch, SharedSensoryIO
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
 from audioviz.sources.gaze import ActiveVisionConfig, GazePolicy
@@ -26,7 +27,9 @@ from audioviz.transforms.prediction_error import PredictionErrorTransform
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 
 
-SharedGraphFactory = Callable[..., SharedPredictiveCodingGraph | RCSpikingPredictiveCodingGraph]
+SharedGraphFactory = Callable[
+    ..., SharedPredictiveCodingGraph | RCSpikingPredictiveCodingGraph | ContinuousScenePredictiveCodingGraph
+]
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,7 @@ class RippleSourceOrchestrator:
                 self.canvas_shape, radius=shared_sensory_graph.foveal_radius,
                 backend=engine.backend,
                 device=self.shader_model.device if self.shader_model is not None else None,
+                world_anchored=shared_sensory_graph.world_anchored,
             )
             self.sensory_graph = shared_graph_factory(
                 visual_shape=self.graph_io.visual_shape, backend=engine.backend,
@@ -339,7 +343,7 @@ class RippleSourceOrchestrator:
                 self.graph_io.sample(self.visual_observation)
                 if self.visual_observation is not None else None
             )
-            mask = self.graph_io.valid.reshape(self.graph_io.visual_shape)
+            mask = self.graph_io.observation_mask
             if not observing:
                 mask = np.zeros_like(mask)
             canvas_direction = self.sensory_graph.condition(

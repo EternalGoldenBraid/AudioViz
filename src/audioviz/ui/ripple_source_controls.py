@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
 from audioviz.readouts.rc_spiking_predictive_coding import RCSpikingPredictiveCodingGraph
 
 from audioviz.source_controls import (
@@ -182,6 +183,42 @@ class RippleSourceControlBinding:
                     replace(
                         control,
                         label=descriptions[control.key][0] or control.label,
+                        default=descriptions[control.key][1] or control.default,
+                        tooltip=descriptions[control.key][2],
+                    ) if control.key in descriptions else control
+                    for control in learning_controls
+                )
+            if isinstance(graph, ContinuousScenePredictiveCodingGraph):
+                descriptions = {
+                    "graph_size": (
+                        "Scene Graph",
+                        f"{graph.visual_shape[0]} x {graph.visual_shape[1]} world pixels; "
+                        f"RGB neural field + {graph.hidden_nodes} shared recurrent hidden units.",
+                        "Every world location evolves. The circular fovea gates evidence only.",
+                    ),
+                    "graph_backend": (
+                        "Graph Backend",
+                        "CPU float64 continuous graph; OpenGL pixels." if visualizer.use_shader else
+                        "CuPy float64 continuous graph." if visualizer.use_gpu else
+                        "NumPy float64 continuous graph.",
+                        "One continuous scene model; no spikes, biases or static image cache.",
+                    ),
+                    "inference_steps": (
+                        "Integration Microsteps", None,
+                        "Subdivide one physical interval; forecast and conditioning resolve the same interval.",
+                    ),
+                    "inference_rate": (
+                        "Continuous Inference Gain", None,
+                        "Gain of continuous inference currents; passive leak remains when gain is zero.",
+                    ),
+                    "learning_enabled": (
+                        "Learn Connection Weights", None,
+                        "Learn from the continuous graph's residuals. Biases remain zero.",
+                    ),
+                }
+                learning_controls = tuple(
+                    replace(
+                        control, label=descriptions[control.key][0],
                         default=descriptions[control.key][1] or control.default,
                         tooltip=descriptions[control.key][2],
                     ) if control.key in descriptions else control

@@ -8,7 +8,70 @@ branch **`research/active-vision-eig`** in draft PR #1. The branch and commit
 labels in this report identify the original experimental snapshot. Branch
 consolidation did not change the implementation pause recorded below.
 
-## Current canvas ablation and prediction-persistence boundary
+## Current baseline: continuous whole-scene beliefs
+
+The active bench now has one continuous model. Spiking is deferred and scene
+motion is off by default. Production `main.py` retains its existing model;
+the measurements and model-selection commands in the historical sections
+below identify earlier experiments, not alternate active bench modes.
+
+```bash
+.venv/bin/python -m audioviz.visualization.static_world_bench
+```
+
+The represented state is a world-coordinate RGB neural/logit field `z`,
+coupled to one shared dense recurrent hidden population `h`. Pixel intensity
+is decoded as `sigmoid(z)`, with neutral `0.5` at zero state. No constant
+bias drives or spike encodings are involved. The fovea restricts incoming
+camera evidence, not the support of neural dynamics. Every scene coordinate
+evolves and is decoded each interval, including previously visited locations
+outside the current gaze; the rendered forecast is not a last-visit cache.
+
+Forecast and conditioned replay resolve the same fixed physical interval.
+Learning modifies connection matrices, not stored RGB screenshots. Turning
+Observe off removes sensory evidence but does not remove a nonzero root
+drive. Unforced trials therefore keep root feedback at zero.
+
+The bench exposes neural-field/hidden-state norms, whole-scene neutral
+distance, observed-coordinate forecast/posterior MSE and an energy trajectory.
+No-evidence MSE remains unavailable. Live controls are continuous integration
+microsteps/gain, leak time constant and connection learning. The earlier
+spike threshold, capacitance and model selector are absent. Existing seeded
+Brownian motion is available only by explicit opt-in; its design is deferred.
+
+Gaze has the intended mouse/one-autonomous boundary. Only mouse/locked gaze
+is operational in this baseline while the single epistemic objective and
+matching uncertainty representation are established. No random fallback,
+mixture model or unsupported Gaussian covariance is attached to the new
+neural dynamics.
+
+### Whole-scene evolution check
+
+Native Qt/OpenGL trial at `80x120`, radius `32`, six hidden units,
+`dt=1/30`, `tau=1/3`, eight integration microsteps and inference gain `0.1`.
+The world was static, the root stayed zero and no state was cleared between
+phases:
+
+| Intervention | Result |
+| --- | --- |
+| Observe gaze A `(0.2, 0.5)` for 40 steps, learning off | Neural-field norm in A: `71.377810` |
+| Move to non-overlapping gaze B `(0.8, 0.5)` for 100 learning steps | Former A norm falls to `0.488248`; whole-field norm is `84.300165` |
+| Turn Observe off for 180 further steps | Whole-field norm falls to `1.200930e-6`; whole-scene forecast MAE from neutral falls from `0.05907949` to `9.962273e-10` |
+
+The camera read count remained `140` throughout the unobserved phase, learning
+updates remained `100`, and all learned connection matrices stayed exactly
+unchanged. Rendered images showed the formerly observed patch changing after
+gaze moved and the complete predicted scene returning to neutral gray.
+
+The energy plot uses additive hidden and sensory components, including leak,
+logit coupling and observed residuals. Its conditioned microstep trajectory
+starts at the saved interval-start state, not at the counterfactual forecast
+endpoint. Forecast MSE still measures that pre-evidence counterfactual.
+Inference gain changes the interaction terms relative to passive leak;
+monotonic energy descent is not guaranteed for arbitrary gains, numerical
+step sizes or clipped currents.
+
+## Historical: canvas ablation and prediction-persistence boundary
 
 This section describes the unchanged PC control. The bias-free RC experiment
 and its different resting-state contract are recorded separately below.
