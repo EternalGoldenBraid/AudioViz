@@ -6,7 +6,7 @@ from typing import Literal, TypedDict
 
 import numpy as np
 
-from audioviz.readouts.predictive_coding import PredictiveCodingConfig
+from audioviz.readouts.config import MAX_FOVEAL_PIXELS, PredictiveCodingConfig
 from audioviz.utils.array_backend import to_numpy
 
 
@@ -67,7 +67,8 @@ class SharedPredictiveCodingGraph:
     config, hidden_nodes also initializes that structural config field.
     """
 
-    MAX_VISUAL_SLOTS = 4096
+    has_gaussian_uncertainty = True
+    MAX_VISUAL_SLOTS = MAX_FOVEAL_PIXELS
     MAX_AUDIO_NODES = 256
     MAX_HIDDEN_NODES = 64
     MAX_CANDIDATE_BATCH = 4096

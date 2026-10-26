@@ -2,12 +2,12 @@ from dataclasses import replace
 
 import numpy as np
 
-from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
+from audioviz.readouts.config import MAX_FOVEAL_PIXELS
 from audioviz.utils.opengl_compute import GLArray
 
 
 def circular_foveal_offsets(radius):
-    limit = SharedPredictiveCodingGraph.MAX_VISUAL_SLOTS
+    limit = MAX_FOVEAL_PIXELS
     if (
         isinstance(radius, bool) or not isinstance(radius, (int, np.integer))
         or radius < 1 or int(radius)**2 > limit
