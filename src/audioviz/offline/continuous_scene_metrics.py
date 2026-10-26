@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from audioviz.offline.static_world_metrics import StaticWorldMetrics
+from audioviz.offline.scene_metrics import StaticWorldMetrics
 from audioviz.readouts.continuous_scene_predictive_coding import (
     ContinuousScenePredictiveCodingGraph,
     ContinuousSceneSnapshot,
