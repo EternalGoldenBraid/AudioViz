@@ -175,8 +175,7 @@ fixed-weight two-branch filter (`GaussianSensoryUncertainty` + optional
   (`numpy`, `gpu`, or `opengl`) and other field/model settings. Ordinary
   `python main.py` remains unchanged. Enforces the uncoupled visual-only model
   contract: rejects an audio `processor` or ripple audio drive unless
-  `audio_precision` is explicitly configured, and rejects pose-medium coupling
-  (both at startup and by disabling/guarding the CPU pose toggle), weight
+  `audio_precision` is explicitly configured, and rejects weight
   learning (unless `--shared-sensory-graph` is active), cross-modal hidden
   coupling, or disabled camera prediction-error inference.
 - **Opt-in common-mode audio profile (`--active-vision ... --active-audio` or `audio_precision` set to a positive finite float):**

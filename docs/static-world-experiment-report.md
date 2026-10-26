@@ -10,9 +10,12 @@ consolidation did not change the implementation pause recorded below.
 
 ## Current baseline: continuous whole-scene beliefs
 
-The active bench now has one continuous model. Spiking is deferred and scene
-motion is off by default. Production `main.py` retains its existing model;
-the measurements and model-selection commands in the historical sections
+The active bench and `main.py` now share one continuous model. Main uses its
+configured camera/audio sources and its configured world grid; the
+bench uses a static geometric world by default. The camera frame represents
+the whole world, and the fovea selects its current observation support.
+Epistemic autonomous gaze is opt-in; the RC-spiking implementation has been
+retired. The measurements and model-selection commands in the historical sections
 below identify earlier experiments, not alternate active bench modes.
 
 ```bash
@@ -28,22 +31,25 @@ evolves and is decoded each interval, including previously visited locations
 outside the current gaze; the rendered forecast is not a last-visit cache.
 
 Forecast and conditioned replay resolve the same fixed physical interval.
-Learning modifies connection matrices, not stored RGB screenshots. Turning
+Learning modifies connection matrices and residual precisions, not stored RGB screenshots. Turning
 Observe off removes sensory evidence but does not remove a nonzero root
 drive. Unforced trials therefore keep root feedback at zero.
 
 The bench exposes neural-field/hidden-state norms, whole-scene neutral
 distance, observed-coordinate forecast/posterior MSE and an energy trajectory.
-No-evidence MSE remains unavailable. Live controls are continuous integration
-microsteps/gain, leak time constant and connection learning. The earlier
+Observed-coordinate MSE remains unavailable without evidence. Whole-world
+reference RGB error is evaluator-only and remains available in the bench
+with Observe off; it does not expand the model's evidence support.
+Live controls are continuous integration
+microsteps/gain, leak time constant and weight/precision learning. The earlier
 spike threshold, capacitance and model selector are absent. Existing seeded
 Brownian motion is available only by explicit opt-in; its design is deferred.
 
-Gaze has the intended mouse/one-autonomous boundary. Only mouse/locked gaze
-is operational in this baseline while the single epistemic objective and
-matching uncertainty representation are established. No random fallback,
-mixture model or unsupported Gaussian covariance is attached to the new
-neural dynamics.
+Gaze has a mouse/one-autonomous boundary. Mouse remains the default; opt-in
+autonomous gaze now scores expected joint-state information gain from each
+pre-evidence forecast, as documented in the 2026-10-26 section below.
+No random fallback, mixture model or legacy temporal Gaussian diagnostics
+are attached to the continuous neural dynamics.
 
 ### Whole-scene evolution check
 
@@ -70,6 +76,212 @@ endpoint. Forecast MSE still measures that pre-evidence counterfactual.
 Inference gain changes the interaction terms relative to passive leak;
 monotonic energy descent is not guaranteed for arbitrary gains, numerical
 step sizes or clipped currents.
+
+### Controlled rate comparison (2026-10-25)
+
+Nine trials used the actual NumPy bench at `80x120`, six hidden units,
+radius `32`, seed `0`, `dt=1/30`, eight integration microsteps and
+`tau=1/3`. Each began with identical weights and used the same evidence:
+40 steps at gaze A `(0.2, 0.2)`, 40 at B `(0.8, 0.8)`, then 40 with
+Observe off. Scene motion, canvas feedback and waves were off; the canvas
+remained exactly zero. Initial-weight and evidence-stream hashes matched
+across all nine trials.
+
+The table reports pre-evidence forecast RGB MSE at step 80. "Unobserved"
+is the current fovea's complement, including previously visited locations.
+Full-world truth was used only for evaluation.
+
+| Inference rate | Learning rate | Foveal MSE | Unobserved MSE | Whole-world MSE |
+| --- | --- | --- | --- | --- |
+| 0.02 | 0.003 | 0.107592 | 0.161332 | 0.147858 |
+| 0.02 | 0.01 | 0.107592 | 0.161332 | 0.147858 |
+| 0.02 | 0.03 | 0.107592 | 0.161332 | 0.147858 |
+| 0.05 | 0.003 | 0.077442 | 0.161350 | 0.140312 |
+| 0.05 | 0.01 | 0.077441 | 0.161350 | 0.140312 |
+| 0.05 | 0.03 | 0.077354 | 0.161310 | 0.140260 |
+| 0.1 | 0.003 | 0.059945 | 0.161484 | 0.136025 |
+| 0.1 | 0.01 | 0.059904 | 0.161458 | 0.135995 |
+| 0.1 | 0.03 | 0.047032 | 0.158089 | 0.130243 |
+
+All recorded conditioned microstep energies were nonincreasing within
+numerical tolerance `1e-10`, and predictions remained finite. Every trial
+made exactly 80 camera reads and 80 learning updates; during Observe off
+there were no further reads or updates, and weights stayed exactly unchanged.
+After those 40 unobserved steps, whole-world forecast MSE ranged from
+`0.160874` to `0.161655`.
+
+The pair `0.1 / 0.03` had the lowest step-80 error in this bounded comparison,
+but unobserved error remained high. This single scene/seed and non-revisiting
+schedule do not establish general-purpose learning-rate tuning or persistent
+scene learning. No defaults were changed. Inference rate changes interaction
+strength relative to leak, so raw energies across rates are not comparable.
+Scripted gaze provides matched evidence without requiring an EFE policy.
+
+The reproducible runner `controlled_rate_sweep.py` and complete 1,080-step
+trace `controlled-rate-sweep.json` are retained in the session's `files/`
+directory (`68398376-959e-4b56-92ac-666576d17adb`). Timing includes bench
+rendering/metrics and is not an isolated inference or high-resolution benchmark.
+
+### Local neural-state covariance (2026-10-25)
+
+`graph.state_covariance()` now exposes an on-demand local Gauss-Newton
+approximation over sensory potentials `z` and hidden states `h`, using captured
+pre-learning weights and gain. Its matrix-free precision product assembles
+local residual-Jacobian contributions. Covariance queries solve against that
+operator, including effects through unselected states. No full covariance
+matrix or new weight covariance is stored, and no state/weight update rule
+or gaze policy was changed.
+
+The two-state Gaussian reference
+`a ~ N(0,1), b|a ~ N(a,1), y|b ~ N(b,1)` recovered the posterior covariance
+`[[2/3,1/3],[1/3,2/3]]`. Covariance-gradient checks include the entropy term
+and recover zero gradient at the Gaussian solution. For the nonlinear graph,
+NumPy/CuPy products and selected covariance blocks agree with an independently
+finite-differenced residual-Jacobian reference.
+
+| Functional probe | Neural states | Retained operator array bytes | Covariance-solve residual norm |
+| --- | --- | --- | --- |
+| CuPy, `200x200`, six hidden units | 120,006 | 7,680,336 | `8.70e-11` |
+| NumPy, `480x640`, six hidden units | 921,606 | 58,982,736 | `7.45e-12` |
+
+Storage counts exclude the existing graph, query results and solver workspaces;
+these are functional probes, not peak-memory or isolated performance benchmarks.
+The runner and results are retained as `check_state_covariance.py` and
+`state-covariance-validation.json` in the session's `files/` directory
+(`68398376-959e-4b56-92ac-666576d17adb`).
+
+This approximation keeps `J.T @ precision @ J` and omits
+residual-times-second-derivative terms of the exact nonlinear Hessian.
+It infers covariance of the current local Gaussian model, not a temporally
+propagated posterior or calibrated sensor noise. Absolute variances inherit
+the energy's assigned strengths, including resolution-dependent scaling.
+Autonomous gaze was paused for these covariance-only measurements.
+
+### Gaussian-factor objective and residual precision learning (2026-10-25)
+
+The continuous graph now uses `sum(p*e**2 - log(p))/2` for each active
+Gaussian residual factor, following Buckley et al. (2017), Section 5.1,
+equations (25), (29), (32), https://arxiv.org/abs/1705.09156.
+The objective and gradient docstrings cite this source; the covariance
+factory also cites the inverse-curvature result in equation (17).
+
+Hidden, sensory-coupling and observation precisions now learn in log space
+alongside connection weights. Observation factors and their precision updates
+are restricted to actual evidence. Snapshots/covariance use matching
+pre-learning weights and precisions. Parameter learning stops without evidence;
+reset retains learned parameters, while New trial restores initial precisions.
+
+This is the Laplace-encoded energy at point estimates, not a full
+posterior-expected likelihood objective. No precision floor, ceiling or
+hyperprior was added; exactly zero residual has no finite precision optimum.
+Factor normalization can make energies negative. The measurements above
+predate adaptive precisions and Gaussian normalization; their learning
+trajectories and raw energy values are historical, not current-model results.
+
+### One-step epistemic gaze (2026-10-26)
+
+Main and the bench now support opt-in autonomous gaze on a `9x13` grid.
+Each candidate's complete in-bounds circular RGB fovea is scored by joint-state
+Gaussian entropy reduction:
+`I = (logdet(H + Q) - logdet(H))/2` nats, where `H` is the forecast
+Gauss-Newton curvature and `Q` uses the decoder slope and effective learned
+observation precision. The epistemic EFE contribution is `-I`; no preferred
+outcomes or action costs are specified.
+
+The sensory block is diagonal, so a hidden Schur complement evaluates joint
+determinant ratios using hidden-by-hidden Cholesky factors. This preserves
+observation correlations without constructing full world or foveal covariance.
+Graph scoring is read-only, only legal between forecast and condition, and
+uses no real or fabricated camera values. The native flow performs one
+forecast, scores/selects a gaze, then acquires and conditions on actual evidence.
+Observe off skips scoring/acquisition and keeps gaze fixed.
+
+These are local Gaussian, one-observation estimates, not calibrated uncertainty,
+full nonlinear EFE or recursive temporal covariance. Repeated observations can
+remain informative because covariance history is not accumulated. The policy
+does not imply exploration coverage or a reconstruction improvement; the earlier
+controlled rate sweep was not rerun under this policy.
+
+Validation included independent dense joint-entropy references on NumPy/CuPy
+with correlated observations, zero-error gray observations, noise sensitivity,
+nonmutation and the native forecast/score/capture/condition ordering on all
+three backends. The combined targeted/native regression suite passed 104 cases.
+A `200x200` CuPy native trial made exactly 12 camera reads and 12 learning
+updates across 12 observed steps, then none across three Observe-off steps;
+gaze stayed fixed during the unobserved phase.
+
+Separate scoring probes used six hidden units, radius 32 (9,627 RGB values
+for a full disk), 117 candidates and a neutral forecast. Warmed medians of
+three calls after one initial call were approximately `120 ms` for NumPy
+at `200x200`, `173 ms` for CuPy at `200x200`, and `254 ms` for NumPy at
+`480x640`. NumPy/CuPy scores agreed within `rtol=1e-12, atol=1e-10`.
+These are scoring-only measurements, not frame rates or guarantees under
+load. Autonomous scoring is not yet real-time optimized; mouse mode does
+not perform these queries. The session retains
+`one-step-epistemic-scoring-validation.json`,
+`one-step-epistemic-native-validation.json` and inspected native screenshots.
+
+## Controlled learning and cleared-state recall (2026-10-26)
+
+The four-stage benchmark separates transient state fitting from stored
+connection learning. It uses a static `24 x 36` geometric scene, six hidden
+units, 16 unobserved audio nodes, radius 10, `dt=1/30`, `tau=1/3`, eight
+microsteps, inference gain `0.1` and learning rate `0.03`. Canvas input and
+feedback are zero; autonomous gaze is off. Stages 1-3 use seeds `0, 1, 2`;
+the four-patch revisit sweep uses seed `0` only.
+
+All errors below are unweighted RGB MSE of the pre-evidence forecast.
+Unobserved ground-truth pixels are replaced with `NaN` before conditioning
+and excluded by the evidence mask. Patch A and patch B each contain 278 of
+864 world pixels and do not overlap. Thus the cue covers approximately a
+third of this small scene, not an arbitrarily small fragment.
+
+1. **Inference-only:** frozen parameters fit the observed patch, but
+   outside-patch error remains near the neutral prediction. Observe-off
+   dynamics decay back toward neutral. Good observed pixels alone do not
+   establish learned scene memory.
+2. **Repeated observation:** after 80 observations of A, mean forecast MSE
+   on A is `0.056670` with frozen parameters, `0.045156` with weights learned
+   and precisions held at initialization, and `0.020567` with both learned.
+   Outside-A error remains approximately `0.16485`; an unseen region has
+   not been learned.
+3. **Cleared-state recall:** train on alternating A/B dwells for 120 steps,
+   freeze learning, reset `h=z=0`, then supply only A for 20 steps.
+   Evaluate B before the next evidence update:
+
+   | Recall parameters | Mean B forecast MSE |
+   | --- | ---: |
+   | Initial weights, initial precisions | 0.154465 |
+   | Learned weights, initial precisions | 0.136217 |
+   | Initial weights, learned precisions | 0.154531 |
+   | Learned weights, learned precisions | 0.072140 |
+
+   The matched-precision improvement is evidence of stored associative
+   connection learning, not just retained neural states or precision
+   changes. This is recall of a previously observed region of one scene;
+   it does not establish generalization to new scenes or larger worlds.
+4. **Coverage and longer revisits:** four patches, four tours, dwell
+   `5/15/30` steps give `80/240/480` total steps and revisit gaps
+   `15/45/90` steps. Learning helps at shorter horizons, but the
+   weights-plus-precisions run with dwell 30 degrades: whole-world forecast
+   MSE is `0.112659` at step 120 and `0.159415` at step 480, versus
+   `0.119444` for weights-only learning and `0.129505` for frozen parameters
+   at step 480.
+
+**Long-horizon stability is not established.** The reported collapse
+coincides with mean visual coupling precision increasing from `0.0724`
+to `15.6482`, and hidden residual precision reaching `12.9228`.
+Point-mean Gaussian precision learning can increase precision indefinitely
+when a residual remains near zero. Increasing curvature also makes a fixed
+explicit integration step stiffer. These observations motivate separating
+numerical stiffness from the statistical precision objective in a follow-up;
+they do not justify silently adding precision caps or observation-gating
+latent-factor updates.
+
+The runner and JSON results are session artifacts, not repository files:
+`run_static_scene_learning_benchmark.py` and
+`static_scene_learning_recall_benchmark.json` under Math Agent session
+`45344cb2-dfc9-4bd4-a39f-e4dfb2c07704/files/`.
 
 ## Historical: canvas ablation and prediction-persistence boundary
 
@@ -115,6 +327,9 @@ traffic stops; threshold refinement is not prediction decay. Spiking alone
 does not expire stale display history or define temporal-world dynamics.
 
 ## Follow-up: continuous RC-spiking bench prototype
+
+Historical implementation, since retired from the repository. Commands in
+this section record the original experiment and are not current launch options.
 
 The bench now offers an explicit `--model rc-spiking` experiment alongside the
 unchanged default PC control. It reuses the production camera routing, foveal
