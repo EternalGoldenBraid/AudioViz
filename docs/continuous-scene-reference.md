@@ -1,6 +1,6 @@
 # Continuous-scene reference
 
-[Project overview](../README.md) | [Experimentation diary](experiments/README.md)
+[Project overview](../README.md) | [Experiments](experiments/README.md)
 
 This page describes `ContinuousScenePredictiveCodingGraph`, the numerical model
 used by current `main.py` and the static-world bench. Earlier per-pixel, Gaussian

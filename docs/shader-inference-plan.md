@@ -1,5 +1,9 @@
 # OpenGL predictive inference: architecture and implementation
 
+This is the **historical per-pixel model's shader reference**, not the current
+[continuous-scene model](continuous-scene-reference.md). Current research
+questions and next steps are maintained in [experiments](experiments/README.md).
+
 **Status: existing-model shader port implemented.** The diagrams preserve the
 original design proposal; the implementation now covers RGB waves, native prior
 and correction, camera/audio/state/coupling inference, optional learning,
@@ -50,7 +54,7 @@ hidden loop, plots and all three prediction layouts are available.
 
 The first rendered native-1080p baseline on the RTX 3060 is 117 ms/frame without
 learning/coupling and 208 ms/frame with both, at eight steps, using synthetic
-sensors. See README for measurement conditions and benchmark commands. This
+sensors. See the [archived measurement conditions and benchmark commands](https://github.com/EternalGoldenBraid/AudioViz/blob/e2b161c84b384c4fde7cf7d4ee35ac607c594858/README.md#established-per-pixel-model-native-1080p-profiling). This
 delivery restores correctness and integration; further shader fusion and
 reduction optimization are still needed for realtime native 1080p.
 

@@ -1,6 +1,6 @@
 # E001: Static-scene learning and cleared-state recall
 
-[Diary and next experiment](README.md) | [Full experiment report](../static-world-experiment-report.md#controlled-learning-and-cleared-state-recall-2026-10-26)
+[Experiments and next step](README.md) | [Full experiment report](static-world-experiment-report.md#controlled-learning-and-cleared-state-recall-2026-10-26)
 
 **Date:** 2026-10-26
 

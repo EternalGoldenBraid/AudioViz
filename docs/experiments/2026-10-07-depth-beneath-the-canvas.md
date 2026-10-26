@@ -1,5 +1,10 @@
 # Beneath the Surface
 
+[Experiments](README.md)
+
+**Date:** 2026-10-07. **Status:** Historical conceptual note about the earlier
+per-pixel canvas model, not a current experiment result.
+
 We keep the pool.
 What we watch is its surface, not the image it expects the eye to see.
 
@@ -21,9 +26,3 @@ That coherence is a reason to try it, not evidence that it will remember well.
 The local nonlinear updates follow Salvatori et al.,
 [Learning on Arbitrary Graph Topologies via Predictive Coding, section 2](https://arxiv.org/html/2201.13180).
 Persistent states and wave coupling are our experiment.
-
-Resume:
-
-```bash
-copilot --resume=b4f4d73a-12f3-4e3b-bf70-db77e997fee4
-```

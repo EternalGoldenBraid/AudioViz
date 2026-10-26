@@ -1,5 +1,10 @@
 # The Canvas Learns to Look
 
+[Experiments](README.md)
+
+**Date:** 2026-09-29. **Status:** Historical conceptual note, not a measured
+scene-learning result. Describes an earlier canvas model.
+
 The canvas is not the eye, nor the ear.
 It is the place where their evidence becomes belief.
 
@@ -29,9 +34,3 @@ readout is a clear pane of glass. Later it may become an interpreter—and the e
 may learn to expect, not merely disturb.
 
 Tests: `105 passed`
-
-Resume:
-
-```bash
-copilot --resume=b4f4d73a-12f3-4e3b-bf70-db77e997fee4
-```

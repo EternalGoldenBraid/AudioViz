@@ -1,5 +1,10 @@
 # When the Evidence Falls Quiet
 
+[Experiments](README.md)
+
+**Date:** 2026-10-08. **Status:** Historical reflection and proposed memory probe
+for the earlier canvas model; the probe below is not a reported result.
+
 Today we turned the pool in our hands.
 
 Surface, hidden depth, expectation, evidence.
@@ -42,9 +47,3 @@ Those are different achievements.
 Perhaps the next step is not a larger pool.
 Perhaps it is an interval of silence,
 and enough attention to see what the existing one carries through it.
-
-Resume:
-
-```bash
-copilot --resume=b4f4d73a-12f3-4e3b-bf70-db77e997fee4
-```

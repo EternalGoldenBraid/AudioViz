@@ -1,4 +1,4 @@
-# Experimentation diary
+# Experiments
 
 **Goal:** Learn a static scene through partial observations, recall previously
 seen regions outside the current view, and eventually use gaze to acquire
@@ -7,13 +7,19 @@ evidence that improves prediction.
 This page is the current decision point. Dated entries preserve what was run,
 what happened and why the next experiment follows.
 
+Keep research questions, proposals, protocols, evidence and experimental decisions
+in this directory. Task ownership, session status and handoffs belong in the
+[agent roster](../../agents/roster.md); runtime/API documentation belongs in the
+[model reference](../continuous-scene-reference.md). Do not maintain parallel
+research or development-diary indexes.
+
 ## Research questions and current evidence
 
 | Question | Current answer | Evidence |
 | --- | --- | --- |
 | **RQ1: Is scene information stored in learned connections, not just transient activity?** | Supported for a small familiar scene: cue-driven recall survives reset and improves with learned weights at matched initial precisions. Generalization is not established. | [E001: cleared-state recall](2026-10-26-static-scene-learning.md#results-and-recordings) |
 | **RQ2: Can learning remain stable over longer training and revisit gaps?** | Not established. Full learning degrades during the 480-step run; weights-only remains stable in that tested schedule. Precision growth coincides with degradation, but causality is unresolved. | [E001: limits](2026-10-26-static-scene-learning.md#interpretation-and-limits) |
-| **RQ3: Does uncertainty-guided gaze improve learning over controlled gaze schedules?** | Not established by these experiments. Deferred until the fixed-gaze learning baseline is reliable. | [Detailed report](../static-world-experiment-report.md) |
+| **RQ3: Does uncertainty-guided gaze improve learning over controlled gaze schedules?** | Not established by these experiments. Deferred until the fixed-gaze learning baseline is reliable. | [Detailed report](static-world-experiment-report.md) |
 
 ## Next experiment: E002
 
@@ -52,11 +58,26 @@ Link recordings where they help explain the outcome.
 repeat cleared-state recall to check that it survives, then compare
 uncertainty-guided gaze against controlled schedules.
 
-## Diary
+## Experiment log
 
 | Date | Experiment | Status and decision |
 | --- | --- | --- |
 | 2026-10-26 | [E001: static-scene learning and cleared-state recall](2026-10-26-static-scene-learning.md) | Completed. Recall supported within the tested setup; long-horizon failure motivates E002. Includes three recordings. |
+
+## Earlier records and proposals
+
+These records preserve the path to the current model. Conceptual notes and
+proposals are not completed experiments or instructions to resume old work.
+
+| Record | Kind and scope |
+| --- | --- |
+| [Static-world experiment report](static-world-experiment-report.md) | Compiled measurements and decisions, including earlier models and the continuous-scene baseline. |
+| [Active-vision experiment reference](historical-active-vision.md) | Historical Gaussian/shared-graph methods, source map and evaluation commands. |
+| [Expected-information-gain proposal](active-vision-eig-proposal.md) | Historical circular-dot research proposal and schematic, not the current plan. |
+| [Early shader-backend roadmap](historical-shader-roadmap.md) | Historical performance proposal for the initial wave-shader prototype. |
+| [2026-10-08: When the evidence falls quiet](2026-10-08-when-the-evidence-falls-quiet.md) | Reflection and proposed memory probe, not a reported result. |
+| [2026-10-07: Depth beneath the canvas](2026-10-07-depth-beneath-the-canvas.md) | Conceptual note on the earlier per-pixel model. |
+| [2026-09-29: Canvas, prediction and sensory readouts](2026-09-29-canvas-prediction-model.md) | Early canvas-model conceptual note. |
 
 ## Recording the next entry
 

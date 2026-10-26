@@ -9,7 +9,7 @@ recurrent hidden units, optional audio evidence and live Qt diagnostics.
 The project grew out of the Audio Ripple visualizer; wave simulation and audio
 tools remain, but the current research focus is scene learning and active sensing.
 
-[Experimentation diary](docs/experiments/README.md) ·
+[Experiments](docs/experiments/README.md) ·
 [Quick start](#quick-start) ·
 [Model reference](docs/continuous-scene-reference.md) ·
 [Results and recordings](docs/experiments/2026-10-26-static-scene-learning.md)
@@ -29,7 +29,7 @@ This README describes the continuous-scene implementation on
 learning weights and precisions degrades as precisions grow; weights-only
 learning remains stable in that schedule. The next experiment separates
 integration sensitivity from the precision-learning problem.
-The [diary](docs/experiments/README.md) tracks that decision and the evidence.
+The [experiments index](docs/experiments/README.md) tracks that decision and the evidence.
 
 ## Quick start
 
@@ -150,12 +150,12 @@ synchronized GPU kernels or presented display FPS.
 
 | Start here for... | Document |
 | --- | --- |
-| Research questions, current evidence and what to do next | [Experimentation diary](docs/experiments/README.md) |
+| Research questions, current evidence and what to do next | [Experiments](docs/experiments/README.md) |
 | Recorded learning, recall and long-horizon failure | [Experiment E001](docs/experiments/2026-10-26-static-scene-learning.md) |
 | Configuration, model mathematics, APIs and bench controls | [Continuous-scene reference](docs/continuous-scene-reference.md) |
-| Detailed measurements and historical baselines | [Static-world experiment report](docs/static-world-experiment-report.md) |
+| Detailed measurements and historical baselines | [Static-world experiment report](docs/experiments/static-world-experiment-report.md) |
 | A visual introduction to precision-weighted predictive coding | [Interactive primer](docs/predictive-coding-precision-primer.html) and [editable diagram](docs/predictive-coding-precision-primer.drawio) |
-| Earlier Gaussian active-vision experiments | [Historical active-vision bench](docs/active-vision-experiment.md) |
+| Earlier Gaussian active-vision experiments | [Historical active-vision bench](docs/experiments/historical-active-vision.md) |
 | Earlier per-pixel shader architecture and performance work | [Shader reference](docs/shader-inference-plan.md) and [archived per-pixel notes](https://github.com/EternalGoldenBraid/AudioViz/blob/e2b161c84b384c4fde7cf7d4ee35ac607c594858/README.md#legacy-per-pixel-predictive-canvas) |
 
 The RC-spiking implementation and pose subsystem are retired. Their retained

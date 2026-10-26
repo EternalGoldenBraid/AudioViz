@@ -1,17 +1,14 @@
 # Active vision through expected information gain
 
-Status: living research/design document; the shared branch also contains implementation and experiments.
-Shared branch: `research/active-vision-eig`
-
-The former `feature/active-vision-precision` implementation history has been
-merged into this branch. Draft PR #1 now covers research, implementation, and
-experiments together, not documentation alone. Use this branch for ongoing
-agent work and coordinate through PR comments.
+**Status: Historical proposal, not the current implementation plan.**
+The original circular-dot/Gaussian design and proposed workstreams are retained
+as research history. Use the [experiments index](README.md) for current questions
+and next steps, and the [agent roster](../../agents/roster.md) for coordination.
 
 The proposal below retains the earlier circular-dot/Gaussian-precision design.
 For the current hard-circular-fovea predictive-coding application and static
 scene bench, see the [README](../../README.md) and
-[experiment report](../static-world-experiment-report.md). The bench now has a
+[experiment report](static-world-experiment-report.md). The bench now has a
 seeded Brownian scene-motion intervention and a static control. This changes
 the test environment, not the gaze policy or model's uncertainty assumptions.
 Further gaze-policy and latent/observer sampling design remains paused.
@@ -151,7 +148,7 @@ Introduce an uncertainty representation appropriate to the existing model, deriv
 ### Stage D — joint learning and dynamics
 Investigate attention-model co-adaptation, temporal predictive memory, movement penalties, and whether policies revisit informative regions as beliefs change. This is exploratory and must not be conflated with Stage A.
 
-## Workstream boundaries for CLI agents
+## Historical proposed workstream boundaries
 
 - **WS1: architecture audit.** Read current repo; identify camera source, predictive coding interfaces, inference update, rendering and tests. Return a proposed integration seam, not code changes.
 - **WS2: spatial precision field.** Implement Stage A in a small independently testable module; include numerical tests for Gaussian center/width, positivity, boundary behavior, gradient if required, and consistent precision use in inference and observation likelihood.
@@ -203,6 +200,6 @@ For the simplest sensory-space formulation, the uncertain quantity may be the do
 6. **Hypothesis tests:** measure whether the policy samples less often when the trajectory becomes predictable and increases sampling when dynamics become uncertain or change. Do not hard-code these outcomes into tests; evaluate them empirically.
 7. **Metrics:** log sampling frequency, selected gaze locations, uncertainty calibration or declared proxy, prediction error, and robustness across noise levels and random seeds.
 
-### Agent handoff
+### Historical proposed agent handoff
 
 Start with a repository audit and a minimal test plan. Implement the deterministic synthetic stimulus and its tests first, then add stochastic perturbations and tests. Only then integrate Gaussian precision-weighted sensory inference and an explicitly defined information-seeking policy. Keep the generator, observation operator, predictive model, and policy independently testable. Do not alter the production camera pipeline unnecessarily.

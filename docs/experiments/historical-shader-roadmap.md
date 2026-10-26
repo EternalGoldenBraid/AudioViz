@@ -1,5 +1,10 @@
 # Shader Backend Roadmap
 
+**Status: Historical proposal for the first wave-shader prototype.**
+The readback architecture and near-term plan below describe an earlier stage,
+not current work. See the [shader implementation reference](../shader-inference-plan.md)
+for the later per-pixel port and [experiments](README.md) for current next steps.
+
 The first OpenGL shader backend proves that the ripple update can run as a
 local compute pass: each grid cell reads its previous state plus fixed-radius
 neighbors, then writes the next state. This is the right computational shape for
