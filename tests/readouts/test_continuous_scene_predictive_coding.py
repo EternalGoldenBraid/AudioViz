@@ -100,6 +100,73 @@ def test_conditioned_energy_trace_starts_at_replayed_interval_start():
     assert len(graph.inference_energy) == graph.config.inference_steps + 1
 
 
+@pytest.mark.parametrize("backend_name", ("numpy", "cupy"))
+def test_condition_reuses_terms_only_within_unchanged_evidence_and_parameters(
+    request, monkeypatch, backend_name,
+):
+    xp = np if backend_name == "numpy" else request.getfixturevalue("cupy_backend")
+    graph = ContinuousScenePredictiveCodingGraph(
+        visual_shape=(3, 4), audio_nodes=2, hidden_nodes=3, backend=xp,
+        config=PredictiveCodingConfig(hidden_channels=3, learning_enabled=True),
+    )
+    graph.mean[graph.hidden_slice] = xp.asarray([.2, -.1, .3])
+    graph.sensory_potential[:] = xp.linspace(-.4, .5, graph._sensory_nodes)
+    evaluate = graph._terms_for
+    calls = []
+
+    def record(*args):
+        terms = evaluate(*args)
+        calls.append(terms)
+        return terms
+
+    monkeypatch.setattr(graph, "_terms_for", record)
+    mask = np.zeros(graph.visual_shape, dtype=bool)
+    mask[1, 1:3] = True
+    for observed, rate in ((True, .1), (False, .1), (True, 0.0)):
+        graph.update_config(inference_rate=rate)
+        graph.forecast(np.full((3, 4, 3), .2), 1/30)
+        before = graph.belief_snapshot()
+        calls.clear()
+        if observed:
+            direction = graph.condition(
+                np.full((3, 4, 3), .8), np.array([.1, -.2]), visual_mask=mask,
+            )
+        else:
+            direction = graph.condition()
+
+        states = graph.config.inference_steps + 1 if observed and rate else 1
+        # Learning evaluates its own derivatives before changing weights or precisions.
+        assert len(calls) == states + int(observed)
+        assert graph.inference_energy == tuple(terms[0] for terms in calls[:states])
+        final = calls[states - 1]
+        assert (graph.energy, graph.hidden_energy, graph.sensory_energy) == final[:3]
+        for actual, expected in (
+            (graph.canvas_gradient, final[5]),
+            (graph.hidden_error, final[6]),
+            (graph.sensory_potential_error, final[7]),
+            (graph.sensory_error, final[8]),
+            (direction.reshape(-1), -final[5]),
+            (graph.visual_prediction.reshape(-1), final[9][graph.visual_slice].astype(xp.float32)),
+        ):
+            np.testing.assert_array_equal(to_numpy(actual), to_numpy(expected))
+        after = graph.belief_snapshot()
+        for name in (*graph._PARAMETERS, *graph._PRECISIONS):
+            np.testing.assert_array_equal(after[name], before[name])
+        if not observed or rate == 0:
+            np.testing.assert_array_equal(after["sensory_potential"], before["sensory_potential"])
+            np.testing.assert_array_equal(
+                after["mean"][graph.hidden_slice], before["mean"][graph.hidden_slice],
+            )
+        if not observed:
+            np.testing.assert_array_equal(after["sensory_error"], 0)
+        else:
+            expected_error = np.where(
+                after["clamped"][:graph._sensory_nodes],
+                after["evidence"][:graph._sensory_nodes] - to_numpy(final[9]), 0,
+            )
+            np.testing.assert_array_equal(after["sensory_error"], expected_error)
+
+
 def test_explicit_energy_matches_analytic_gradients_including_both_h_and_z_leak():
     rng = np.random.default_rng(7)
     for rate in (0.02, 0.1, 0.25):

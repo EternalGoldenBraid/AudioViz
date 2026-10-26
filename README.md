@@ -128,6 +128,12 @@ The graph uses float64 on NumPy/CuPy; OpenGL keeps the graph on CPU and pixel
 routing/rendering on GPU. Its state and connection storage scale with world
 resolution, not just foveal radius.
 
+Conditioned replay evaluates energy and gradients together once per visited
+state, reusing those results for the next microstep and final pre-learning
+snapshot. Reuse stays within the same evidence and parameter state; conditioning
+evaluates fresh terms after new evidence arrives. Every microstep energy remains
+in the diagnostic trace.
+
 ### Gaussian residual objective and precision learning
 
 The continuous graph uses the diagonal Gaussian factor objective from

@@ -456,13 +456,16 @@ class ContinuousScenePredictiveCodingGraph:
         beta = float((1.0 - alpha) * self._INTEGRATION_GAIN * self.config.inference_rate)
         return alpha, beta
 
-    def _capture(self):
+    def _capture(self, terms=None):
+        """Capture terms evaluated at the current state, evidence and pre-learning parameters."""
         xp = self.backend
+        if terms is None:
+            terms = self._terms(self.mean[self.hidden_slice], self.sensory_potential)
         (
             self.energy, self.hidden_energy, self.sensory_energy,
             _, _, self.canvas_gradient, self.hidden_error,
             self.sensory_potential_error, self.sensory_error, prediction,
-        ) = self._terms(self.mean[self.hidden_slice], self.sensory_potential)
+        ) = terms
         observed = self.clamped[:self._sensory_nodes]
         self.mean[:self._sensory_nodes] = xp.where(
             observed, self.evidence[:self._sensory_nodes], prediction,
@@ -619,29 +622,27 @@ class ContinuousScenePredictiveCodingGraph:
             self._interval_start if has_observed and beta > 0.0
             else (self.prior_mean[self.hidden_slice], self.prior_sensory_potential)
         )
-        initial_energy = self._terms_for(
+        terms = self._terms_for(
             initial_hidden, initial_z, self.canvas, self.aperture_mask,
             self.clamped, self.evidence,
-        )[0]
-        energy_trajectory = [initial_energy]
+        )
+        energy_trajectory = [terms[0]]
 
         if has_observed and beta > 0.0:
             hidden, z = (arr.copy() for arr in self._interval_start)
             for _ in range(steps):
-                _, _, _, grad_h, grad_z, _, _, _, _, _ = self._terms_for(
-                    hidden, z, self.canvas, self.aperture_mask, self.clamped, self.evidence,
-                )
+                _, _, _, grad_h, grad_z, _, _, _, _, _ = terms
                 hidden = alpha * hidden - beta * xp.clip(grad_h, -clip, clip)
                 z = alpha * z - beta * xp.clip(grad_z, -clip, clip)
-                step_energy = self._terms_for(
+                terms = self._terms_for(
                     hidden, z, self.canvas, self.aperture_mask, self.clamped, self.evidence,
-                )[0]
-                energy_trajectory.append(step_energy)
+                )
+                energy_trajectory.append(terms[0])
             self.mean[self.hidden_slice] = hidden
             self.sensory_potential = z
 
         self.inference_energy = tuple(energy_trajectory)
-        prediction = self._capture()
+        prediction = self._capture(terms)
         self._set_predictions(prediction)
         direction = -self.canvas_gradient.copy()
 
