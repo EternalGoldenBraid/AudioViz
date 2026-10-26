@@ -1,43 +1,73 @@
-# Living Experimentation Catalogue
+# Experimentation diary
 
-This directory indexes recorded evidence and quantitative milestones for the continuous whole-scene predictive coding experiments on branch `research/active-vision-eig`. Full narrative analysis and historical baselines are maintained in [`../static-world-experiment-report.md`](../static-world-experiment-report.md).
+**Goal:** Learn a static scene through partial observations, recall previously
+seen regions outside the current view, and eventually use gaze to acquire
+evidence that improves prediction.
 
----
+This page is the current decision point. Dated entries preserve what was run,
+what happened and why the next experiment follows.
 
-## 2026-10-26 — 4-Stage Static-Scene Learning & Cleared-State Associative Recall
+## Research questions and current evidence
 
-**Model & Setup:**
-- **Graph:** `ContinuousScenePredictiveCodingGraph` (`24 x 36` static geometric scene, `H = 6` dense recurrent hidden units, `16` unobserved audio nodes, foveal radius `r = 10` (`278 / 864` world pixels per patch), `dt = 1/30 s`, `tau = 1/3 s`, `M = 8` integration microsteps, `inference_rate = 0.1`, `learning_rate = 0.03`, seed `0`).
-- **Controls:** Canvas input and feedback `0.0`; autonomous gaze `OFF`; unobserved ground-truth pixels masked with `NaN` prior to conditioning. Catalogue MSE values are unweighted pre-evidence RGB forecast errors on `sigmoid(z^-)`; videos also show separately labelled top-down and settled-state diagnostics.
+| Question | Current answer | Evidence |
+| --- | --- | --- |
+| **RQ1: Is scene information stored in learned connections, not just transient activity?** | Supported for a small familiar scene: cue-driven recall survives reset and improves with learned weights at matched initial precisions. Generalization is not established. | [E001: cleared-state recall](2026-10-26-static-scene-learning.md#results-and-recordings) |
+| **RQ2: Can learning remain stable over longer training and revisit gaps?** | Not established. Full learning degrades during the 480-step run; weights-only remains stable in that tested schedule. Precision growth coincides with degradation, but causality is unresolved. | [E001: limits](2026-10-26-static-scene-learning.md#interpretation-and-limits) |
+| **RQ3: Does uncertainty-guided gaze improve learning over controlled gaze schedules?** | Not established by these experiments. Deferred until the fixed-gaze learning baseline is reliable. | [Detailed report](../static-world-experiment-report.md) |
 
-### Recorded evidence (`docs/experiments/videos/`)
+## Next experiment: E002
 
-| Video Artifact | Stage & Schedule | Observed result |
-| :--- | :--- | :--- |
-| [Revisit learning and passive decay](videos/stage1_2_alternating_revisit_and_decay.mp4) (`1560x900`, 15 fps) | **Stages 1 & 2:** 120 alternating A/B observations, 10 steps per dwell, then 40 Observe-off steps. | At step 110, unobserved-B forecast MSE is `0.14536` frozen, `0.13222` weights-only and `0.06880` fully learned. Observe off adds no evidence or parameter updates; predictions decay toward neutral gray. |
-| [Cleared-state cue recall](videos/stage3_cleared_state_cue_recall_proof.mp4) (`1560x920`, 10 fps) | **Stage 3:** 120 **full-scene** training steps, freeze learning, reset `h=z=0`, then 30 steps with only cue A. | Compares all four weight/precision pairings. Learned weights improve prediction outside the cue even with initial precisions; learned precisions alone do not reproduce this recall. |
-| [Coverage and long-horizon failure](videos/stage4_revisit_coverage_and_stiffness.mp4) (`1560x880`, 20 fps) | **Stage 4:** four patches, four tours, dwell 30, 480 steps total; revisit gap 90 steps. | Full learning reaches whole-world forecast MSE `0.11266` at step 120, then degrades to `0.15941` at step 480 as precisions grow. Weights-only ends at `0.11944`; improvement is not monotonic. |
+**Status: Proposed; not run.**
 
-The recall recording uses **full-scene training**, unlike the alternating-A/B,
-three-seed recall table in the experiment report. Its seed-0 target-B forecast
-MSEs at cue step 30 are:
+**Question:** Is the long-horizon failure sensitive to numerical integration,
+and what precision-learning problem remains as integration is refined?
 
-| Recall parameters | B forecast MSE |
-| --- | ---: |
-| Initial weights, initial precisions | 0.15447 |
-| Learned weights, initial precisions | 0.14023 |
-| Learned weights, learned precisions | 0.07547 |
-| Initial weights, learned precisions | 0.15460 |
+Repeat E001's four-patch, dwell-30, 480-step schedule with:
 
-The cue covers approximately one-third of this small, previously seen scene.
-These recordings support associative learning under the stated conditions,
-not generalization to new scenes or long-horizon stability. The stiffness
-threshold plotted in the final video is a fixed-hidden scalar reference,
-not a stability certificate for the nonlinear, coupled, clipped system.
-Precision growth and degradation coincide; their separate causal contributions
-have not been isolated.
+- **One intervention:** Increase integration microsteps from `8` to `32` and
+  `128`, retaining physical `dt`, model time constants, inference rate, learning
+  rate and parameter-update cadence per physical step. Change no objective,
+  precision bounds, update masks or gaze policy.
+- **Matched controls:** Run both weights-only and weights-plus-precisions at each
+  resolution, using the same initial parameters and evidence sequence within
+  each of seeds `0, 1, 2`.
+- **Measurements:** Whole-world and outside-current-patch pre-evidence RGB MSE,
+  hidden-state norm, coupling and hidden precision distributions, and gradient
+  clipping frequency. Compare trajectories and tour boundaries, not just the
+  final image.
 
-Videos are H.264/yuv420p; playback frame rate is distinct from model `dt`.
-The generator (`render_benchmark_videos.py`), numerical runner and JSON results
-remain in Math Agent session
-`45344cb2-dfc9-4bd4-a39f-e4dfb2c07704/files/`, not this repository.
+| Outcome | Decision it informs |
+| --- | --- |
+| Finer integration materially changes or removes degradation | Numerical sensitivity contributes. Establish convergence before judging the learning rule. Growing precisions can remain a separate unresolved problem. |
+| The two finer resolutions agree closely but both degrade | Integration refinement alone has not resolved the failure. Next isolate the precision-learning objective and hidden-state contraction. |
+| Results still change with resolution, or vary substantially across seeds | Inconclusive. Refine the numerical comparison or characterize variability before choosing a correction. |
+
+**Completion record:** Set a trajectory-agreement tolerance before running.
+Commit the runnable protocol and machine-readable
+per-step results alongside a dated entry. Report resolution differences
+explicitly; do not infer convergence from a single stable-looking run.
+Link recordings where they help explain the outcome.
+
+**After E002:** Use its result to choose the smallest justified correction,
+repeat cleared-state recall to check that it survives, then compare
+uncertainty-guided gaze against controlled schedules.
+
+## Diary
+
+| Date | Experiment | Status and decision |
+| --- | --- | --- |
+| 2026-10-26 | [E001: static-scene learning and cleared-state recall](2026-10-26-static-scene-learning.md) | Completed. Recall supported within the tested setup; long-horizon failure motivates E002. Includes three recordings. |
+
+## Recording the next entry
+
+Use `YYYY-MM-DD-short-title.md` with an experiment ID and status
+(`proposed`, `running`, `completed` or `inconclusive`), followed by:
+
+**Goal / question -> Hypothesis -> Method and controls -> Results ->
+Interpretation and limits -> Decision and next step.**
+
+Link the runner, configuration, results and relevant recordings. Separate
+measurements from explanations, and identify retrospective hypotheses.
+Every entry should state which decision the evidence supports, including when
+the result is negative or inconclusive. Update this front page when that
+decision changes; keep the dated evidence in its entry.

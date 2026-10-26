@@ -223,8 +223,9 @@ not perform these queries. The session retains
 
 ## Controlled learning and cleared-state recall (2026-10-26)
 
-See the [living experimentation catalogue](experiments/README.md) for recorded
-revisit, cleared-state recall and long-horizon failure videos. Those recordings
+See the [experimentation diary](experiments/README.md) for research questions
+and the next experiment, and [entry E001](experiments/2026-10-26-static-scene-learning.md)
+for recorded revisit, cleared-state recall and long-horizon failure videos. Those recordings
 use seed `0`; the recall video uses full-scene training and 30 cue steps,
 distinct from the alternating-patch, three-seed, 20-cue-step table below.
 

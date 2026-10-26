@@ -342,8 +342,10 @@ allows processing to start without opening audio streams.
 
 ### Test-world predictive-coding bench
 
-See the [experiment report and open sampling questions](docs/static-world-experiment-report.md)
-for measured results and the current gaze-policy design pause.
+Start with the [experimentation diary](docs/experiments/README.md) for the goal,
+current evidence and next experiment. The
+[experiment report](docs/static-world-experiment-report.md) retains detailed
+measurements and historical baselines.
 
 Run the **continuous whole-scene baseline** against a static geometric scene,
 without camera or microphone hardware:
