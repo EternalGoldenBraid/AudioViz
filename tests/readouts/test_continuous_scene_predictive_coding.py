@@ -25,7 +25,7 @@ def test_continuous_scene_graph_supports_full_80x120_world_and_rejects_oversized
     assert not hasattr(graph, "membrane_capacitance")
 
     with pytest.raises(ValueError, match="visual_shape"):
-        ContinuousScenePredictiveCodingGraph(visual_shape=(150, 150))
+        ContinuousScenePredictiveCodingGraph(visual_shape=(481, 640))
     with pytest.raises(ValueError, match="audio_nodes"):
         ContinuousScenePredictiveCodingGraph(audio_nodes=512)
     with pytest.raises(ValueError, match="hidden_nodes"):
@@ -37,10 +37,39 @@ def test_continuous_scene_graph_supports_full_80x120_world_and_rejects_oversized
         ContinuousScenePredictiveCodingGraph(memory_time_constant=0.0)
     with pytest.raises(ValueError, match="memory_time_constant"):
         ContinuousScenePredictiveCodingGraph(memory_time_constant=True)
-    with pytest.raises(RuntimeError, match="candidate information gain"):
-        graph.candidate_information_gains(np.zeros((2, 80, 120, 3)), 1 / 30)
-    with pytest.raises(RuntimeError, match="candidate information gain"):
-        graph.candidate_information_gain(np.zeros((80, 120, 3)), 1 / 30)
+    with pytest.raises(RuntimeError, match="after forecast and before condition"):
+        graph.candidate_information_gains([[.5, .5]], foveal_radius=4)
+    with pytest.raises(RuntimeError, match="after forecast and before condition"):
+        graph.candidate_information_gain([.5, .5], foveal_radius=4)
+
+
+def test_full_480x640_world_conditions_only_fovea_and_evolves_without_evidence():
+    graph = ContinuousScenePredictiveCodingGraph(
+        visual_shape=(480, 640), hidden_nodes=6, audio_nodes=0,
+        config=PredictiveCodingConfig(hidden_channels=6, learning_enabled=False),
+    )
+    assert graph.visual_pixels == graph.MAX_VISUAL_SLOTS == 307200
+    assert graph.sensory_weights.shape == (921600, 6)
+    rows, cols = np.ogrid[:480, :640]
+    mask = (rows - 240) ** 2 + (cols - 320) ** 2 <= 32 ** 2
+    canvas = np.zeros((480, 640, 3), dtype=np.float32)
+    prediction, _ = graph.forecast(canvas, 1 / 30)
+    assert prediction.shape == canvas.shape
+    assert np.isfinite(prediction).all()
+    graph.condition(np.ones_like(canvas), visual_mask=mask)
+    np.testing.assert_array_equal(graph.clamped[graph.visual_slice].reshape(480, 640, 3).all(axis=-1), mask)
+    assert graph.clamped.sum() == 3209 * 3
+    assert np.linalg.norm(graph.visual_potential) > 0
+    weights = graph.sensory_weights.copy()
+    graph.update_config(inference_rate=0)
+    initial = graph.visual_potential.copy()
+    graph.forecast(canvas, 1 / 30)
+    graph.condition()
+    assert not graph.clamped.any()
+    np.testing.assert_allclose(
+        graph.visual_potential, initial * np.exp(-(1 / 30) / graph.memory_time_constant), atol=1e-12,
+    )
+    np.testing.assert_array_equal(graph.sensory_weights, weights)
 
 
 def test_conditioned_energy_trace_starts_at_replayed_interval_start():
@@ -84,6 +113,9 @@ def test_explicit_energy_matches_analytic_gradients_including_both_h_and_z_leak(
                 learning_enabled=False,
             ),
         )
+        for name in graph._PRECISIONS:
+            precision = getattr(graph, name)
+            precision *= rng.uniform(.5, 2., size=precision.shape)
         h0 = rng.normal(0.0, 0.35, size=graph.hidden_nodes)
         z0 = rng.normal(0.0, 0.4, size=graph._sensory_nodes)
         canvas = rng.normal(0.0, 0.25, size=graph.visual_nodes)
@@ -105,7 +137,7 @@ def test_explicit_energy_matches_analytic_gradients_including_both_h_and_z_leak(
         grad_h_total = graph._LEAK_ENERGY_WEIGHT * h0 + gain * grad_h_int
         grad_z_total = graph._LEAK_ENERGY_WEIGHT * z0 + gain * grad_z_int
 
-        eps = 1e-7
+        eps = 1e-5
         num_grad_h = np.zeros_like(h0)
         for i in range(graph.hidden_nodes):
             hp = h0.copy()
@@ -168,6 +200,9 @@ def test_weight_gradients_match_finite_differences_of_interaction_energy():
     graph.aperture_mask[3:6] = False
     graph.clamped[:] = True
     graph.evidence = rng.uniform(0.15, 0.85, size=graph.total_nodes)
+    for name in graph._PRECISIONS:
+        precision = getattr(graph, name)
+        precision *= rng.uniform(.5, 2., size=precision.shape)
     h0 = rng.normal(0.0, 0.3, size=graph.hidden_nodes)
     z0 = rng.normal(0.0, 0.35, size=graph._sensory_nodes)
 
@@ -366,4 +401,137 @@ def test_unobserved_world_pixels_evolve_when_gaze_moves_and_decay_after_learning
     assert float(np.linalg.norm(graph.mean[graph.hidden_slice])) < learned_h_norm * 1e-3
     assert float(np.mean(np.abs(vis_pred - 0.5))) < 1e-4
     for name, expected in learned_weights.items():
+        np.testing.assert_array_equal(getattr(graph, name), expected)
+
+
+@pytest.mark.parametrize("backend_name", ("numpy", "cupy"))
+def test_buckley_gaussian_objective_has_normalization_and_log_precision_gradient(request, backend_name):
+    xp = np if backend_name == "numpy" else request.getfixturevalue("cupy_backend")
+    graph = ContinuousScenePredictiveCodingGraph(
+        visual_shape=(1, 2), audio_nodes=1, hidden_nodes=2, backend=xp,
+        config=PredictiveCodingConfig(hidden_channels=2, learning_enabled=False),
+    )
+    errors = xp.asarray([2., -.5, 100.])
+    precisions = xp.asarray([.25, 4., 9.])
+    observed = xp.asarray([True, True, False])
+    expected = .5 * (1 + 1 - np.log(.25) - np.log(4.))
+    assert graph._gaussian_residual_energy(errors, precisions, observed=observed) == pytest.approx(expected)
+    low = graph._gaussian_residual_energy(xp.asarray([2.]), xp.asarray([1e-100]))
+    optimum = graph._gaussian_residual_energy(xp.asarray([2.]), xp.asarray([.25]))
+    high = graph._gaussian_residual_energy(xp.asarray([2.]), xp.asarray([1e3]))
+    assert low > optimum
+    assert high > optimum
+    assert graph._gaussian_residual_energy(errors, precisions, observed=xp.zeros(3, dtype=bool)) == 0
+
+    graph.mean[graph.hidden_slice] = xp.asarray([.2, -.1])
+    graph.sensory_potential[:] = xp.linspace(-.3, .4, graph._sensory_nodes)
+    graph.clamped[:3] = True
+    graph.clamped[graph.audio_slice] = True
+    graph.evidence[:3] = .8
+    graph.evidence[graph.audio_slice] = -.2
+    graph._capture()
+    snapshot = graph.belief_snapshot()
+    observed_host = snapshot["clamped"][:graph._sensory_nodes]
+    hidden_factor = .5 * np.sum(
+        snapshot["hidden_residual_precision"] * snapshot["hidden_error"]**2
+        - np.log(snapshot["hidden_residual_precision"]),
+    )
+    sensory_factors = .5 * np.sum(
+        snapshot["coupling_precision"] * snapshot["sensory_potential_error"]**2
+        - np.log(snapshot["coupling_precision"]),
+    ) + .5 * np.sum(
+        (snapshot["observation_precision"] * snapshot["sensory_error"]**2
+         - np.log(snapshot["observation_precision"]))[observed_host],
+    )
+    gain = graph._INTEGRATION_GAIN * graph.config.inference_rate
+    expected_hidden = .5 * np.sum(snapshot["mean"][graph.hidden_slice]**2) + gain * hidden_factor
+    expected_sensory = .5 * graph._gamma_z * np.sum(snapshot["sensory_potential"]**2) + gain * sensory_factors
+    assert graph.hidden_energy == pytest.approx(expected_hidden, abs=1e-12)
+    assert graph.sensory_energy == pytest.approx(expected_sensory, abs=1e-12)
+    assert graph.energy == pytest.approx(expected_hidden + expected_sensory, abs=1e-12)
+    h, z = graph.mean[graph.hidden_slice], graph.sensory_potential
+    for name, gradient in zip(graph._PRECISIONS, graph._precision_gradients()):
+        precision = getattr(graph, name)
+        original = precision.copy()
+        numeric = np.zeros(precision.size)
+        for index in range(precision.size):
+            precision[index] = original[index] * np.exp(1e-6)
+            plus = graph._interaction_energy(h, z)
+            precision[index] = original[index] * np.exp(-1e-6)
+            minus = graph._interaction_energy(h, z)
+            precision[index] = original[index]
+            numeric[index] = (plus - minus) / 2e-6
+        np.testing.assert_allclose(to_numpy(gradient), numeric, atol=2e-9)
+    np.testing.assert_array_equal(
+        to_numpy(graph._precision_gradients()[2])[~to_numpy(graph.clamped[:graph._sensory_nodes])], 0,
+    )
+
+
+@pytest.mark.parametrize("backend_name", ("numpy", "cupy"))
+def test_precision_learning_uses_captured_residuals_and_preserves_unobserved_observation_precision(request, backend_name):
+    xp = np if backend_name == "numpy" else request.getfixturevalue("cupy_backend")
+    graph = ContinuousScenePredictiveCodingGraph(
+        visual_shape=(2, 3), audio_nodes=1, hidden_nodes=3, backend=xp,
+        config=PredictiveCodingConfig(
+            hidden_channels=3, learning_enabled=True, learning_rate=.03, gradient_clip=.7,
+        ),
+    )
+    mask = np.zeros((2, 3), dtype=bool)
+    mask[0, 1] = True
+    graph.forecast(np.zeros((2, 3, 3)), 1/30)
+    graph.condition(np.full((2, 3, 3), .9), np.array([10.]), visual_mask=mask)
+    snapshot = graph.belief_snapshot()
+    observed = snapshot["clamped"][:graph._sensory_nodes]
+    before_energy, after_energy = 0., 0.
+    for name, error_name in zip(
+        graph._PRECISIONS, ("hidden_error", "sensory_potential_error", "sensory_error"),
+    ):
+        before = snapshot[name]
+        gradient = .5 * (before * snapshot[error_name]**2 - 1)
+        if name == "observation_precision":
+            gradient[~observed] = 0
+        expected = before * np.exp(-.03 * np.clip(gradient, -.7, .7))
+        actual = to_numpy(getattr(graph, name))
+        np.testing.assert_allclose(actual, expected, atol=1e-14)
+        assert np.isfinite(actual).all() and (actual > 0).all()
+        assert isinstance(getattr(graph, name), xp.ndarray)
+        assert not np.shares_memory(before, to_numpy(getattr(graph, name)))
+        support = observed if name == "observation_precision" else np.ones(before.size, dtype=bool)
+        error = snapshot[error_name]
+        before_energy += .5 * np.sum((before * error**2 - np.log(before))[support])
+        after_energy += .5 * np.sum((actual * error**2 - np.log(actual))[support])
+    assert after_energy < before_energy
+    assert graph.observation_precision[graph.audio_slice][0] < snapshot["observation_precision"][graph.audio_slice][0]
+    assert graph.observation_precision[3] > snapshot["observation_precision"][3]
+    np.testing.assert_array_equal(
+        to_numpy(graph.observation_precision)[~observed], snapshot["observation_precision"][~observed],
+    )
+
+    learned = {name: to_numpy(getattr(graph, name)).copy() for name in graph._PRECISIONS}
+    graph.forecast(np.zeros((2, 3, 3)), 1/30)
+    graph.condition()
+    assert graph.updates == 1
+    graph.set_learning(enabled=False)
+    graph.forecast(np.zeros((2, 3, 3)), 1/30)
+    graph.condition(np.ones((2, 3, 3)), visual_mask=mask)
+    graph.set_learning(enabled=True, rate=0)
+    graph.forecast(np.zeros((2, 3, 3)), 1/30)
+    graph.condition(np.ones((2, 3, 3)), visual_mask=mask)
+    graph.reset()
+    for name, expected in learned.items():
+        np.testing.assert_array_equal(to_numpy(getattr(graph, name)), expected)
+
+
+def test_precision_learning_rejects_unrepresentable_update_without_parameter_mutation():
+    graph = ContinuousScenePredictiveCodingGraph(
+        visual_shape=(1, 1), audio_nodes=0, hidden_nodes=2,
+        config=PredictiveCodingConfig(hidden_channels=2, learning_enabled=True, learning_rate=2000),
+    )
+    before = {name: getattr(graph, name).copy() for name in (*graph._PARAMETERS, *graph._PRECISIONS)}
+    graph.forecast(np.zeros((1, 1, 3)), 1/30)
+    with np.errstate(over="ignore"):
+        with pytest.raises(FloatingPointError, match="precision"):
+            graph.condition(np.full((1, 1, 3), .5))
+    assert graph.updates == 0
+    for name, expected in before.items():
         np.testing.assert_array_equal(getattr(graph, name), expected)
