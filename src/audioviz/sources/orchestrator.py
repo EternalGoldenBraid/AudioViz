@@ -16,7 +16,6 @@ from audioviz.readouts.predictive_coding import PredictiveCodingHiddenCoupling, 
 from audioviz.readouts.gaussian_audio_uncertainty import GaussianAudioUncertainty
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
-from audioviz.readouts.rc_spiking_predictive_coding import RCSpikingPredictiveCodingGraph
 from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
 from audioviz.readouts.shared_sensory_io import SharedSensoryBranch, SharedSensoryIO
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
@@ -28,7 +27,7 @@ from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 
 
 SharedGraphFactory = Callable[
-    ..., SharedPredictiveCodingGraph | RCSpikingPredictiveCodingGraph | ContinuousScenePredictiveCodingGraph
+    ..., SharedPredictiveCodingGraph | ContinuousScenePredictiveCodingGraph
 ]
 
 
@@ -216,7 +215,8 @@ class RippleSourceOrchestrator:
                 raise ValueError("visual uncertainty requires a finite, positive timestep")
             self._uncertainty_dt = float(dt)
         if self.sensory_graph is not None:
-            if self.gaze_policy is not None:
+            continuous = isinstance(self.sensory_graph, ContinuousScenePredictiveCodingGraph)
+            if self.gaze_policy is not None and not continuous:
                 self._select_visual_gaze(self.gaze_policy)
             precision = self.visual_readout.config.spatial_precision
             self.graph_io.set_gaze(precision.gaze if precision is not None else (.5, .5))
@@ -225,6 +225,13 @@ class RippleSourceOrchestrator:
                 canvas, self._uncertainty_dt,
                 aperture_mask=self.graph_io.valid.reshape(self.graph_io.visual_shape),
             )
+            if continuous:
+                # World-state forecast is gaze-independent; choose evidence support only afterwards.
+                self.gaze_scores = None
+                if self.gaze_policy is not None:
+                    self._select_visual_gaze(self.gaze_policy)
+                    precision = self.visual_readout.config.spatial_precision
+                    self.graph_io.set_gaze(precision.gaze)
             return self.graph_io.render(visual)
         if self.gaze_policy is not None:
             self._select_visual_gaze(self.gaze_policy)
@@ -256,7 +263,21 @@ class RippleSourceOrchestrator:
     def has_temporal_beliefs(self) -> bool:
         return self.visual_uncertainty is not None or self.sensory_graph is not None
 
+    @property
+    def has_gaussian_uncertainty(self) -> bool:
+        return self.visual_uncertainty is not None or (
+            self.sensory_graph is not None and self.sensory_graph.has_gaussian_uncertainty
+        )
+
+    @property
+    def has_epistemic_scoring(self) -> bool:
+        return self.has_gaussian_uncertainty or isinstance(
+            self.sensory_graph, ContinuousScenePredictiveCodingGraph,
+        )
+
     def visual_information_gain(self, precision):
+        if not self.has_epistemic_scoring:
+            raise RuntimeError("Information gain requires a matching Gaussian uncertainty model")
         if self.sensory_graph is None:
             if self.visual_uncertainty is None:
                 raise RuntimeError("Information gain requires a Gaussian belief model")
@@ -266,6 +287,10 @@ class RippleSourceOrchestrator:
         score_shape = (9, 13)
         gazes = [(float(x), float(y)) for y in np.linspace(0, 1, score_shape[0])
                  for x in np.linspace(0, 1, score_shape[1])]
+        if isinstance(self.sensory_graph, ContinuousScenePredictiveCodingGraph):
+            return self.sensory_graph.candidate_information_gains(
+                np.asarray(gazes).reshape(*score_shape, 2), foveal_radius=self.graph_io.radius,
+            )
         patches, masks = self.graph_io.sample_candidates(self.engine.get_prior(), gazes)
         return self.sensory_graph.candidate_information_gains(
             patches.reshape(*score_shape, *self.graph_io.visual_shape, 3), self._uncertainty_dt,

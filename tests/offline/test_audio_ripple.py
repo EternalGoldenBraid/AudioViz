@@ -55,6 +55,7 @@ def test_offline_audio_ripple_linear_mapping_pipeline_writes_frames_and_gif():
         )
 
         assert len(result.frame_paths) >= 2
+        assert result.frame_paths[0].name == "audio_ripple_001.png"
         assert all(path.exists() for path in result.frame_paths)
         assert result.video_path.exists()
         assert result.video_path.stat().st_size > 0

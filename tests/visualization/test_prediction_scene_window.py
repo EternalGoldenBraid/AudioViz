@@ -121,3 +121,98 @@ def test_failed_3d_scene_can_switch_to_working_2d_layout(qapp, layer_view_stub):
         assert view.error.isVisible()
     finally:
         view.close()
+
+
+def test_continuous_graph_is_frozen_until_explicit_refresh(qapp, layer_view_stub):
+    from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
+    from audioviz.utils.continuous_graph_preview import continuous_graph_preview
+
+    graph = ContinuousScenePredictiveCodingGraph(visual_shape=(4, 6), audio_nodes=0)
+    image = np.full((4, 6, 3), .6)
+    graph.forecast(image, 1 / 30)
+    graph.condition(image)
+    snapshot = continuous_graph_preview(graph, image, foveal_mask=np.ones((4, 6), dtype=bool))
+    window = PredictionSceneWindow()
+    window.configure_continuous_graph()
+    window.live_graph.setChecked(False)
+    window.show()
+    try:
+        assert window.take_spatial_preview_request()
+        assert window.snapshot_button.isVisible()
+        window.record(image, (), graph_snapshot=snapshot)
+        assert window.layer_view.preview is snapshot
+        assert not window.take_spatial_preview_request()
+        window.invalidate_evidence("camera")
+        assert window.graph_snapshot is snapshot
+        assert "Frozen snapshot" in window.status.text()
+        window.snapshot_button.click()
+        assert window.take_spatial_preview_request()
+        window.record(image, (), graph_snapshot=snapshot)
+        assert window.layer_view.updates == 2
+        window.layout_selector.setCurrentIndex(window.layout_selector.findData("comparison"))
+        assert not window.snapshot_button.isVisible()
+        assert window.take_spatial_preview_request()
+        window.record(image, ())
+        window.layout_selector.setCurrentIndex(window.layout_selector.findData("3d"))
+        assert window.take_spatial_preview_request()
+        window.record(image, (), graph_snapshot=snapshot)
+        window.hide()
+        assert window.graph_snapshot is None
+        assert window.layer_view.preview is None
+    finally:
+        window.close()
+
+
+def test_live_graph_throttles_updates_and_freezes_only_the_view(qapp, monkeypatch, layer_view_stub):
+    import audioviz.visualization.prediction_scene_window as scene_module
+    from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
+    from audioviz.utils.continuous_graph_preview import continuous_graph_preview
+
+    clock = [0.]
+    monkeypatch.setattr(scene_module, "monotonic", lambda: clock[0])
+    graph = ContinuousScenePredictiveCodingGraph(visual_shape=(4, 6), audio_nodes=0)
+    image = np.full((4, 6, 3), .6)
+    graph.forecast(image, 1 / 30)
+    graph.condition(image)
+    snapshot = continuous_graph_preview(graph, image, foveal_mask=np.ones((4, 6), dtype=bool))
+    window = PredictionSceneWindow()
+    window.configure_continuous_graph()
+    window.show()
+    try:
+        assert window.live_graph.isChecked() and window.live_graph.isVisible()
+        assert not window.snapshot_button.isEnabled()
+        assert window.take_spatial_preview_request()
+        window.record(image, (), graph_snapshot=snapshot)
+        assert "Live graph" in window.status.text()
+        clock[0] = .09
+        assert not window.take_spatial_preview_request()
+        clock[0] = .1
+        assert window.take_spatial_preview_request()
+        window.record(image, (), graph_snapshot=snapshot)
+        assert window.layer_view.updates == 2
+        window.invalidate_evidence("camera")
+        assert window.graph_snapshot.reference is None
+        assert not window.graph_snapshot.observed.any()
+        assert window.graph_snapshot.error is None
+        window.live_graph.setChecked(False)
+        assert window.snapshot_button.isEnabled()
+        assert "Frozen snapshot" in window.status.text()
+        clock[0] = 10.
+        assert not window.take_spatial_preview_request()
+        window.snapshot_button.click()
+        assert window.take_spatial_preview_request()
+        window.record(image, (), graph_snapshot=snapshot)
+        window.invalidate_evidence("camera")
+        assert window.graph_snapshot is snapshot
+        window.live_graph.setChecked(True)
+        assert window.take_spatial_preview_request()
+        window.record(image, (), graph_snapshot=snapshot)
+        window.hide()
+        clock[0] = 20.
+        assert not window.take_spatial_preview_request()
+        window.show()
+        assert window.take_spatial_preview_request()
+        window.layout_selector.setCurrentIndex(window.layout_selector.findData("comparison"))
+        assert not window.live_graph.isVisible()
+    finally:
+        window.close()

@@ -13,8 +13,8 @@ from audioviz.utils.array_backend import to_numpy
 class SourceSceneMapping:
     key: str
     label: str
-    representation: Literal["rgb", "spectrum", "signed", "graph"]
-    role: Literal["sensory", "drive", "medium"]
+    representation: Literal["rgb", "spectrum", "signed"]
+    role: Literal["sensory", "drive"]
 
     def sample(self, values: np.ndarray, *, max_side: int = PREVIEW_MAX_SIDE) -> np.ndarray:
         if self.representation in ("rgb", "signed"):
@@ -23,10 +23,6 @@ class SourceSceneMapping:
             if values.ndim != 1 or not 0 < len(values) <= PREVIEW_MAX_SIDE:
                 raise ValueError("A spectral scene source must provide 1-64 bands.")
             sampled = np.array(to_numpy(values), dtype=np.float32, copy=True)
-        elif self.representation == "graph":
-            if values.ndim != 2 or values.shape[1] != 2:
-                raise ValueError("A graph scene source must provide 2D node positions.")
-            sampled = np.array(to_numpy(values[:PREVIEW_MAX_SIDE]), dtype=np.float32, copy=True)
         else:
             raise ValueError(f"Unsupported scene representation: {self.representation}")
         sampled.setflags(write=False)
@@ -41,7 +37,6 @@ class SourceScenePreview:
     prediction: np.ndarray | None = None
     hidden: np.ndarray | None = None
     hidden_energies: tuple[float, ...] = ()
-    edges: np.ndarray | None = None
     recurrent_parent: str | None = None
     stream_state: bool | None = None
     stream_state_prediction: float | None = None

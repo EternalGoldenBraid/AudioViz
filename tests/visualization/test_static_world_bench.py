@@ -59,6 +59,8 @@ def test_bench_uses_actual_model_fixed_clock_and_missing_evidence_gaps(qapp, req
 
         bench.controls_button.click()
         controls = bench.visualizer.control_panel.source_control_widgets
+        assert "residual precisions" in controls["learning-dynamics", "learning_enabled"].toolTip()
+        assert "log precisions" in controls["learning-dynamics", "learning_rate"].toolTip()
         controls["learning-dynamics", "inference_steps"].setValue(3)
         controls["learning-dynamics", "inference_rate"].setValue(0)
         controls["learning-dynamics", "learning_enabled"].setChecked(True)
@@ -79,7 +81,10 @@ def test_bench_uses_actual_model_fixed_clock_and_missing_evidence_gaps(qapp, req
         assert missing.learning_updates == 1 and bench.capture.read_count == 2
         assert "MSE unavailable" in bench.status.text()
         assert np.isnan(bench.forecast_curve.getData()[1][-1])
-        np.testing.assert_array_equal(bench.error_image.image, np.full((20, 28, 4), (65, 65, 65, 255), dtype=np.uint8))
+        rmse = np.sqrt(np.mean(
+            (bench.scene.astype(np.float32) / 255 - bench.forecast_image.image)**2, axis=-1,
+        ))
+        np.testing.assert_array_equal(bench.error_image.image, bench.error_colormap.map(rmse, mode="byte"))
         path = tmp_path / "trace.json"
         bench.save_trace(path)
         trace = json.loads(path.read_text())
@@ -141,7 +146,10 @@ def test_learned_whole_scene_prediction_decays_without_erasing_connections(qapp,
         np.testing.assert_array_equal(to_numpy(graph.hidden_bias), 0.)
         np.testing.assert_array_equal(to_numpy(graph.sensory_bias), 0.)
         assert not np.array_equal(to_numpy(graph.sensory_weights), initial_weights)
-        learned = {name: to_numpy(getattr(graph, name)).copy() for name in graph._PARAMETERS}
+        learned = {
+            name: to_numpy(getattr(graph, name)).copy()
+            for name in (*graph._PARAMETERS, *graph._PRECISIONS)
+        }
         bench.visualizer.gaze_controls.observe.setChecked(False)
         first_free = bench.step_once()
         for _ in range(89):
@@ -178,7 +186,10 @@ def test_new_trial_restores_seeded_parameters_and_keeps_selected_inference_setti
     qapp.processEvents()
     try:
         graph = bench.visualizer.source_orchestrator.sensory_graph
-        before = {key: to_numpy(getattr(graph, key)).copy() for key in graph._PARAMETERS}
+        before = {
+            key: to_numpy(getattr(graph, key)).copy()
+            for key in (*graph._PARAMETERS, *graph._PRECISIONS)
+        }
         first = bench.step_once()
         bench.visualizer.source_orchestrator.update_pathway_config(
             inference_steps=4, inference_rate=.05, learning_enabled=True,
@@ -306,7 +317,7 @@ def test_image_mouse_gaze_selects_the_next_sample_without_consuming_evidence(
         bench.close()
 
 
-def test_scene_bench_has_one_mouse_mode_and_does_not_fabricate_autonomous_scores(qapp):
+def test_scene_bench_defaults_to_mouse_without_fabricating_scores(qapp):
     bench = StaticWorldBench(resolution=(40, 60), foveal_radius=4, backend="numpy")
     bench.show()
     qapp.processEvents()
@@ -314,7 +325,7 @@ def test_scene_bench_has_one_mouse_mode_and_does_not_fabricate_autonomous_scores
         source = bench.visualizer.source_orchestrator
         controls = bench.visualizer.gaze_controls
         assert controls.follow_mouse.isChecked()
-        assert not controls.autonomous_gaze.isEnabled()
+        assert controls.autonomous_gaze.isEnabled()
         assert not controls.full_canvas.isEnabled()
         assert source.gaze_policy is None
         assert not hasattr(bench, "model_selector")
@@ -434,7 +445,7 @@ def test_cli_static_control_reaches_the_same_bench(qapp, monkeypatch):
 
 @pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
 def test_world_slots_keep_evolving_after_gaze_moves_and_render_every_pixel(
-    qapp, request, backend, tmp_path,
+    qapp, request, backend, tmp_path, layer_view_stub,
 ):
     from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
 
@@ -457,10 +468,10 @@ def test_world_slots_keep_evolving_after_gaze_moves_and_render_every_pixel(
         assert io.positions.shape == (40*60, 2) and io.valid.all()
         assert not bench.visualizer.gaze_controls.autonomous_gaze.isEnabled()
         assert not bench.visualizer.diagnostics_button.isEnabled()
-        assert not bench.visualizer.scene_button.isEnabled()
+        assert bench.visualizer.scene_button.isEnabled()
         assert bench.state_plots.isVisible()
         bench.lock_gaze.setChecked(False)
-        assert not bench.visualizer.gaze_controls.autonomous_gaze.isEnabled()
+        assert bench.visualizer.gaze_controls.autonomous_gaze.isEnabled()
         bench.lock_gaze.setChecked(True)
         for _ in range(10):
             first = bench.step_once()
@@ -471,6 +482,16 @@ def test_world_slots_keep_evolving_after_gaze_moves_and_render_every_pixel(
             bench.scene[tuple(io.positions[observed].T)].astype(np.float32)/255,
         )
         assert np.isnan(to_numpy(graph.evidence[graph.visual_slice]).reshape(-1, 3)[~observed]).all()
+        bench.visualizer.scene_button.click()
+        popup = bench.visualizer.prediction_scene
+        popup.layout_selector.setCurrentIndex(popup.layout_selector.findData("3d"))
+        popup.live_graph.setChecked(False)
+        reads = bench.capture.read_count
+        bench.step_once()
+        snapshot = popup.graph_snapshot
+        assert snapshot is not None
+        assert bench.capture.read_count == reads + 1
+        np.testing.assert_array_equal(snapshot.fovea, io.observation_mask)
         bench.controls_button.click()
         panel = bench.visualizer.control_panel
         assert not panel.beliefs_button.isEnabled()
@@ -485,6 +506,7 @@ def test_world_slots_keep_evolving_after_gaze_moves_and_render_every_pixel(
         bench.visualizer._set_mouse_gaze(0., 0.)
         moved = bench.step_once()
         assert moved.gaze == (0., 0.) and moved.observed_rgb < 49*3
+        assert popup.graph_snapshot is snapshot
         np.testing.assert_allclose(
             to_numpy(graph.visual_potential).reshape(40, 60, 3),
             before*np.exp(-bench.dt/.8), atol=1e-12,
@@ -496,10 +518,18 @@ def test_world_slots_keep_evolving_after_gaze_moves_and_render_every_pixel(
         np.testing.assert_allclose(
             bench.forecast_image.image, expected_prediction, atol=1e-7,
         )
+        popup.snapshot_button.click()
         bench.visualizer.gaze_controls.observe.setChecked(False)
+        reads = bench.capture.read_count
         missing = bench.step_once()
         assert missing.forecast_mse is None and missing.settled_mse is None
-        assert bench.capture.read_count == 11 and graph.updates == 0
+        assert bench.capture.read_count == reads and graph.updates == 0
+        refreshed = popup.graph_snapshot
+        assert refreshed is not snapshot and refreshed.reference is not None
+        assert refreshed.independent_reference and refreshed.error is not None
+        assert not refreshed.observed.any()
+        np.testing.assert_array_equal(refreshed.visual_indices, snapshot.visual_indices)
+        np.testing.assert_array_equal(refreshed.fovea, io.observation_mask)
         assert bench.neutral_curve.getData()[1][-1] == missing.neutral_visual_mae
         assert bench.hidden_norm_curve.getData()[1][-1] == missing.decoded_hidden_norm
         assert bench.visual_norm_curve.getData()[1][-1] == missing.visual_potential_norm
@@ -519,5 +549,89 @@ def test_world_slots_keep_evolving_after_gaze_moves_and_render_every_pixel(
         np.testing.assert_array_equal(to_numpy(graph.mean[graph.hidden_slice]), 0)
         bench.visualizer.gaze_controls.observe.setChecked(True)
         assert not bench.history and bench.step_once().observed_rgb > 0
+    finally:
+        bench.close()
+
+
+@pytest.mark.parametrize("backend", ("numpy", "cupy", "opengl"))
+def test_epistemic_gaze_scores_after_one_forecast_and_selects_before_camera_acquisition(
+    qapp, request, monkeypatch, backend,
+):
+    if backend == "cupy":
+        request.getfixturevalue("cupy_backend")
+    if backend == "opengl" and qapp.platformName() == "offscreen":
+        pytest.skip("Native widget requires a window-system context")
+    bench = StaticWorldBench(resolution=(20, 28), foveal_radius=3, backend=backend, motion_enabled=False)
+    bench.show()
+    qapp.processEvents()
+    try:
+        source = bench.visualizer.source_orchestrator
+        graph = source.sensory_graph
+        xp = graph.backend
+        precision = graph.observation_precision[graph.visual_slice].reshape(20, 28, 3)
+        precision[:, 14:] *= 10
+        controls = bench.visualizer.gaze_controls
+        controls.autonomous_gaze.setChecked(True)
+        assert source.gaze_policy is not None and source.has_epistemic_scoring
+        assert not source.has_gaussian_uncertainty
+        events, scores = [], []
+        forecast, scoring, read, condition = (
+            graph.forecast, graph.candidate_information_gains, bench.capture.read, graph.condition,
+        )
+
+        def forecast_once(*args, **kwargs):
+            events.append("forecast")
+            return forecast(*args, **kwargs)
+
+        def score(*args, **kwargs):
+            assert graph.stage == "forecast" and bench.capture.read_count == 0
+            assert not bool(xp.any(graph.clamped))
+            before = graph.belief_snapshot()
+            result = scoring(*args, **kwargs)
+            after = graph.belief_snapshot()
+            for key in ("mean", "sensory_potential", *graph._PARAMETERS, *graph._PRECISIONS):
+                np.testing.assert_array_equal(after[key], before[key])
+            events.append("score")
+            scores.append(result.copy())
+            return result
+
+        def acquire():
+            events.append("capture")
+            assert source.graph_io.gaze[0] >= .5
+            return read()
+
+        def settle(*args, **kwargs):
+            events.append("condition")
+            return condition(*args, **kwargs)
+
+        monkeypatch.setattr(graph, "forecast", forecast_once)
+        monkeypatch.setattr(graph, "candidate_information_gains", score)
+        monkeypatch.setattr(bench.capture, "read", acquire)
+        monkeypatch.setattr(graph, "condition", settle)
+        frame = bench.step_once()
+        assert events == ["forecast", "score", "capture", "condition"]
+        assert frame.gaze[0] >= .5 and bench.capture.read_count == 1
+        assert source.gaze_scores.shape == (9, 13)
+        np.testing.assert_array_equal(source.gaze_scores, scores[0])
+        np.testing.assert_array_equal(bench.visualizer.attention_scores, scores[0])
+        gx, gy = frame.gaze
+        assert scores[0][round(gy*8), round(gx*12)] == pytest.approx(scores[0].max())
+        np.testing.assert_array_equal(
+            to_numpy(graph.clamped[graph.visual_slice]).reshape(20, 28, 3).all(axis=-1),
+            source.graph_io.observation_mask,
+        )
+        before = {name: to_numpy(getattr(graph, name)).copy() for name in (*graph._PARAMETERS, *graph._PRECISIONS)}
+        controls.observe.setChecked(False)
+        events.clear()
+        unobserved = bench.step_once()
+        assert events == ["forecast", "condition"]
+        assert unobserved.gaze == frame.gaze and unobserved.observed_rgb == 0
+        assert source.gaze_scores is None and bench.visualizer.attention_scores is None
+        assert bench.capture.read_count == 1
+        for name, values in before.items():
+            np.testing.assert_array_equal(to_numpy(getattr(graph, name)), values)
+        bench.lock_gaze.setChecked(True)
+        assert source.gaze_policy is None
+        assert not controls.autonomous_gaze.isEnabled()
     finally:
         bench.close()

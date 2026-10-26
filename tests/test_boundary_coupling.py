@@ -25,7 +25,7 @@ def _build_boundary_engine(
     return engine
 
 
-def test_pose_coupled_medium_boundary_transmission_allows_crossing_signal():
+def test_internal_boundary_transmission_allows_crossing_signal():
     hard_cut_engine = _build_boundary_engine()
     transmissive_engine = _build_boundary_engine(transmission=0.5)
 
@@ -36,7 +36,7 @@ def test_pose_coupled_medium_boundary_transmission_allows_crossing_signal():
     assert np.all(transmissive_engine.get_field_numpy()[2, 2] > 0.0)
 
 
-def test_pose_coupled_medium_boundary_dissipation_reduces_same_transmission_energy():
+def test_internal_boundary_dissipation_reduces_same_transmission_energy():
     low_loss_engine = _build_boundary_engine(
         transmission=0.5,
         dissipation=0.0,

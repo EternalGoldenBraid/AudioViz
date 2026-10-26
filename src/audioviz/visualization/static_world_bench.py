@@ -32,23 +32,30 @@ from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 class _BenchVisualizer(RippleWaveVisualizer):
     gaze_changed = QtCore.pyqtSignal()
 
-    def __init__(self, **kwargs):
+    def __init__(self, *, diagnostic_world, **kwargs):
         self.gaze_locked = True
+        self._diagnostic_world = diagnostic_world
         super().__init__(**kwargs)
+
+    def _capture_continuous_graph_preview(self):
+        from audioviz.utils.continuous_graph_preview import continuous_graph_preview
+
+        source = self.source_orchestrator
+        return continuous_graph_preview(
+            source.sensory_graph, self._diagnostic_world.frame.astype(np.float32) / 255,
+            foveal_mask=source.graph_io.observation_mask, independent_reference=True,
+        )
 
     def _set_mouse_gaze(self, x, y):
         if not self.gaze_locked:
             super()._set_mouse_gaze(x, y)
             self.gaze_changed.emit()
 
-    def _refresh_attention_preview(self):
-        self.attention_scores = None
-
     def toggle_controls(self):
         super().toggle_controls()
         self.control_panel.beliefs_button.setEnabled(False)
         self.control_panel.beliefs_button.setToolTip(
-            "Use the continuous-state bench plots; a matching gaze uncertainty model is not yet defined."
+            "Use the continuous-state bench plots; legacy Gaussian belief diagnostics are unavailable."
         )
         self.control_panel.wave_dynamics_button.setEnabled(False)
         self.control_panel.wave_dynamics_button.setToolTip("This continuous-scene baseline is wave-free.")
@@ -167,10 +174,10 @@ class StaticWorldBench(QtWidgets.QWidget):
         layout.addLayout(state_controls)
         self.description = description = QtWidgets.QLabel(
             "Static test world; no camera or microphone. Every image location has a continuous neural state; "
-            "the fovea gates evidence, not dynamics. Model controls change integration and connection learning. "
+            "the fovea gates evidence, not dynamics. Model controls change integration and weight/precision learning. "
             "Move the mouse over any image to select gaze; Step/Run samples it. "
             "For fixed-patch trials, lock gaze and turn scene motion off. "
-            "New trial keeps model settings/gaze but restores seed-0 weights, scene/hidden state and zero canvas. "
+            "New trial keeps model settings/gaze but restores seed-0 weights, initial precisions, states and zero canvas. "
             f"Each step uses forecast dt={self.dt:g} s; playback speed does not change this clock."
         )
         description.setWordWrap(True)
@@ -184,7 +191,7 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.outlines = []
         self.world_image = self._image_panel("World (next gaze; evaluator only)", 0)
         self.forecast_image = self._image_panel("Whole-scene forecast (live neural state)", 1)
-        self.error_image = self._image_panel("Forecast RGB RMSE (0-1; gray = unobserved)", 2)
+        self.error_image = self._image_panel("Whole-world forecast RGB RMSE (0-1; evaluator only)", 2)
         self.images.scene().sigMouseMoved.connect(self._move_image_gaze)
         self.error_colormap = pg.colormap.get("magma")
         self.splitter.addWidget(self.images)
@@ -198,7 +205,7 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.energy_plot = self.plots.addPlot(row=0, col=1, title="Within latest interval: continuous-state energy")
         self.energy_plot.addLegend(offset=(10, 10), colCount=3)
         self.energy_plot.setLabel("bottom", "Integration microsteps")
-        self.energy_plot.setLabel("left", "Residual energy (sum)")
+        self.energy_plot.setLabel("left", "Gaussian-factor energy (sum)")
         for plot in (self.mse_plot, self.energy_plot):
             plot.getAxis("left").enableAutoSIPrefix(False)
         self.energy_curve = self.energy_plot.plot(pen=pg.mkPen("#f6df75", width=2), symbol="o", symbolSize=5, name="Total energy")
@@ -268,7 +275,7 @@ class StaticWorldBench(QtWidgets.QWidget):
         if locked:
             controls.follow_mouse.setChecked(True)
         controls.follow_mouse.setEnabled(not locked)
-        controls.autonomous_gaze.setEnabled(False)
+        controls.autonomous_gaze.setEnabled(not locked)
         controls.gaze_x.setEnabled(not locked and controls.follow_mouse.isChecked())
         controls.gaze_y.setEnabled(not locked and controls.follow_mouse.isChecked())
 
@@ -316,6 +323,7 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.world.reset()
         self.capture = StaticSceneCapture(self.scene)
         self.visualizer = _BenchVisualizer(
+            diagnostic_world=self.world,
             resolution=self.scene.shape[:2], plane_size_m=(1, 1),
             use_shader=self.backend == "opengl", use_gpu=self.backend == "cupy",
             rgb_canvas_enabled=True, camera_capture=self.capture,
@@ -327,24 +335,26 @@ class StaticWorldBench(QtWidgets.QWidget):
         self.visualizer.timer.stop()
         self.visualizer.setMinimumHeight(190)
         self._update_memory_time_constant()
-        unavailable = "Autonomous gaze is paused until one epistemic objective is defined for this scene model."
-        self.visualizer.gaze_controls.autonomous_gaze.setEnabled(False)
-        self.visualizer.gaze_controls.autonomous_gaze.setToolTip(unavailable)
+        self.visualizer.gaze_controls.autonomous_gaze.setToolTip(
+            "Maximize one-step expected joint-state information gain; no outcome preferences or temporal planning.",
+        )
         self.visualizer.diagnostics_button.setEnabled(False)
         self.visualizer.diagnostics_button.setToolTip("Use the whole-scene state plots in the bench.")
-        self.visualizer.scene_button.setEnabled(False)
-        self.visualizer.scene_button.setToolTip("Use the bench's live whole-scene forecast.")
+        self.visualizer.scene_button.setEnabled(True)
+        self.visualizer.scene_button.setToolTip("Open image layouts or the live continuous graph; uncheck Live to freeze it.")
         self.visualizer.gaze_description = (
             "Bias-free continuous scene graph: one world-anchored neural state per RGB coordinate, "
             "coupled to one shared recurrent hidden population. Every state evolves every step. "
             "The circular fovea gates camera evidence only. Predicted RGB is sigmoid(neural state); "
-            "there is no last-visit image cache. Autonomous gaze awaits its uncertainty model."
+            "there is no last-visit image cache. Autonomous gaze uses one-step local Gaussian information gain, "
+            "not whole-world evaluator truth, outcome preferences or temporal planning."
         )
         self.visualizer.gaze_status.setToolTip(self.visualizer.gaze_description)
         self.footer.setText(
             "Evidence is foveal; neural dynamics and decoding cover the whole scene. "
             "Learned connections persist while unforced state returns toward neutral gray. "
-            "No-evidence MSE is unavailable, not zero. No spiking or wave dynamics. "
+            "Observed MSE is unavailable without evidence; whole-world error is evaluator-only. "
+            "No spiking or wave dynamics. "
             f"Plots/export retain the latest {self.HISTORY_LIMIT} steps."
         )
         self.visualizer.gaze_changed.connect(self._refresh_gaze_outlines)
@@ -429,20 +439,14 @@ class StaticWorldBench(QtWidgets.QWidget):
         bounds = QtCore.QRectF(0, 0, cols, rows)
         self.world_image.setImage(self.scene, autoLevels=False, levels=(0, 255))
         prediction = self.visualizer.visual_prediction
+        reference = spatial_preview(self.scene, max_side=self.PREVIEW_MAX_SIDE).astype(np.float32) / 255
         preview = (
-            np.full((*self.scene.shape[:2], 3), .5, dtype=np.float32) if prediction is None
+            np.full_like(reference, .5) if prediction is None
             else spatial_preview(prediction, max_side=self.PREVIEW_MAX_SIDE)
         )
         self.forecast_image.setImage(preview, autoLevels=False, levels=(0, 1))
-        error_image = np.full((rows, cols, 4), (65, 65, 65, 255), dtype=np.uint8)
-        source = self.visualizer.source_orchestrator
-        graph, io = source.sensory_graph, source.graph_io
-        observed = to_numpy(graph.clamped[graph.visual_slice]).reshape(-1, 3).all(axis=1) & io.valid
-        if observed.any():
-            evidence = to_numpy(graph.evidence[graph.visual_slice]).reshape(-1, 3)[observed]
-            forecast = to_numpy(graph.prior_mean[graph.visual_slice]).reshape(-1, 3)[observed]
-            rmse = np.sqrt(np.mean((evidence-forecast)**2, axis=1))
-            error_image[tuple(io.positions[observed].T)] = self.error_colormap.map(rmse, mode="byte")
+        rmse = np.sqrt(np.mean((reference - preview)**2, axis=-1))
+        error_image = self.error_colormap.map(rmse, mode="byte")
         self.error_image.setImage(error_image, autoLevels=False)
         for image in (self.world_image, self.forecast_image, self.error_image):
             image.setRect(bounds)
@@ -506,6 +510,9 @@ def main(argv=None):
     parser.set_defaults(motion_enabled=False)
     parser.add_argument("--brownian-scale", type=float, default=4., help="Brownian displacement scale, pixels/sqrt(second).")
     args = parser.parse_args(argv)
+    if QtWidgets.QApplication.instance() is None:
+        # Graph windows reuse pyqtgraph's cached shader programs.
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     window = StaticWorldBench(

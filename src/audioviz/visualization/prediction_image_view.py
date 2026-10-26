@@ -23,6 +23,7 @@ class PredictionImageView(QtWidgets.QWidget):
         self._attention_available = False
         self._attention_samples = ()
         self._attention_hard_fovea = False
+        self._attention_world_anchored = False
         for key in ("canvas", "prediction", "observation"):
             plot = pg.PlotWidget()
             plot.setAspectLocked(True)
@@ -93,21 +94,32 @@ class PredictionImageView(QtWidgets.QWidget):
             self.attention_overlays[key].shape = values.shape[:2]
             self.images[key].setImage(_canvas_to_rgb(values, limit=1.0), autoLevels=False, levels=(0, 255))
 
-    def set_attention(self, precision, scores, *, available=False, sample_points=(), hard_fovea=False):
+    def set_attention(
+        self, precision, scores, *, available=False, sample_points=(),
+        hard_fovea=False, world_anchored=False,
+    ):
         self._attention_precision = precision
         self._attention_scores = scores
         self._attention_available = available
         self._attention_samples = sample_points
         self._attention_hard_fovea = hard_fovea
+        self._attention_world_anchored = world_anchored
         self._refresh_attention()
 
     def _refresh_attention(self):
         if self._attention_hard_fovea:
-            self.panels["prediction"].setTitle("Prediction (outside retained)")
-            self.panels["prediction"].setToolTip(
-                "Pre-evidence forecast inside the circle. Outside the circle, the world-coordinate "
-                "prediction retains its last value; it is not freshly decoded."
-            )
+            if self._attention_world_anchored:
+                self.panels["prediction"].setTitle("Whole-scene prediction (live state)")
+                self.panels["prediction"].setToolTip(
+                    "The complete pre-evidence forecast is decoded each interval. "
+                    "World-coordinate beliefs keep evolving outside the fovea; the circle gates evidence only."
+                )
+            else:
+                self.panels["prediction"].setTitle("Prediction (outside retained)")
+                self.panels["prediction"].setToolTip(
+                    "Pre-evidence forecast inside the circle. Outside the circle, the world-coordinate "
+                    "prediction retains its last value; it is not freshly decoded."
+                )
             self.panels["observation"].setTitle(
                 "Camera (circle observed)"
                 if self.images["observation"].image is not None else "Camera evidence - no current sample"

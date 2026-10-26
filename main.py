@@ -20,14 +20,15 @@ from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
 from audioviz.sources import (
     AudioSourceConfig,
     CameraFrameSourceConfig,
-    RipplePoseConfig,
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
 from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
-from audioviz.readouts import GaussianSpatialPrecision, PredictiveCodingConfig, SharedPredictiveCodingGraph
+from audioviz.readouts import (
+    ContinuousScenePredictiveCodingGraph, GaussianSpatialPrecision, PredictiveCodingConfig,
+)
 from audioviz.sources.gaze import ActiveVisionConfig
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 
@@ -90,13 +91,14 @@ RIPPLE_CONFIG = {
         "n_sources": 5,
         # "plane_size_m": (500.0, 500.0),
         "plane_size_m": (50.0, 50.0),
+        # "resolution": (80, 120),
         # "resolution": (480, 640),
         # "resolution": (1080, 1920),
         # "resolution": (960, 1200),
         # "resolution": (600, 800),
         # "resolution": (400, 600),
         # "resolution": (300, 400),
-        # # "resolution": (100, 200),
+        "resolution": (200, 200),
         # "resolution": (48, 64),
     },
     "dynamics": {
@@ -109,8 +111,8 @@ RIPPLE_CONFIG = {
     },
     "renderer": {
         # "backend": "numpy",  # numpy | gpu | opengl
-        "backend": "opengl",  # numpy | gpu | opengl
-        # "backend": "gpu",  # numpy | gpu | opengl
+        # "backend": "opengl",  # numpy | gpu | opengl
+        "backend": "gpu",  # numpy | gpu | opengl
         "rgb_canvas_enabled": True,
         "auto_color_activation_threshold": 0.1,
         "auto_color_floor": 0.1,
@@ -140,23 +142,6 @@ RIPPLE_CONFIG = {
                 "linear_offset": 0.0,
             },
         },
-        "pose": {
-            "enabled": False,
-            # "render_mode": "standing-body",
-            "render_mode": "overlay",
-            "model_path": "models/pose_landmarker_lite.task",
-            "camera_index": 0,
-            "debug_view": False,
-            "medium": {
-                "graph_stiffness": 0.25,
-                "field_width_fraction": 1.0,
-                "field_height_fraction": 1.0,
-            },
-            "boundary": {
-                "transmission": 0.54,
-                "dissipation": 0.06,
-            },
-        },
         "camera_frame": {
             "enabled": True,
             # "enabled": True,
@@ -171,12 +156,12 @@ RIPPLE_CONFIG = {
             "inference": {
                 "steps": 8,
                 "hidden_rate": 0.1,
-                "canvas_rate": 0.01,
+                "canvas_rate": 0.0,
             },
             "learning": {
                 "enabled": False,
-                "learning_rate": 1.,
-                "weight_decay": 1e-4,
+                "learning_rate": 0.03,
+                "weight_decay": 0.0,
                 "weight_clip": 10.0,
                 "gradient_clip": 1.0,
             },
@@ -190,9 +175,6 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     renderer = config["renderer"]
     audio = sources["audio"]
     audio_mapping = audio["mapping"]
-    pose = sources["pose"]
-    pose_medium = pose["medium"]
-    pose_boundary = pose["boundary"]
     camera_frame = sources["camera_frame"]
     prediction_error = config["transforms"]["prediction_error"]
     prediction_error_inference = prediction_error["inference"]
@@ -201,9 +183,18 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     model = config["model"]
     gaze = config["gaze"]
     hidden_units = model["hidden_units"]
-    limit = SharedPredictiveCodingGraph.MAX_HIDDEN_NODES
+    limit = ContinuousScenePredictiveCodingGraph.MAX_HIDDEN_NODES
     if isinstance(hidden_units, bool) or not isinstance(hidden_units, int) or not 1 <= hidden_units <= limit:
         raise ValueError(f"model.hidden_units must be an integer between 1 and {limit}")
+    resolution = config["field"]["resolution"]
+    if (
+        not isinstance(resolution, (tuple, list)) or len(resolution) != 2
+        or any(isinstance(size, bool) or not isinstance(size, int) or size <= 0 for size in resolution)
+    ):
+        raise ValueError("field.resolution must contain two positive integers (rows, columns)")
+    pixel_limit = ContinuousScenePredictiveCodingGraph.MAX_VISUAL_SLOTS
+    if resolution[0] * resolution[1] > pixel_limit:
+        raise ValueError(f"field.resolution must not exceed {pixel_limit} world pixels")
     pathway = PredictiveCodingConfig(
         hidden_channels=hidden_units,
         dtype="float32" if backend == "opengl" else "float64",
@@ -222,9 +213,9 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
         memory_time_constant=model["memory_time_constant"],
         audio_precision=1.0 if audio["enabled"] else None,
         shared_sensory_graph=True,
+        world_anchored=True,
         foveal_radius=model["foveal_radius"],
     )
-
     return {
         **config["field"],
         **config["dynamics"],
@@ -256,24 +247,13 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
             ),
             visual_pathway=pathway,
         ),
-        "pose_config": RipplePoseConfig(
-            enabled=pose["enabled"],
-            render_mode=pose["render_mode"],
-            model_path=pose["model_path"],
-            camera_index=pose["camera_index"],
-            debug_view=pose["debug_view"],
-            graph_stiffness=pose_medium["graph_stiffness"],
-            field_width_fraction=pose_medium["field_width_fraction"],
-            field_height_fraction=pose_medium["field_height_fraction"],
-            body_boundary_transmission=pose_boundary["transmission"],
-            body_boundary_dissipation=pose_boundary["dissipation"],
-        ),
         "use_gpu": backend == "gpu",
         "use_shader": backend == "opengl",
         "rgb_canvas_enabled": renderer["rgb_canvas_enabled"],
         "auto_color_activation_threshold": renderer["auto_color_activation_threshold"],
         "auto_color_floor": renderer["auto_color_floor"],
         "active_vision": active_vision,
+        "shared_graph_factory": ContinuousScenePredictiveCodingGraph,
     }
 
 
@@ -387,7 +367,7 @@ def _create_audio_processor(ripple_config):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Foveal predictive-coding application. Configure model sizes and sources in RIPPLE_CONFIG in main.py.",
+        description="Continuous whole-scene predictive coding with foveal evidence. Configure the world grid, model and sources in RIPPLE_CONFIG in main.py.",
     )
     parser.parse_args(argv)
     app_config, source_config = deepcopy(APP_CONFIG), deepcopy(RIPPLE_CONFIG)
@@ -395,8 +375,9 @@ def main(argv=None):
     ripple_config = build_ripple_visualizer_config(source_config) if windows["ripples"]["enabled"] else None
     if ripple_config is not None:
         logger.info(
-            "Foveal PC: radius {} pixels, {} total recurrent hidden units, {} gaze, {} image backend; "
-            "learning {}. Sizes are configured in RIPPLE_CONFIG['model'].",
+            "Continuous scene: {} world grid, radius {} pixels, {} total recurrent hidden units, {} gaze, {} image backend; "
+            "learning {}. Configure the world in RIPPLE_CONFIG['field'] and neural sizes in ['model'].",
+            source_config["field"]["resolution"],
             source_config["model"]["foveal_radius"], source_config["model"]["hidden_units"],
             source_config["gaze"]["mode"], source_config["renderer"]["backend"],
             "enabled" if source_config["transforms"]["prediction_error"]["learning"]["enabled"] else "disabled",
@@ -406,6 +387,9 @@ def main(argv=None):
         and ripple_config["active_vision"].audio_precision is None
         and not windows["spectrogram"]["enabled"] and not windows["helix"]["enabled"]
     )
+    if QtWidgets.QApplication.instance() is None:
+        # Graph windows reuse pyqtgraph's cached shader programs.
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     processor = None

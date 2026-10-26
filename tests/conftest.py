@@ -22,6 +22,9 @@ collect_ignore = [
 def qapp():
     # Offline renders also need the application retained before creating any Qt scene.
     qt_widgets = pytest.importorskip("PyQt5.QtWidgets")
+    qt_core = pytest.importorskip("PyQt5.QtCore")
+    if qt_widgets.QApplication.instance() is None:
+        qt_widgets.QApplication.setAttribute(qt_core.Qt.AA_ShareOpenGLContexts)
     return qt_widgets.QApplication.instance() or qt_widgets.QApplication([])
 
 
@@ -54,6 +57,10 @@ def layer_view_stub(qapp, monkeypatch):
 
         def set_scene(self, canvas, sources):
             self.preview = canvas, sources
+            self.updates += 1
+
+        def set_graph_snapshot(self, snapshot):
+            self.preview = snapshot
             self.updates += 1
 
 

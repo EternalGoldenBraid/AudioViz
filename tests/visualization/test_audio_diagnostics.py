@@ -68,7 +68,7 @@ def test_audio_catalogue_and_independent_scene_hold_real_samples_clear_stale_evi
     assert sources["audio"].observation.shape == (AUDIO_SPECTRAL_BANDS,)
     assert sources["audio"].hidden.shape == (10, 20, 6)
     assert sources["camera"].hidden is not None
-    assert set(sources) == {"camera", "audio", "synthetic", "pose"}
+    assert set(sources) == {"camera", "audio", "synthetic"}
     np.testing.assert_array_equal(scene.canvas, visualizer.engine.get_field_preview())
     assert not visualizer.source_orchestrator.audio_readout.spatial_preview_enabled
     assert not visualizer.source_orchestrator.visual_readout.spatial_preview_enabled

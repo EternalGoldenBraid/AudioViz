@@ -1,14 +1,11 @@
 import numpy as np
-import pytest
 
 from audioviz.sources import (
     AudioSourceConfig,
     CameraFrameSourceConfig,
-    RipplePoseConfig,
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
-from audioviz.sources.pose import PoseGraphFrame, adjacency_from_edges
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 from audioviz.readouts import PredictiveCodingConfig
 from audioviz.utils.spatial_preview import spatial_preview
@@ -32,27 +29,6 @@ class _FakeCapture:
         self.released = True
 
 
-class _FakeExtractor:
-    def __init__(self):
-        self.frames = [
-            PoseGraphFrame(
-                coords=np.array([[0.25, 0.25], [0.75, 0.75]], dtype=np.float32),
-                adjacency=adjacency_from_edges(2, [(0, 1)]),
-            ),
-            PoseGraphFrame(
-                coords=np.array([[0.25, 0.25], [0.95, 0.75]], dtype=np.float32),
-                adjacency=adjacency_from_edges(2, [(0, 1)]),
-            ),
-        ]
-        self.closed = False
-
-    def extract(self, _frame):
-        return self.frames.pop(0)
-
-    def close(self):
-        self.closed = True
-
-
 class _FakeRenderer:
     def __init__(self):
         self.render_count = 0
@@ -63,21 +39,6 @@ class _FakeRenderer:
     def render(self, _engine):
         self.render_count += 1
         self.field = np.asarray(_engine).copy()
-
-
-class _StandingRenderer(_FakeRenderer):
-    def __init__(self):
-        super().__init__()
-        self.rgb_frame = None
-        self._lut = np.stack([np.arange(256), np.arange(256), np.arange(256)], axis=1).astype(np.uint8)
-        self.image_item = type(
-            "DummyImageItem",
-            (),
-            {"lut": lambda item: item._lut, "_lut": self._lut},
-        )()
-
-    def render_rgb_frame(self, rgb_frame):
-        self.rgb_frame = np.asarray(rgb_frame)
 
 
 def _source_config(
@@ -102,60 +63,6 @@ def _source_config(
             else prediction_error
         ),
     )
-
-
-def _pose_config(
-    *,
-    enabled: bool = False,
-    render_mode: str = "overlay",
-    debug_view: bool = False,
-) -> RipplePoseConfig:
-    return RipplePoseConfig(
-        enabled=enabled,
-        render_mode=render_mode,
-        debug_view=debug_view,
-    )
-
-
-def test_ripple_visualizer_pose_medium_overlay_smoke(qapp):
-    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-
-    capture = _FakeCapture()
-    extractor = _FakeExtractor()
-    visualizer = RippleWaveVisualizer(
-        processor=None,
-        resolution=(10, 20),
-        plane_size_m=(1.0, 1.0),
-        speed=1.0,
-        damping=1.0,
-        amplitude=1.0,
-        source_orchestrator_config=_source_config(use_synthetic=False),
-        pose_config=_pose_config(enabled=True, render_mode="overlay"),
-        pose_capture=capture,
-        pose_extractor=extractor,
-    )
-    visualizer.timer.stop()
-    visualizer.renderer = _FakeRenderer()
-    # Isolate passive pose-medium coupling from stream-state canvas correction.
-    visualizer.source_orchestrator.update_pathway_config(canvas_rate=0)
-
-    visualizer.update_visualization()
-    first_pose_positions = visualizer._latest_pose_render_positions[visualizer._latest_pose_valid]
-    first_field = visualizer.engine.get_field_numpy().copy()
-
-    visualizer.update_visualization()
-    second_pose_positions = visualizer._latest_pose_render_positions[visualizer._latest_pose_valid]
-    second_field = visualizer.engine.get_field_numpy().copy()
-
-    np.testing.assert_allclose(first_pose_positions, [[14.25, 2.25], [4.75, 6.75]])
-    np.testing.assert_allclose(second_pose_positions, [[14.25, 2.25], [0.95, 6.75]], atol=1e-5)
-    assert np.count_nonzero(first_field) == 0
-    assert np.count_nonzero(second_field) == 0
-    assert visualizer.renderer.render_count == 2
-
-    visualizer.close_pose_sources()
-    assert capture.released
-    assert extractor.closed
 
 
 def test_ripple_visualizer_camera_source_updates_field_and_releases_capture(qapp):
@@ -305,41 +212,6 @@ def test_ripple_visualizer_reset_clears_hidden_memory_and_renders_zero_surface(q
     np.testing.assert_array_equal(visualizer.renderer.field, 0.0)
 
 
-def test_ripple_visualizer_pose_path_uses_same_visual_inference(qapp):
-    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-
-    visualizer = RippleWaveVisualizer(
-        resolution=(10, 20),
-        plane_size_m=(1.0, 1.0),
-        speed=1.0,
-        damping=1.0,
-        source_orchestrator_config=_source_config(
-            prediction_error=PredictionErrorTransformConfig(enabled=True)
-        ),
-        pose_config=_pose_config(enabled=True),
-        pose_capture=_FakeCapture(),
-        pose_extractor=_FakeExtractor(),
-    )
-    visualizer.timer.stop()
-    visualizer.renderer = _FakeRenderer()
-    visualizer.diagnostics_button.click()
-    visualizer.camera_source.excitation = lambda: np.full(
-        visualizer.engine.canvas_shape, 0.7, dtype=np.float32
-    )
-
-    visualizer.update_visualization()
-
-    assert np.any(visualizer.source_orchestrator.visual_readout.hidden != 0.0)
-    assert np.any(visualizer.engine.get_field_numpy() != 0.0)
-    np.testing.assert_array_equal(
-        visualizer.renderer.field, visualizer.engine.get_field_numpy()
-    )
-    assert len(visualizer.prediction_diagnostics.history) == 1
-    assert visualizer.prediction_diagnostics.latest is not None
-    visualizer.close()
-    visualizer.close_pose_sources()
-
-
 def test_ripple_visualizer_diagnostics_toggle_missing_frame_reset_and_close(qapp):
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
@@ -397,9 +269,8 @@ def test_ripple_visualizer_diagnostics_toggle_missing_frame_reset_and_close(qapp
     assert not readout.diagnostics_enabled
 
 
-@pytest.mark.parametrize("pose_enabled", [False, True])
 def test_3d_preview_uses_corrected_canvas_one_observation_and_bounded_sampling(
-    qapp, monkeypatch, layer_view_stub, pose_enabled
+    qapp, monkeypatch, layer_view_stub
 ):
     import audioviz.visualization.prediction_scene_window as scene_module
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
@@ -415,9 +286,6 @@ def test_3d_preview_uses_corrected_canvas_one_observation_and_bounded_sampling(
             prediction_error=PredictionErrorTransformConfig(enabled=True),
         ),
         camera_capture=_FakeCapture(),
-        pose_config=_pose_config(enabled=pose_enabled),
-        pose_capture=_FakeCapture() if pose_enabled else None,
-        pose_extractor=_FakeExtractor() if pose_enabled else None,
     )
     visualizer.timer.stop()
     visualizer.renderer = _FakeRenderer()
@@ -483,91 +351,6 @@ def test_3d_preview_uses_corrected_canvas_one_observation_and_bounded_sampling(
     assert not readout.diagnostics_enabled
     assert not readout.spatial_preview_enabled
     visualizer.close()
-
-
-def test_ripple_visualizer_pose_medium_standing_body_accepts_callable_lut(qapp):
-    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-
-    capture = _FakeCapture()
-    extractor = _FakeExtractor()
-    visualizer = RippleWaveVisualizer(
-        processor=None,
-        resolution=(24, 32),
-        plane_size_m=(1.0, 1.0),
-        speed=1.0,
-        damping=1.0,
-        amplitude=1.0,
-        source_orchestrator_config=_source_config(use_synthetic=False),
-        pose_config=_pose_config(enabled=True, render_mode="standing-body"),
-        pose_capture=capture,
-        pose_extractor=extractor,
-    )
-    visualizer.timer.stop()
-    visualizer.renderer = _StandingRenderer()
-
-    visualizer.update_visualization()
-
-    assert visualizer.renderer.render_count == 1
-    assert visualizer.renderer.rgb_frame is not None
-    assert visualizer.renderer.rgb_frame.shape == (24, 32, 3)
-    assert np.count_nonzero(visualizer.renderer.rgb_frame) > 0
-
-    visualizer.close_pose_sources()
-    assert capture.released
-    assert extractor.closed
-
-
-def test_ripple_visualizer_pose_medium_standing_body_with_numpy_renderer_smoke(qapp):
-    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
-    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-
-    capture = _FakeCapture()
-    extractor = _FakeExtractor()
-    visualizer = RippleWaveVisualizer(
-        processor=None,
-        resolution=(24, 32),
-        plane_size_m=(1.0, 1.0),
-        speed=1.0,
-        damping=1.0,
-        amplitude=1.0,
-        source_orchestrator_config=_source_config(use_synthetic=False),
-        pose_config=_pose_config(enabled=True, render_mode="standing-body"),
-        pose_capture=capture,
-        pose_extractor=extractor,
-    )
-    visualizer.timer.stop()
-    visualizer.renderer = NumpyImageRenderer()
-
-    visualizer.update_visualization()
-
-    assert visualizer.renderer.image_item.image is not None
-    assert visualizer.renderer.image_item.image.shape == (24, 32, 3)
-
-    visualizer.close_pose_sources()
-    assert capture.released
-    assert extractor.closed
-
-
-def test_ripple_visualizer_non_pose_mode_does_not_apply_standing_body_projection(qapp):
-    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-
-    visualizer = RippleWaveVisualizer(
-        processor=None,
-        resolution=(24, 32),
-        plane_size_m=(1.0, 1.0),
-        speed=1.0,
-        damping=1.0,
-        amplitude=1.0,
-        source_orchestrator_config=_source_config(use_synthetic=False),
-        pose_config=_pose_config(enabled=False, render_mode="standing-body"),
-    )
-    visualizer.timer.stop()
-    visualizer.renderer = _StandingRenderer()
-
-    visualizer.update_visualization()
-
-    assert visualizer.renderer.render_count == 1
-    assert visualizer.renderer.rgb_frame is None
 
 
 def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render(qapp):
@@ -667,40 +450,6 @@ def test_ripple_visualizer_updates_learning_overlay_in_normal_render_loop(qapp):
 
     visualizer.update_visualization()
 
-    overlay = visualizer.renderer.prediction_overlay_image.image
-    assert overlay is not None
-    assert np.count_nonzero(overlay[..., 3]) > 0
-
-
-def test_ripple_visualizer_updates_learning_overlay_with_standing_body_config_disabled_pose(
-    qapp,
-):
-    from audioviz.visualization.ripple_renderers import NumpyImageRenderer
-    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
-
-    visualizer = RippleWaveVisualizer(
-        processor=None,
-        resolution=(8, 8),
-        plane_size_m=(1.0, 1.0),
-        speed=1.0,
-        damping=1.0,
-        amplitude=1.0,
-        source_orchestrator_config=_source_config(use_synthetic=False),
-        pose_config=_pose_config(enabled=False, render_mode="standing-body"),
-    )
-    visualizer.timer.stop()
-    visualizer.renderer = NumpyImageRenderer()
-    visualizer.show_learning_overlay = True
-    visualizer.learning_overlay_stride = 4
-    visualizer.learning_overlay_threshold = 0.0
-    visualizer.learning_overlay_scale = 2.0
-    visualizer.engine.prediction_horizontal_edge_weights = np.ones((8, 7), dtype=np.float32)
-    visualizer.engine.prediction_vertical_edge_weights = np.ones((7, 8), dtype=np.float32)
-
-    visualizer.update_visualization()
-
-    assert visualizer.renderer.image_item.image is not None
-    assert visualizer.renderer.image_item.image.ndim == 2
     overlay = visualizer.renderer.prediction_overlay_image.image
     assert overlay is not None
     assert np.count_nonzero(overlay[..., 3]) > 0

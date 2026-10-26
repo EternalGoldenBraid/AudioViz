@@ -9,36 +9,22 @@ from audioviz.physics import BoundaryCondition
 from audioviz.sources import RippleSourceOrchestrator, RippleSourceOrchestratorConfig
 from audioviz.sources.orchestrator import SharedGraphFactory
 from audioviz.readouts.shared_predictive_coding import SharedPredictiveCodingGraph
+from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
 from audioviz.sources.gaze import ActiveVisionConfig, GazePolicy
 from audioviz.readouts.gaussian_uncertainty import GaussianSensoryUncertainty
 from audioviz.readouts.spatial_precision import GaussianSpatialPrecision
 from audioviz.ui.gaze_controls import GazeControls
-from audioviz.sources.pose import (
-    PoseFrameSource,
-    PoseGraphExtractor,
-    PoseGraphState,
-    RipplePoseConfig,
-    build_pose_graph_segmentation_mask,
-    centered_field_rect,
-    map_pose_coords_to_field_positions,
-    map_pose_segmentation_to_field_mask,
-    pose_coords_in_image_support,
-)
 from audioviz.visualization.ripple_renderers import (
     NumpyImageRenderer,
     OpenGLFieldRenderer,
 )
-from audioviz.visualization.pose_debug_view import PoseDebugView
 from audioviz.visualization.prediction_diagnostics_view import PredictionDiagnosticsView
 from audioviz.visualization.prediction_scene_window import PredictionSceneWindow
 from audioviz.visualization.belief_diagnostics_view import BeliefDiagnosticsFrame, BeliefDiagnosticsView
 from audioviz.visualization.attention_overlay import AttentionOverlay, fit_image_rect
 from audioviz.utils.source_preview import SourceScenePreview
-from audioviz.utils.spatial_preview import PREVIEW_MAX_SIDE, spatial_preview
-from audioviz.visualization.standing_body_renderer import (
-    StandingBodyRenderer,
-    lookup_table_from_renderer,
-)
+from audioviz.utils.continuous_graph_preview import continuous_graph_preview
+from audioviz.utils.spatial_preview import spatial_preview
 from audioviz.ui.ripple_control_panel import (
     RippleControlPanel,
 )
@@ -48,28 +34,6 @@ from audioviz.ui.ripple_source_controls import (
 from audioviz.visualization.visualizer_base import VisualizerBase
 from audioviz.visualization.frame_rate_display import FrameRateDisplay
 from audioviz.audio_processing.audio_processor import AudioProcessor
-
-POSE_RENDER_MODE_OVERLAY = "overlay"
-POSE_RENDER_MODE_STANDING_BODY = "standing-body"
-SUPPORTED_POSE_RENDER_MODES = (
-    POSE_RENDER_MODE_OVERLAY,
-    POSE_RENDER_MODE_STANDING_BODY,
-)
-
-
-def normalize_pose_render_mode(mode: str | None) -> str:
-    resolved = (
-        POSE_RENDER_MODE_OVERLAY
-        if mode is None
-        else str(mode).strip().lower()
-    )
-    if resolved not in SUPPORTED_POSE_RENDER_MODES:
-        raise ValueError(
-            "Unsupported pose_render_mode "
-            f"{mode!r}. Expected one of {SUPPORTED_POSE_RENDER_MODES}."
-        )
-    return resolved
-
 
 class RippleWaveVisualizer(VisualizerBase):
     @property
@@ -95,14 +59,6 @@ class RippleWaveVisualizer(VisualizerBase):
     @use_camera_source.setter
     def use_camera_source(self, enabled: bool) -> None:
         self.camera_source.enabled = bool(enabled)
-
-    @property
-    def use_pose_sources(self) -> bool:
-        return self.pose_source.enabled
-
-    @use_pose_sources.setter
-    def use_pose_sources(self, enabled: bool) -> None:
-        self.pose_source.enabled = bool(enabled)
 
     @property
     def use_synthetic(self) -> bool:
@@ -137,9 +93,6 @@ class RippleWaveVisualizer(VisualizerBase):
                  auto_color_activation_threshold: float = 0.1,
                  auto_color_floor: float = 0.1,
                  source_orchestrator_config: RippleSourceOrchestratorConfig | None = None,
-                 pose_config: RipplePoseConfig | None = None,
-                 pose_extractor: PoseGraphExtractor | None = None,
-                 pose_capture=None,
                  camera_capture=None,
                  active_vision: ActiveVisionConfig | None = None,
                  forecast_dt: float | None = None,
@@ -152,8 +105,6 @@ class RippleWaveVisualizer(VisualizerBase):
             raise ValueError("forecast_dt must be finite and positive")
         if source_orchestrator_config is None:
             source_orchestrator_config = RippleSourceOrchestratorConfig()
-        if pose_config is None:
-            pose_config = RipplePoseConfig()
         if active_vision is not None:
             if not active_vision.shared_sensory_graph:
                 GaussianSensoryUncertainty.validate_config(source_orchestrator_config.visual_pathway)
@@ -162,8 +113,6 @@ class RippleWaveVisualizer(VisualizerBase):
                     raise ValueError("Active vision requires a camera-only ripple window unless active audio is explicitly enabled")
             elif processor is None:
                 raise ValueError("Active audio requires an audio processor")
-            if pose_config.enabled:
-                raise ValueError("Active vision does not support pose-medium coupling")
             if not source_orchestrator_config.prediction_error.enabled or "camera_frame" not in source_orchestrator_config.prediction_error.inputs:
                 raise ValueError("Active vision requires camera prediction-error inference")
         super().__init__(processor, **kwargs)
@@ -178,21 +127,9 @@ class RippleWaveVisualizer(VisualizerBase):
         self.use_gpu = use_gpu
         self.use_shader = use_shader
         self.boundary_condition = boundary_condition
-        self.pose_source = PoseFrameSource(
-            model_path=pose_config.model_path,
-            camera_index=pose_config.camera_index,
-            enabled=bool(pose_config.enabled),
-            extractor=pose_extractor,
-            capture=pose_capture,
-        )
-        self.standing_body_renderer = StandingBodyRenderer()
         self.rgb_canvas_enabled = bool(rgb_canvas_enabled)
         self.auto_color_activation_threshold = float(auto_color_activation_threshold)
         self.auto_color_floor = float(auto_color_floor)
-        if self.use_pose_sources and (self.use_gpu or self.use_shader):
-            raise NotImplementedError(
-                "Pose-medium coupling currently requires the CPU ripple backend."
-            )
 
         self.plane_size_m = plane_size_m
         self.resolution = resolution
@@ -211,29 +148,11 @@ class RippleWaveVisualizer(VisualizerBase):
         self._attention_preview_time: float | None = None
         self._belief_frame: BeliefDiagnosticsFrame | None = None
         self.source_control_binding = RippleSourceControlBinding(self)
-        self.pose_graph_stiffness = pose_config.graph_stiffness
-        self.pose_render_mode = normalize_pose_render_mode(pose_config.render_mode)
-        self.pose_debug_view = pose_config.debug_view
-        self.pose_debug_frame_count = 0
         self.auto_color_levels_enabled = True
         self.show_learning_overlay = False
         self.learning_overlay_stride = 8
         self.learning_overlay_threshold = 0.0
         self.learning_overlay_scale = 6.0
-        self.body_boundary_transmission = float(pose_config.body_boundary_transmission)
-        self.body_boundary_dissipation = float(pose_config.body_boundary_dissipation)
-        self.pose_field_rect = centered_field_rect(
-            self.resolution,
-            width_fraction=pose_config.field_width_fraction,
-            height_fraction=pose_config.field_height_fraction,
-        )
-        self.pose_state: PoseGraphState | None = None
-        self.pose_last_update_time = time.monotonic()
-        self._latest_pose_coords = np.zeros((0, 2), dtype=np.float32)
-        self._latest_pose_adjacency = np.zeros((0, 0), dtype=np.float32)
-        self._latest_pose_segmentation_mask: np.ndarray | None = None
-        self._latest_pose_render_positions = np.zeros((0, 2), dtype=np.float32)
-        self._latest_pose_valid = np.zeros((0,), dtype=bool)
         self.engine = RippleEngine(
             resolution=self.resolution,
             plane_size_m=self.plane_size_m,
@@ -245,8 +164,6 @@ class RippleWaveVisualizer(VisualizerBase):
             use_gpu=self.use_gpu,
             use_shader=self.use_shader,
             boundary_condition=self.boundary_condition,
-            body_boundary_transmission=self.body_boundary_transmission,
-            body_boundary_dissipation=self.body_boundary_dissipation,
             use_external_opengl_context=self.use_shader,
             wave_propagation_enabled=wave_propagation_enabled,
         )
@@ -290,8 +207,6 @@ class RippleWaveVisualizer(VisualizerBase):
                 auto_level_activation_threshold=self.auto_color_activation_threshold,
             )
         )
-        self.pose_debug_widget = None
-        self.pose_debug_viewer: PoseDebugView | None = None
         self.attention_overlay = None
         if active_vision is not None:
             if isinstance(self.renderer, NumpyImageRenderer):
@@ -307,26 +222,21 @@ class RippleWaveVisualizer(VisualizerBase):
                     self.resolution,
                 )
 
-        if self.use_pose_sources:
-            self._set_pose_sources_enabled(True)
         if self.use_camera_source:
             self.camera_source.set_enabled(True)
 
         layout = QtWidgets.QVBoxLayout(self)
-        if self.pose_debug_view:
-            content = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-            content.addWidget(self.renderer.widget)
-            content.addWidget(self._create_pose_debug_widget())
-            content.setStretchFactor(0, 3)
-            content.setStretchFactor(1, 2)
-            layout.addWidget(content)
-        else:
-            layout.addWidget(self.renderer.widget)
+        layout.addWidget(self.renderer.widget)
 
         if active_vision is not None:
             self.gaze_controls = GazeControls(active_vision.precision, mode=active_vision.mode, compact=True, parent=self)
             if active_vision.shared_sensory_graph:
                 self.gaze_controls.use_hard_clamps(active_vision.foveal_radius)
+            if not self.source_orchestrator.has_epistemic_scoring:
+                self.gaze_controls.autonomous_gaze.setEnabled(False)
+                self.gaze_controls.autonomous_gaze.setToolTip(
+                    "Autonomous gaze awaits a matching uncertainty model and epistemic objective."
+                )
             self.gaze_controls.hide()
             self.gaze_status = QtWidgets.QLabel()
             self.gaze_status.setWordWrap(True)
@@ -347,6 +257,21 @@ class RippleWaveVisualizer(VisualizerBase):
                     "Missing or disabled inputs stay free, not zero. "
                     "The same residual energy drives inference, weight learning and canvas error feedback. "
                     "Information gain is local Gauss-Newton about shared hidden nodes with assigned unit residual noise, not calibrated confidence."
+                )
+            if isinstance(self.source_orchestrator.sensory_graph, ContinuousScenePredictiveCodingGraph):
+                graph = self.source_orchestrator.sensory_graph
+                self.gaze_description = (
+                    f"Continuous scene: {graph.visual_shape[0]} x {graph.visual_shape[1]} world pixels, "
+                    f"{graph.hidden_nodes} shared recurrent hidden units; leak time constant "
+                    f"{graph.memory_time_constant:g} s. "
+                    "The camera frame is the represented world; the circular fovea gates evidence only. "
+                    "World-coordinate neural states and learned connections stay in place when gaze moves. "
+                    "Every state evolves and the full forecast is decoded each interval. "
+                    "No spikes, learned bias drives or frozen peripheral image cache. "
+                    "Unforced state decays toward neutral RGB 0.5; a nonzero root can still drive it. "
+                    "Autonomous gaze maximizes one-step joint-state information gain from the forecast "
+                    "and learned observation precision; scores are local Gaussian estimates, not calibrated confidence. "
+                    "No preferred outcomes or temporal covariance history; legacy Gaussian diagnostics stay disabled."
                 )
             self.gaze_status.setToolTip(self.gaze_description)
             layout.setStretchFactor(self.renderer.widget, 1)
@@ -374,6 +299,11 @@ class RippleWaveVisualizer(VisualizerBase):
         self.diagnostics_button.setToolTip("Open sensory inference and learning plots.")
         self.diagnostics_button.setCheckable(True)
         self.diagnostics_button.toggled.connect(self.set_model_diagnostics_visible)
+        if self.source_orchestrator.has_temporal_beliefs and not self.source_orchestrator.has_gaussian_uncertainty:
+            self.diagnostics_button.setEnabled(False)
+            self.diagnostics_button.setToolTip(
+                "Gaussian diagnostics require a matching uncertainty model. Use Predictions for the live scene."
+            )
         toolbar.addWidget(self.diagnostics_button)
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -386,6 +316,8 @@ class RippleWaveVisualizer(VisualizerBase):
         layout.addLayout(footer)
 
     def _change_gaze_mode(self):
+        if self.gaze_controls.autonomous_gaze.isChecked() and not self.source_orchestrator.has_epistemic_scoring:
+            raise ValueError("Autonomous gaze requires a matching uncertainty model")
         self.source_orchestrator.gaze_policy = (
             GazePolicy() if self.gaze_controls.autonomous_gaze.isChecked() else None
         )
@@ -421,6 +353,7 @@ class RippleWaveVisualizer(VisualizerBase):
                     self.attention_overlay.precision, self.attention_scores,
                     available=available, sample_points=sample_points,
                     hard_fovea=io is not None,
+                    world_anchored=io is not None and io.world_anchored,
                 )
 
     def _update_gaze_status(self):
@@ -444,7 +377,12 @@ class RippleWaveVisualizer(VisualizerBase):
             state = "off / unclamped" if not self.audio_source.enabled else (
                 "receiving" if self.audio_source.has_recent_observation() else "waiting / unclamped"
             )
-            audio = f" | Sound: {state} | shared predictive coding"
+            model = (
+                "continuous scene beliefs"
+                if isinstance(self.source_orchestrator.sensory_graph, ContinuousScenePredictiveCodingGraph)
+                else "shared predictive coding"
+            )
+            audio = f" | Sound: {state} | {model}"
         self.gaze_status.setText(f"Vision: {mode} | {evidence} | {camera}{audio}")
 
     def _set_mouse_gaze(self, x, y):
@@ -500,8 +438,6 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_amplitude_changed=self._update_amplitude,
                 on_decay_alpha_changed=self._update_decay_alpha,
                 on_damping_changed=self._update_damping,
-                on_boundary_transmission_changed=self._update_boundary_transmission,
-                on_boundary_dissipation_changed=self._update_boundary_dissipation,
                 rgb_canvas_enabled=self.rgb_canvas_enabled,
                 on_rgb_canvas_changed=self._update_rgb_canvas,
                 rgb_canvas_available=callable(
@@ -527,6 +463,9 @@ class RippleWaveVisualizer(VisualizerBase):
                 ) if self.source_orchestrator.has_temporal_beliefs else None,
             )
             self.control_panel.resize(500, 760)
+            if self.source_orchestrator.has_temporal_beliefs and not self.source_orchestrator.has_gaussian_uncertainty:
+                self.control_panel.beliefs_button.setEnabled(False)
+                self.control_panel.beliefs_button.setToolTip(self.diagnostics_button.toolTip())
         self.control_panel.show()
         self.control_panel.raise_()
         self.control_panel.activateWindow()
@@ -559,6 +498,8 @@ class RippleWaveVisualizer(VisualizerBase):
             self._render_canvas()
 
     def set_model_diagnostics_visible(self, visible: bool) -> None:
+        if visible and self.source_orchestrator.has_temporal_beliefs and not self.source_orchestrator.has_gaussian_uncertainty:
+            raise RuntimeError("Gaussian diagnostics require a matching uncertainty model")
         if not visible:
             if self.belief_diagnostics is not None:
                 self.belief_diagnostics.hide()
@@ -586,7 +527,12 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def _refresh_attention_preview(self) -> None:
         orchestrator = self.source_orchestrator
-        if not orchestrator.has_temporal_beliefs or self.visual_prediction is None:
+        if isinstance(orchestrator.sensory_graph, ContinuousScenePredictiveCodingGraph):
+            # Display only scores computed from the pre-evidence forecast; never rescore a posterior.
+            self.attention_scores = orchestrator.gaze_scores
+            self._update_attention_overlay()
+            return
+        if not orchestrator.has_gaussian_uncertainty or self.visual_prediction is None:
             return
         beliefs_visible = (
             self.belief_diagnostics is not None
@@ -688,8 +634,17 @@ class RippleWaveVisualizer(VisualizerBase):
                 if self.source_orchestrator.sensory_graph is not None:
                     selector = self.prediction_scene.layout_selector
                     selector.setCurrentIndex(selector.findData("comparison"))
-                    selector.model().item(selector.findData("3d")).setEnabled(False)
-                    selector.setToolTip("Shared graph nodes and weights are shown in Diagnostics / Joint Graph.")
+                    continuous = isinstance(
+                        self.source_orchestrator.sensory_graph, ContinuousScenePredictiveCodingGraph,
+                    )
+                    if continuous:
+                        self.prediction_scene.configure_continuous_graph()
+                    else:
+                        selector.model().item(selector.findData("3d")).setEnabled(False)
+                        selector.setToolTip("Shared graph nodes and weights are shown in Diagnostics / Joint Graph.")
+                    if not self.source_orchestrator.has_gaussian_uncertainty:
+                        self.prediction_scene.catalogue_button.setEnabled(False)
+                        self.prediction_scene.catalogue_button.setToolTip(self.diagnostics_button.toolTip())
                 self.prediction_scene.visibility_changed.connect(self._set_diagnostics_collection)
                 self.prediction_scene.open_catalogue_requested.connect(
                     lambda: self.set_prediction_diagnostics_visible(True)
@@ -704,20 +659,15 @@ class RippleWaveVisualizer(VisualizerBase):
         beliefs_visible = self.belief_diagnostics is not None and self.belief_diagnostics.isVisible()
         scene_active = self.prediction_scene is not None and self.prediction_scene.preview_active()
         self.source_orchestrator.set_diagnostics_enabled(
-            plots_visible or (scene_active and self.prediction_scene.needs_hidden_preview)
+            plots_visible or (
+                scene_active and self.prediction_scene.needs_hidden_preview
+                and not self.prediction_scene.continuous_graph
+            )
         )
         with QtCore.QSignalBlocker(self.diagnostics_button):
             self.diagnostics_button.setChecked(plots_visible or beliefs_visible)
         with QtCore.QSignalBlocker(self.scene_button):
             self.scene_button.setChecked(self.prediction_scene is not None and self.prediction_scene.isVisible())
-
-    def _update_boundary_transmission(self, val: float) -> None:
-        self.body_boundary_transmission = float(val)
-        self.engine.set_body_boundary_transmission(val)
-
-    def _update_boundary_dissipation(self, val: float) -> None:
-        self.body_boundary_dissipation = float(val)
-        self.engine.set_body_boundary_dissipation(val)
 
     def _update_auto_color_levels(self, enabled: bool) -> None:
         self.auto_color_levels_enabled = bool(enabled)
@@ -747,10 +697,6 @@ class RippleWaveVisualizer(VisualizerBase):
         source_frame = self.source_orchestrator.resolve()
         self.engine.amplitude = source_frame.amplitude
 
-        if self.use_pose_sources:
-            self._update_pose_visualization(source_frame.drive_grid)
-            return
-
         if not self.renderer.prepare_frame():
             return
 
@@ -762,136 +708,15 @@ class RippleWaveVisualizer(VisualizerBase):
             source_frame.audio_frequencies,
         )
 
-    def _set_pose_sources_enabled(self, enabled: bool) -> None:
-        if enabled:
-            if self.source_orchestrator.has_temporal_beliefs:
-                raise ValueError("Temporal Gaussian inference does not support pose-medium coupling")
-            if self.use_gpu or self.use_shader:
-                raise NotImplementedError(
-                    "Pose-medium coupling currently requires the CPU ripple backend."
-                )
-            self.pose_source.set_enabled(True)
-            self.pose_last_update_time = time.monotonic()
-        else:
-            self.pose_source.set_enabled(False)
-        self.pose_state = None
-        self._clear_pose_runtime_state()
-        self.engine.set_body_boundary_mask(None)
-
-    def _clear_pose_runtime_state(self) -> None:
-        self._latest_pose_coords = np.zeros((0, 2), dtype=np.float32)
-        self._latest_pose_adjacency = np.zeros((0, 0), dtype=np.float32)
-        self._latest_pose_segmentation_mask = None
-        self._latest_pose_render_positions = np.zeros((0, 2), dtype=np.float32)
-        self._latest_pose_valid = np.zeros((0,), dtype=bool)
-        if self.pose_state is not None:
-            self.pose_state.set_ripple_states(
-                np.zeros(self.pose_state.num_nodes, dtype=np.float32)
-            )
-
-    def _map_pose_segmentation_to_render_mask(
-        self,
-        segmentation_mask: np.ndarray | None,
-    ) -> np.ndarray | None:
-        if segmentation_mask is None:
-            return None
-        if self.pose_render_mode in (
-            POSE_RENDER_MODE_OVERLAY,
-            POSE_RENDER_MODE_STANDING_BODY,
-        ):
-            return map_pose_segmentation_to_field_mask(
-                segmentation_mask,
-                self.resolution,
-                field_rect=self.pose_field_rect,
-            )
-        raise AssertionError(f"Unhandled pose_render_mode {self.pose_render_mode!r}")
-
-    def _map_pose_positions_to_render_positions(
-        self,
-        positions: np.ndarray,
-    ) -> np.ndarray:
-        if self.pose_render_mode in (
-            POSE_RENDER_MODE_OVERLAY,
-            POSE_RENDER_MODE_STANDING_BODY,
-        ):
-            return map_pose_coords_to_field_positions(
-                positions,
-                self.resolution,
-                field_rect=self.pose_field_rect,
-            )
-        raise AssertionError(f"Unhandled pose_render_mode {self.pose_render_mode!r}")
-
-    def _update_pose_visualization(
-        self,
-        drive_grid: np.ndarray | None,
-    ) -> None:
-        sample = self.pose_source.read()
-        if sample is None:
-            if self.prediction_scene is not None:
-                self.prediction_scene.invalidate_evidence("pose")
-            return
-        frame, pose = sample
-        segmentation_mask = self._resolve_pose_segmentation_mask(frame, pose)
-        self._latest_pose_coords = np.asarray(pose.coords, dtype=np.float32).copy()
-        self._latest_pose_adjacency = np.asarray(pose.adjacency, dtype=np.float32).copy()
-        self._latest_pose_segmentation_mask = (
-            None
-            if segmentation_mask is None
-            else np.asarray(segmentation_mask, dtype=np.float32).copy()
-        )
-        self.engine.set_body_boundary_mask(
-            self._map_pose_segmentation_to_render_mask(segmentation_mask)
-        )
-        if self.pose_debug_view:
-            self._update_pose_debug_view(frame, pose, segmentation_mask=segmentation_mask)
-        if not pose.coords.size:
-            self._latest_pose_render_positions = np.zeros((0, 2), dtype=np.float32)
-            self._latest_pose_valid = np.zeros((0,), dtype=bool)
-            self._step_engine_for_pose_mode(drive_grid)
-            if self.pose_state is not None:
-                self.pose_state.set_ripple_states(
-                    np.zeros(self.pose_state.num_nodes, dtype=np.float32)
-                )
-                self.time = self.engine.time
-                self._render_scene()
-            return
-
-        now = time.monotonic()
-        dt = max(now - self.pose_last_update_time, 1e-6)
-        self.pose_last_update_time = now
-
-        if self.pose_state is None or self.pose_state.num_nodes != len(pose.coords):
-            self.pose_state = PoseGraphState(
-                len(pose.coords),
-                pose.adjacency,
-                velocity_smoothing_alpha=0.8,
-            )
-        self.pose_state.update(pose.coords, dt)
-
-        positions = self.pose_state.get_positions()
-        valid = pose_coords_in_image_support(positions)
-        mapped_positions = self._map_pose_positions_to_render_positions(positions)
-        self._latest_pose_render_positions = mapped_positions.copy()
-        self._latest_pose_valid = valid.copy()
-        self._step_engine_for_pose_mode(drive_grid)
-        self._update_pose_ripple_states(mapped_positions, valid)
-        self.time = self.engine.time
-        self._render_scene()
-
-    def _step_engine_for_pose_mode(
-        self,
-        drive_grid: np.ndarray | None,
-    ) -> None:
-        if not self.renderer.prepare_frame():
-            return
-        self._advance_canvas(drive_grid)
-
     def _advance_canvas(self, drive_grid: np.ndarray | None) -> None:
         readout = self.source_orchestrator.visual_readout
         scene_requested = self.prediction_scene is not None and self.prediction_scene.take_spatial_preview_request()
         plots_visible = self.prediction_diagnostics is not None and self.prediction_diagnostics.isVisible()
         self.source_orchestrator.set_diagnostics_enabled(
-            plots_visible or (scene_requested and self.prediction_scene.needs_hidden_preview)
+            plots_visible or (
+                scene_requested and self.prediction_scene.needs_hidden_preview
+                and not self.prediction_scene.continuous_graph
+            )
         )
         audio_view = (
             self.prediction_diagnostics.audio_view
@@ -932,7 +757,12 @@ class RippleWaveVisualizer(VisualizerBase):
                     else self.engine.get_field_preview(max_side=self.prediction_scene.preview_max_side)
                 )
                 self.prediction_scene.record(
-                    canvas_preview, self._capture_scene_sources(drive_grid)
+                    canvas_preview, self._capture_scene_sources(drive_grid),
+                    graph_snapshot=(
+                        self._capture_continuous_graph_preview()
+                        if self.prediction_scene.continuous_graph and self.prediction_scene.needs_hidden_preview
+                        else None
+                    ),
                 )
         if (
             self.prediction_diagnostics is not None
@@ -951,6 +781,13 @@ class RippleWaveVisualizer(VisualizerBase):
                     )
                 elif not self.source_orchestrator.audio_source.has_recent_observation():
                     audio_view.record(self.engine.time, None)
+
+    def _capture_continuous_graph_preview(self):
+        source = self.source_orchestrator
+        return continuous_graph_preview(
+            source.sensory_graph, source.visual_observation,
+            foveal_mask=source.graph_io.observation_mask,
+        )
 
     def _capture_scene_sources(self, drive_grid: np.ndarray | None) -> tuple[SourceScenePreview, ...]:
         orchestrator = self.source_orchestrator
@@ -971,7 +808,8 @@ class RippleWaveVisualizer(VisualizerBase):
                 prediction=mapping.sample(prediction, max_side=max_side) if prediction is not None else None,
                 hidden=(
                     spatial_preview(readout.hidden)
-                    if readout is not None and self.prediction_scene.needs_hidden_preview else None
+                    if readout is not None and self.prediction_scene.needs_hidden_preview
+                    and not self.prediction_scene.continuous_graph else None
                 ),
                 hidden_energies=(
                     readout.diagnostics.hidden.channel_means
@@ -991,53 +829,7 @@ class RippleWaveVisualizer(VisualizerBase):
                 if drive_grid is not None and self.synthetic_source.enabled else None
             ),
         ))
-        positions, edges = None, None
-        if self.pose_source.enabled and np.any(self._latest_pose_valid):
-            indices = np.flatnonzero(self._latest_pose_valid)[:PREVIEW_MAX_SIDE]
-            positions = self._latest_pose_render_positions[indices] / np.array(
-                [max(1, self.resolution[1] - 1), max(1, self.resolution[0] - 1)]
-            )
-            positions = self.pose_source.scene_mapping.sample(positions)
-            edges = np.argwhere(np.triu(self._latest_pose_adjacency[np.ix_(indices, indices)], 1) > 0)
-            edges.setflags(write=False)
-        sources.append(SourceScenePreview(
-            mapping=self.pose_source.scene_mapping, enabled=self.pose_source.enabled,
-            observation=positions, edges=edges,
-        ))
         return tuple(sources)
-
-    def _update_pose_ripple_states(
-        self,
-        mapped_positions: np.ndarray,
-        valid: np.ndarray,
-    ) -> None:
-        if self.pose_state is None:
-            return
-        ripple_states = np.zeros(self.pose_state.num_nodes, dtype=np.float32)
-        if mapped_positions.size and np.any(valid):
-            field = self.engine.get_field_numpy()
-            cols = field.shape[1]
-            rows = field.shape[0]
-            valid_indices = np.flatnonzero(valid)
-            sampled_positions = mapped_positions[valid]
-            sample_cols = np.clip(
-                np.rint(sampled_positions[:, 0]).astype(np.int32),
-                0,
-                cols - 1,
-            )
-            sample_rows = np.clip(
-                np.rint(sampled_positions[:, 1]).astype(np.int32),
-                0,
-                rows - 1,
-            )
-            ripple_states[valid_indices] = np.mean(
-                field[sample_rows, sample_cols],
-                axis=1,
-            ).astype(
-                np.float32,
-                copy=False,
-            )
-        self.pose_state.set_ripple_states(ripple_states)
 
     def _render_scene(self) -> None:
         self._render_canvas()
@@ -1054,22 +846,6 @@ class RippleWaveVisualizer(VisualizerBase):
                 threshold=self.learning_overlay_threshold,
                 scale=self.learning_overlay_scale,
             )
-        render_rgb_frame = getattr(self.renderer, "render_rgb_frame", None)
-        if (
-            self.use_pose_sources
-            and self.pose_render_mode == POSE_RENDER_MODE_STANDING_BODY
-            and callable(render_rgb_frame)
-        ):
-            render_rgb_frame(self._render_standing_body_rgb_frame())
-
-    def _render_standing_body_rgb_frame(self) -> np.ndarray:
-        return self.standing_body_renderer.render(
-            field=self.engine.get_field_numpy(),
-            lookup_table=lookup_table_from_renderer(self.renderer),
-            pose_coords=self._latest_pose_coords,
-            pose_adjacency=self._latest_pose_adjacency,
-            segmentation_mask=self._latest_pose_segmentation_mask,
-        )
 
     def _render_canvas(self) -> None:
         if self.use_shader:
@@ -1086,7 +862,6 @@ class RippleWaveVisualizer(VisualizerBase):
             self.prediction_scene.close()
         if self.prediction_diagnostics is not None:
             self.prediction_diagnostics.close()
-        self.close_pose_sources()
         self.close_camera_source()
         if self.use_shader and self.renderer.prepare_frame():
             self.engine.propagator.close()
@@ -1105,56 +880,8 @@ class RippleWaveVisualizer(VisualizerBase):
     def set_learning_overlay_scale(self, scale: float) -> None:
         self.learning_overlay_scale = max(float(scale), 0.1)
 
-    def close_pose_sources(self) -> None:
-        self.pose_source.close()
-
     def close_camera_source(self) -> None:
         self.camera_source.close()
-
-    def _create_pose_debug_widget(self):
-        self.pose_debug_viewer = PoseDebugView()
-        self.pose_debug_widget = self.pose_debug_viewer.widget
-        return self.pose_debug_widget
-
-    def _update_pose_debug_view(
-        self,
-        frame: np.ndarray,
-        pose,
-        *,
-        segmentation_mask: np.ndarray | None = None,
-    ) -> None:
-        if self.pose_debug_viewer is None:
-            return
-        self.pose_debug_viewer.update(
-            frame,
-            pose,
-            segmentation_mask=segmentation_mask,
-        )
-        self.pose_debug_frame_count = self.pose_debug_viewer.frame_count
-
-    def _resolve_pose_segmentation_mask(
-        self,
-        frame: np.ndarray,
-        pose,
-    ) -> np.ndarray | None:
-        if self._has_usable_segmentation_mask(pose.segmentation_mask):
-            return pose.segmentation_mask
-        if pose.coords.size == 0:
-            return None
-        return build_pose_graph_segmentation_mask(
-            pose.coords,
-            pose.adjacency,
-            frame.shape[:2],
-        )
-
-    @staticmethod
-    def _has_usable_segmentation_mask(segmentation_mask: np.ndarray | None) -> bool:
-        if segmentation_mask is None:
-            return False
-        mask = np.asarray(segmentation_mask, dtype=np.float32)
-        if mask.ndim != 2:
-            return False
-        return bool(np.any(mask >= np.float32(0.5)))
 
 if __name__ == "__main__":
     import sys

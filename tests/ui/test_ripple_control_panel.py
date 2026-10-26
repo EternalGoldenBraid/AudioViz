@@ -266,7 +266,7 @@ def test_ripple_control_panel_expands_active_source_sections_by_default(
         engine,
         source_toggles=(
             SourceToggle("audio", "Audio", enabled=False, available=True),
-            SourceToggle("pose", "Pose Graph", enabled=True, available=False),
+            SourceToggle("camera", "Camera Frame", enabled=True, available=False),
         ),
         source_sections=(
             ControlPanelSection(
@@ -276,10 +276,10 @@ def test_ripple_control_panel_expands_active_source_sections_by_default(
                 toggle_key="audio",
             ),
             ControlPanelSection(
-                key="pose-source",
-                title="Pose Graph Source",
+                key="camera-source",
+                title="Camera Source",
                 controls=(),
-                toggle_key="pose",
+                toggle_key="camera",
             ),
         ),
         on_source_toggle_changed=lambda key, enabled: toggle_events.append(
@@ -288,18 +288,18 @@ def test_ripple_control_panel_expands_active_source_sections_by_default(
     )
 
     audio_toggle = panel.source_toggle_checkboxes["audio"]
-    pose_toggle = panel.source_toggle_checkboxes["pose"]
+    camera_toggle = panel.source_toggle_checkboxes["camera"]
     audio_section = panel.section_widgets["audio-source"]
-    pose_section = panel.section_widgets["pose-source"]
+    camera_section = panel.section_widgets["camera-source"]
 
     assert not audio_section.is_expanded()
-    assert pose_section.is_expanded()
+    assert camera_section.is_expanded()
 
     audio_toggle.click()
     app.processEvents()
 
     assert audio_toggle.isChecked()
-    assert not pose_toggle.isEnabled()
+    assert not camera_toggle.isEnabled()
     assert audio_section.is_expanded()
     assert toggle_events[-1] == ("audio", True)
 

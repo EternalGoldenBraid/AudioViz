@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
-from audioviz.readouts.rc_spiking_predictive_coding import RCSpikingPredictiveCodingGraph
 
 from audioviz.source_controls import (
     CameraFrameSourceControls,
@@ -93,15 +92,6 @@ class RippleSourceControlBinding:
                     toggle_key="synthetic",
                 )
             )
-        sections.append(
-            ControlPanelSection(
-                key="pose-source",
-                title="Pose Graph Source",
-                controls=(),
-                toggle_key="pose",
-                empty_message="No pose-specific controls are available yet.",
-            )
-        )
         pathway_config = visualizer.source_orchestrator.visual_readout.config
         uncertainty_active = visualizer.source_orchestrator.has_temporal_beliefs
         learning_controls = PredictionLearningControls(
@@ -156,38 +146,6 @@ class RippleSourceControlBinding:
                 ) if control.key == "inference_steps" else control
                 for control in learning_controls if control.key != "cross_modal_enabled"
             )
-            if isinstance(graph, RCSpikingPredictiveCodingGraph):
-                descriptions = {
-                    "graph_backend": (
-                        None,
-                        "CPU float64 RC-spiking; GPU pixels; foveal gathers."
-                        if visualizer.use_shader else
-                        "CuPy float64 RC-spiking; float32 pixels." if visualizer.use_gpu else
-                        "NumPy float64 RC-spiking; float32 pixels.",
-                        "Bias-free RC dynamics; no Gaussian covariance or expected information gain.",
-                    ),
-                    "inference_steps": (
-                        "RC Microsteps", None,
-                        "Subdivide one fixed physical interval; this is not an energy-minimizing solver budget.",
-                    ),
-                    "inference_rate": (
-                        "RC Current Gain", None,
-                        "Gain of the RC driving currents; zero removes current integration, not passive RC leak.",
-                    ),
-                    "learning_enabled": (
-                        "Learn Connection Weights", None,
-                        "Update RC connection weights after observed evidence. Biases stay zero; learned connections persist when Observe is off.",
-                    ),
-                }
-                learning_controls = tuple(
-                    replace(
-                        control,
-                        label=descriptions[control.key][0] or control.label,
-                        default=descriptions[control.key][1] or control.default,
-                        tooltip=descriptions[control.key][2],
-                    ) if control.key in descriptions else control
-                    for control in learning_controls
-                )
             if isinstance(graph, ContinuousScenePredictiveCodingGraph):
                 descriptions = {
                     "graph_size": (
@@ -212,8 +170,13 @@ class RippleSourceControlBinding:
                         "Gain of continuous inference currents; passive leak remains when gain is zero.",
                     ),
                     "learning_enabled": (
-                        "Learn Connection Weights", None,
-                        "Learn from the continuous graph's residuals. Biases remain zero.",
+                        "Learn Weights and Precisions", None,
+                        "Update connection weights and residual precisions from normalized Gaussian energy. "
+                        "Observation precisions learn only where evidence is present. Biases remain zero.",
+                    ),
+                    "learning_rate": (
+                        "Parameter Learning Rate", None,
+                        "Step size for connection weights and log precisions after observed-evidence inference.",
                     ),
                 }
                 learning_controls = tuple(
@@ -292,15 +255,6 @@ class RippleSourceControlBinding:
                 enabled=visualizer.use_camera_source,
                 available=True,
             ),
-            SourceToggle(
-                key="pose",
-                label="Pose Graph",
-                enabled=visualizer.use_pose_sources,
-                available=(
-                    not (visualizer.use_gpu or visualizer.use_shader)
-                    and not visualizer.source_orchestrator.has_temporal_beliefs
-                ),
-            ),
         )
 
     def update_control(
@@ -334,9 +288,6 @@ class RippleSourceControlBinding:
         if source_key == "camera":
             visualizer.camera_source.set_enabled(enabled)
             self.sync_camera_panel(visualizer.control_panel)
-            return
-        if source_key == "pose":
-            visualizer._set_pose_sources_enabled(enabled)
             return
         raise KeyError(f"Unknown source toggle: {source_key}")
 

@@ -101,10 +101,7 @@ def test_live_gaze_uses_elapsed_time_and_keeps_selection_before_capture(qapp, re
         widget.controls_button.click()
         assert widget.control_panel is panel and widget.gaze_controls.isVisible()
         toggles = {toggle.key: toggle for toggle in widget.source_control_binding.build_toggles()}
-        assert not toggles["pose"].available
-        with pytest.raises(ValueError, match="pose-medium"):
-            widget.source_control_binding.update_toggle("pose", True)
-        assert not widget.use_pose_sources
+        assert set(toggles) == {"synthetic", "audio", "camera"}
         controls = widget.gaze_controls
         model = widget.source_orchestrator.visual_uncertainty
         controls.observe.setChecked(False)
