@@ -151,3 +151,47 @@ def test_native_context_mismatch_never_paints_a_success_shaped_blank_view(qapp, 
     view._check_context()
     assert len(failures) == 2
     view.close()
+
+
+def test_continuous_snapshot_has_real_recurrent_nodes_sampled_edges_and_foveal_support(qapp):
+    from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
+    from audioviz.utils.continuous_graph_preview import continuous_graph_preview
+
+    graph = ContinuousScenePredictiveCodingGraph(visual_shape=(8, 12), hidden_nodes=6)
+    image = np.full((8, 12, 3), .7)
+    mask = np.zeros((8, 12), dtype=bool)
+    mask[2:6, 3:7] = True
+    graph.forecast(image, 1 / 30, aperture_mask=mask)
+    graph.condition(image, visual_mask=mask)
+    view = PredictionLayerView()
+    try:
+        snapshot = continuous_graph_preview(graph, image, foveal_mask=mask)
+        view.set_graph_snapshot(snapshot)
+        assert len(view.nodes["hidden"].pos) == 6
+        assert len(view.nodes["sensory"].pos) <= 25
+        assert "One recurrent population" in view.labels["population"].text
+        assert "sigmoid(z)" in view.labels["world/prediction"].text
+        assert "diagnostic only" in view.labels["world/error"].text
+        np.testing.assert_array_equal(
+            view.planes["world/error"].data,
+            hidden_texture(np.sqrt(np.mean((snapshot.reference - snapshot.prediction)**2, axis=-1))),
+        )
+        for name in ("Ws: h -> z/audio", "Wc: root -> h", "Wh: h -> h"):
+            assert view.lines[name].visible()
+            assert len(view.lines[name].pos) <= 24 * 8
+        assert len(view.lines["support/camera"].pos) > 0
+        view.orbit(15, 10)
+        camera = view.cameraParams()
+        planes, nodes = dict(view.planes), dict(view.nodes)
+        graph.forecast(image, 1 / 30)
+        graph.condition()
+        view.set_graph_snapshot(continuous_graph_preview(graph, None, foveal_mask=mask))
+        assert view.cameraParams() == camera
+        assert view.planes == planes and view.nodes == nodes
+        assert not view.planes["world/camera"].visible()
+        assert "unavailable" in view.labels["world/error"].text
+        assert not len(view.lines["support/error"].pos)
+        view.clear_preview()
+        assert all(not node.visible() for node in view.nodes.values())
+    finally:
+        view.close()

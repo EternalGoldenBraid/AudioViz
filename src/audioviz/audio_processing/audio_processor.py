@@ -147,16 +147,14 @@ class AudioProcessor:
 
     def start(self):
 
-        if not hasattr(self, 'stream') and not hasattr(self, 'input_stream'):
-            logger.error("No input nor output audio streams initialized. Please check your configuration.")
-            return False
-
-        if not hasattr(self, 'stream') or self.stream is None:
-            logger.error("Output stream is not initialized.")
-        else:
+        if getattr(self, 'stream', None) is not None:
             self.stream.start()
-        if self.is_streaming and hasattr(self, 'input_stream'):
+        if self.is_streaming and getattr(self, 'input_stream', None) is not None:
             self.input_stream.start()
+
+        if (getattr(self, 'stream', None) is None
+                and getattr(self, 'input_stream', None) is None):
+            logger.info("Audio devices disabled; continuing without audio streams.")
 
         return True
 

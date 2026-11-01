@@ -1,7 +1,7 @@
 import numpy as np
 from PyQt5 import QtGui
 
-from audioviz.sources import RipplePoseConfig, RippleSourceOrchestratorConfig
+from audioviz.sources import RippleSourceOrchestratorConfig
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
 
@@ -35,7 +35,7 @@ def _count_changed_pixels(before: np.ndarray, after: np.ndarray) -> int:
     return int(np.count_nonzero(np.any(difference > 0, axis=2)))
 
 
-def _build_non_pose_visualizer() -> RippleWaveVisualizer:
+def _build_visualizer() -> RippleWaveVisualizer:
     visualizer = RippleWaveVisualizer(
         processor=None,
         resolution=(24, 32),
@@ -44,10 +44,6 @@ def _build_non_pose_visualizer() -> RippleWaveVisualizer:
         damping=0.995,
         amplitude=1.0,
         source_orchestrator_config=RippleSourceOrchestratorConfig(),
-        pose_config=RipplePoseConfig(
-            enabled=False,
-            render_mode="standing-body",
-        ),
     )
     visualizer.timer.stop()
     visualizer.resize(420, 360)
@@ -55,8 +51,8 @@ def _build_non_pose_visualizer() -> RippleWaveVisualizer:
     return visualizer
 
 
-def test_offline_render_validation_keeps_non_pose_view_flat(qapp):
-    visualizer = _build_non_pose_visualizer()
+def test_offline_render_validation_keeps_canvas_view_flat(qapp):
+    visualizer = _build_visualizer()
     visualizer.show()
     qapp.processEvents()
 
@@ -76,7 +72,7 @@ def test_offline_render_validation_keeps_non_pose_view_flat(qapp):
 
 
 def test_offline_render_validation_rgb_canvas_produces_colored_widget_pixels(qapp):
-    visualizer = _build_non_pose_visualizer()
+    visualizer = _build_visualizer()
     visualizer._update_rgb_canvas(True)
     visualizer.show()
     qapp.processEvents()
@@ -95,7 +91,7 @@ def test_offline_render_validation_rgb_canvas_produces_colored_widget_pixels(qap
 
 
 def test_offline_render_validation_shows_learning_overlay_pixels(qapp):
-    visualizer = _build_non_pose_visualizer()
+    visualizer = _build_visualizer()
     visualizer.show()
     qapp.processEvents()
 

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from audioviz.utils.array_backend import to_numpy
+
 
 @dataclass(frozen=True)
 class EnergyStatistics:
@@ -18,7 +20,7 @@ class EnergyStatistics:
             mean=float(energy.mean()),
             variance=float(energy.var()),
             channel_means=tuple(
-                float(value) for value in energy.mean(axis=tuple(range(error.ndim - 1)))
+                float(value) for value in to_numpy(energy.mean(axis=tuple(range(error.ndim - 1))))
             ),
         )
 
@@ -62,17 +64,17 @@ class PredictiveCodingDiagnostics:
 def mean_energy(hidden_error: np.ndarray, visual_error: np.ndarray) -> float:
     """Spatially averaged field energy, with global sensory energy counted once."""
     if visual_error.ndim == 1:
-        return float(0.5 * (np.sum(hidden_error**2, axis=-1).mean() + np.sum(visual_error**2)))
+        return float(0.5 * ((hidden_error**2).sum(axis=-1).mean() + (visual_error**2).sum()))
     return float(
         0.5
         * (
-            np.sum(hidden_error**2, axis=-1)
-            + np.sum(visual_error**2, axis=-1)
+            (hidden_error**2).sum(axis=-1)
+            + (visual_error**2).sum(axis=-1)
         ).mean()
     )
 
 
 def copy_weights(weights: np.ndarray) -> np.ndarray:
-    snapshot = weights.copy()
+    snapshot = to_numpy(weights).copy()
     snapshot.setflags(write=False)
     return snapshot

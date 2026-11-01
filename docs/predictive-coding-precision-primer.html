@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 1: Covariance-Weighted Predictive Coding on One Generative Edge</title>
+<style>
+  :root {
+    --bg: #0b0f17;
+    --panel: #111827;
+    --panel-alt: #161f33;
+    --border: #26324d;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --accent: #38bdf8;
+    --purple: #c084fc;
+    --red: #f87171;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 20px 26px 32px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 1.38rem;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+  .subtitle {
+    margin: 4px 0 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+    max-width: 960px;
+  }
+  .badge-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #cbd5e1;
+  }
+  .badge.ok {
+    background: rgba(74, 222, 128, 0.12);
+    border-color: rgba(74, 222, 128, 0.45);
+    color: #86efac;
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card h2 {
+    margin: 0 0 8px;
+    font-size: 1.02rem;
+    color: #f1f5f9;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card h3 {
+    margin: 0 0 6px;
+    font-size: 0.92rem;
+    color: #e2e8f0;
+  }
+  .formula-box {
+    background: var(--panel-alt);
+    border: 1px solid #2e3d5c;
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: #f8fafc;
+    margin: 8px 0;
+    overflow-x: auto;
+  }
+  .formula-box.purple { border-left-color: var(--purple); }
+  .formula-box.green { border-left-color: var(--green); }
+  .formula-box.amber { border-left-color: var(--amber); }
+  .controls-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px 14px;
+    margin-top: 8px;
+  }
+  .ctrl {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 0.8rem;
+  }
+  .ctrl-head {
+    display: flex;
+    justify-content: space-between;
+    color: var(--muted);
+  }
+  .ctrl-val {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .mode-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0;
+  }
+  button {
+    background: #1e293b;
+    color: var(--text);
+    border: 1px solid #3b4d6b;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button.active {
+    background: rgba(56, 189, 248, 0.18);
+    border-color: var(--accent);
+    color: #bae6fd;
+  }
+  .readout-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-mono);
+    font-size: 0.79rem;
+    margin-top: 8px;
+  }
+  .readout-table th, .readout-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #1f293d;
+    text-align: left;
+  }
+  .readout-table th {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+  .zero { color: var(--muted); }
+  a.code-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+  }
+  a.code-link:hover { text-decoration: underline; }
+  p { margin: 6px 0; font-size: 0.86rem; color: #d1d5db; }
+  .lesson-step { margin-bottom: 16px; }
+  summary { cursor: pointer; font-weight: 600; color: #f1f5f9; }
+  details[open] summary { margin-bottom: 10px; }
+  @media (max-width: 1000px) {
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Lesson 1: Covariance-Weighted Predictive Coding — State &amp; Weight Updates on One Edge</h1>
+    <p class="subtitle">
+      Refreshing the exact state (<code>da/dt</code>, <code>db/dt</code>) and weight (<code>dw/dt</code>) update rules from a single predictive relationship <code>b_hat = w * f(a)</code>, why precision <code>pi = 1 / sigma^2</code> scales the error, and why source nodes update through <code>W^T</code>.
+    </p>
+  </div>
+  <div class="badge-row">
+    <span class="badge ok" id="fd-badge">Finite-Diff Verified: max |err| &lt; 1e-10</span>
+    <span class="badge">AudioViz Core @ 0c5e6fa</span>
+  </div>
+</header>
+
+<div class="grid-2">
+  <!-- Left: Interactive Single-Edge SVG Diagram -->
+  <div class="card">
+    <h2>1. Interactive Single-Edge Compute Graph: Forward Prediction vs. Backward Error Flow</h2>
+    <svg viewBox="0 0 760 285" width="100%" height="285" style="background:#0d1320;border:1px solid #22304a;border-radius:8px;">
+      <defs>
+        <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8"/>
+        </marker>
+        <marker id="arr-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#fbbf24"/>
+        </marker>
+        <marker id="arr-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#4ade80"/>
+        </marker>
+      </defs>
+
+      <!-- Forward top path -->
+      <text x="20" y="24" fill="#38bdf8" font-size="12" font-weight="bold">FORWARD PREDICTION PATH: b_hat = w * f(a)</text>
+
+      <!-- Node a -->
+      <rect x="20" y="40" width="155" height="76" rx="8" fill="#13233a" stroke="#38bdf8" stroke-width="1.8"/>
+      <text x="32" y="62" fill="#f8fafc" font-size="13" font-weight="bold">Source State (a)</text>
+      <text x="32" y="82" fill="#93c5fd" font-family="monospace" font-size="12" id="svg-a">a = 0.600</text>
+      <text x="32" y="102" fill="#cbd5e1" font-family="monospace" font-size="11" id="svg-fa">f(a) = 0.537</text>
+
+      <!-- Arrow a -> w -->
+      <line x1="175" y1="78" x2="235" y2="78" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr-blue)"/>
+      <text x="186" y="70" fill="#93c5fd" font-family="monospace" font-size="11">f(a)</text>
+
+      <!-- Weight w -->
+      <rect x="240" y="40" width="150" height="76" rx="8" fill="#231836" stroke="#c084fc" stroke-width="1.8"/>
+      <text x="252" y="62" fill="#f8fafc" font-size="13" font-weight="bold">Weight (w or W)</text>
+      <text x="252" y="82" fill="#d8b4fe" font-family="monospace" font-size="12" id="svg-w">w = 1.250</text>
+      <text x="252" y="102" fill="#cbd5e1" font-family="monospace" font-size="11" id="svg-bhat">b_hat = 0.671</text>
+
+      <!-- Arrow w -> error -->
+      <line x1="390" y1="78" x2="450" y2="78" stroke="#38bdf8" stroke-width="2" marker-end="url(#arr-blue)"/>
+      <text x="398" y="70" fill="#93c5fd" font-family="monospace" font-size="11">-b_hat</text>
+
+      <!-- Error node e -->
+      <rect x="455" y="40" width="135" height="76" rx="8" fill="#2b2111" stroke="#fbbf24" stroke-width="1.8"/>
+      <text x="467" y="62" fill="#f8fafc" font-size="13" font-weight="bold">Residual (e)</text>
+      <text x="467" y="82" fill="#fde68a" font-family="monospace" font-size="12" id="svg-e">e = +0.229</text>
+      <text x="467" y="102" fill="#fbbf24" font-family="monospace" font-size="11" id="svg-pie">pi*e = +0.915</text>
+
+      <!-- Target node b -->
+      <rect x="615" y="40" width="130" height="76" rx="8" fill="#112a1f" stroke="#4ade80" stroke-width="1.8"/>
+      <text x="625" y="62" fill="#f8fafc" font-size="13" font-weight="bold" id="svg-b-title">b: clamped</text>
+      <text x="625" y="82" fill="#86efac" font-family="monospace" font-size="12" id="svg-b">b = 0.900</text>
+      <text x="625" y="102" fill="#cbd5e1" font-family="monospace" font-size="11" id="svg-db">db/dt = 0 (fixed)</text>
+
+      <!-- Arrow b -> error -->
+      <line x1="615" y1="78" x2="594" y2="78" stroke="#4ade80" stroke-width="2" marker-end="url(#arr-green)"/>
+
+      <!-- Backward credit assignment path -->
+      <text x="20" y="272" fill="#fbbf24" font-size="11.5" font-weight="bold">BACKWARD CREDIT ASSIGNMENT: Precision-Weighted Error (xi = pi * e = e / sigma^2)</text>
+
+      <!-- Branch 1: e -> w -->
+      <path d="M 480 116 L 480 164 L 285 164 L 285 120" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arr-amber)"/>
+      <text x="295" y="156" fill="#fde68a" font-family="monospace" font-size="10.2" id="svg-dw-label">dw/dt = +pi*e*f(a) = +0.491</text>
+
+      <!-- Branch 2: e -> a -->
+      <path d="M 520 116 L 520 206 L 95 206 L 95 120" fill="none" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arr-amber)"/>
+      <text x="105" y="198" fill="#fde68a" font-family="monospace" font-size="10.5" id="svg-da-label">da/dt = +f'(a)*w*(pi*e)</text>
+
+      <!-- Branch 3: e -> b -->
+      <path d="M 560 116 L 560 236 L 680 236 L 680 120" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arr-green)"/>
+      <text x="365" y="252" fill="#86efac" font-family="monospace" font-size="10.5" id="svg-db-label">Target b is CLAMPED (db/dt = 0; raw pull -pi*e = -0.915)</text>
+    </svg>
+
+    <p style="margin-top:10px;">
+      <strong>Important distinction:</strong> The variance <code>sigma^2</code> (and its inverse, precision <code>pi = 1 / sigma^2</code>) on this edge describes <em>how noisy or stiff the relationship <code>b ≈ w * f(a)</code> is</em>. It weights the prediction error in the state and weight updates; it is <strong>not yet</strong> a separate covariance matrix tracking uncertainty over the node beliefs <code>(a, b)</code> themselves.
+    </p>
+  </div>
+
+  <!-- Right: Live Controls & Finite-Difference Verification -->
+  <div class="card">
+    <h2>2. Live Sandbox &amp; Finite-Difference Sign Check</h2>
+    <div class="mode-row">
+      <button id="btn-clamped" class="active" onclick="setMode('clamped')">Target b: Clamped (Observed Sensor)</button>
+      <button id="btn-inferred" onclick="setMode('inferred')">Target b: Inferred (Free Internal State)</button>
+      <button onclick="stepDynamics()">Take 1 Small Update Step (dt=0.05)</button>
+    </div>
+
+    <div class="controls-grid">
+      <div class="ctrl">
+        <div class="ctrl-head"><span>Source State <code>a</code></span><span class="ctrl-val" id="val-a">0.60</span></div>
+        <input type="range" id="sl-a" min="-2.0" max="2.0" step="any" value="0.60" oninput="updateAll()"/>
+      </div>
+      <div class="ctrl">
+        <div class="ctrl-head"><span>Target Node <code>b</code></span><span class="ctrl-val" id="val-b">0.90</span></div>
+        <input type="range" id="sl-b" min="-2.0" max="2.0" step="any" value="0.90" oninput="updateAll()"/>
+      </div>
+      <div class="ctrl">
+        <div class="ctrl-head"><span>Edge Weight <code>w</code></span><span class="ctrl-val" id="val-w">1.25</span></div>
+        <input type="range" id="sl-w" min="-2.0" max="2.0" step="any" value="1.25" oninput="updateAll()"/>
+      </div>
+      <div class="ctrl">
+        <div class="ctrl-head"><span>Variance <code>sigma^2</code></span><span class="ctrl-val" id="val-sig">1.00 (pi=1.00)</span></div>
+        <input type="range" id="sl-sig" min="0.10" max="2.00" step="0.05" value="1.00" oninput="updateAll()"/>
+      </div>
+    </div>
+
+    <table class="readout-table">
+      <thead>
+        <tr>
+          <th>Quantity</th>
+          <th>Formula</th>
+          <th>Analytic Value</th>
+          <th>Finite-Diff Check</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Prediction <code>b_hat</code></td>
+          <td><code>w * tanh(a)</code></td>
+          <td id="tb-bhat">0.671312</td>
+          <td class="zero">—</td>
+        </tr>
+        <tr>
+          <td>Prediction Error <code>e</code></td>
+          <td><code>b - b_hat</code></td>
+          <td id="tb-e">+0.228688</td>
+          <td class="zero">—</td>
+        </tr>
+        <tr>
+          <td>Precision-Weighted Error <code>xi</code></td>
+          <td><code>pi * e = (1/sigma^2) * e</code></td>
+          <td id="tb-xi">+0.914752</td>
+          <td class="zero">—</td>
+        </tr>
+        <tr>
+          <td>Mismatch Energy <code>E</code></td>
+          <td><code>0.5 * pi * e^2</code></td>
+          <td id="tb-E">0.104596</td>
+          <td class="zero">—</td>
+        </tr>
+        <tr>
+          <td>Source Descent <code>da/dt = -dE/da</code></td>
+          <td><code>+pi * e * w * f'(a)</code></td>
+          <td id="tb-da" class="pos">+0.813647</td>
+          <td id="tb-da-fd">+0.813647</td>
+        </tr>
+        <tr>
+          <td>Target Descent <code>db/dt = -dE/db</code></td>
+          <td id="tb-db-form"><code>0 (clamped to observation)</code></td>
+          <td id="tb-db" class="zero">0.000000</td>
+          <td id="tb-db-fd">-0.914752 (raw -dE/db)</td>
+        </tr>
+        <tr>
+          <td>Weight Descent <code>dw/dt = -dE/dw</code></td>
+          <td><code>+pi * e * f(a)</code></td>
+          <td id="tb-dw" class="pos">+0.491267</td>
+          <td id="tb-dw-fd">+0.491267</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Step-by-step Small Derivations -->
+  <div class="card lesson-step">
+    <h3>Start here: one error, with variance 1</h3>
+    <p>Start with two scalar numbers: a source state <code>a</code> that predicts a target <code>b</code> via <code>b_hat = w * f(a)</code>. The prediction error (mismatch) is:</p>
+    <div class="formula-box">e = b - b_hat = b - w * f(a)</div>
+    <p>Here <code>f(a) = tanh(a)</code>. With variance <code>sigma^2 = 1</code>, the mismatch energy is simply <code>E = 0.5 * e^2</code>. Its derivative with respect to the error is <code>dE/de = e</code>.</p>
+    <p>If the relationship has residual variance <code>sigma^2</code>, we divide the squared error by <code>sigma^2</code> (or multiply by precision <code>pi = 1 / sigma^2</code>):</p>
+    <div class="formula-box amber">
+      E(a, b, w) = (1 / (2 * sigma^2)) * e^2 = 0.5 * pi * e^2
+    </div>
+    <p>Differentiating <code>E</code> with respect to the error <code>e</code> gives the <strong>precision-weighted error</strong>:</p>
+    <div class="formula-box">dE / de = pi * e = (b - w * f(a)) / sigma^2</div>
+  </div>
+
+  <details class="card lesson-step">
+    <summary>Next: derive the state and weight updates, then the matrix form</summary>
+    <p>These are the contributions of this one relationship. A node connected to several relationships receives the sum of their contributions. Unit state and weight learning rates are used here.</p>
+    <p>Look at where the minus sign lives inside <code>e = (+b) - w * f(a)</code>:</p>
+    <div class="formula-box green">
+      1. Target b has a + sign in e:<br/>
+      de/db = +1  =&gt;  dE/db = +pi * e<br/>
+      Descent: db/dt = -dE/db = -pi * e
+    </div>
+    <p>If <code>b</code> is <em>inferred</em> and currently above <code>b_hat</code> (<code>e &gt; 0</code>), <code>b</code> is pulled <strong>down</strong> toward <code>b_hat</code>. If <code>b</code> is <em>clamped</em> (observed sensor), <code>b</code> stays fixed.</p>
+    <div class="formula-box">
+      2. Source a &amp; Weight w have a - sign in e:<br/>
+      de/da = -w * f'(a) =&gt; da/dt = -dE/da = +f'(a) * w * (pi * e)<br/>
+      de/dw = -f(a)      =&gt; dw/dt = -dE/dw = +(pi * e) * f(a)
+    </div>
+    <p><strong>In vector/matrix form</strong> (<code>b_hat = W f(a)</code>, <code>E = 0.5 * e^T Pi e</code>): each source <code>a_i</code> sent predictions down column <code>i</code> of <code>W</code>, so by the chain rule it collects precision-weighted errors <code>Pi * e</code> back up row <code>i</code> of <code>W^T</code>:</p>
+    <div class="formula-box purple">
+      da/dt = +f'(a) odot (W^T * Pi * e)<br/>
+      dW/dt = +(Pi * e) * f(a)^T
+    </div>
+  </details>
+
+  <details class="card lesson-step">
+    <summary>Optional: connect this lesson to the AudioViz implementation</summary>
+    <p>In <a class="code-link" href="vscode://file/home/nicklas/Projects/AudioViz/src/audioviz/readouts/continuous_scene_predictive_coding.py:290">continuous_scene_predictive_coding.py:290-389</a>, the interaction energy <code>E_int</code> uses fixed scalar weights on each relationship. The full energy adds the state-rest penalties and multiplies <code>E_int</code> by <code>G = 20 * inference_rate</code>.</p>
+    <div class="formula-box">
+      e_z = z - W_s @ tanh(h)<br/>
+      # Coupling contribution to E_int:<br/>
+      E_cpl = 0.5 * c_cpl * gamma_z * (e_z.T @ e_z)<br/>
+      # Gradients used by the state integrator:<br/>
+      grad_z = c_cpl * e_z<br/>
+      grad_h = -c_cpl * gamma_z * (W_s.T @ e_z) * dtanh
+    </div>
+    <p>The state integrator <strong>subtracts</strong> these gradients. Its block metric divides the raw <code>z</code> gradient by <code>gamma_z</code>, which is why that factor is absent from <code>grad_z</code>. This scaling is not a stored posterior precision.</p>
+    <p>The clamped camera target is the observation <code>y</code>. The neural potential <code>z</code> remains inferred, including at observed pixels; its visual prediction is <code>sigmoid(z)</code>. The observed-pixel error is therefore <code>y - sigmoid(z)</code>, with the decoder derivative included in its update.</p>
+    <p>And for weight learning (<a class="code-link" href="vscode://file/home/nicklas/Projects/AudioViz/src/audioviz/readouts/continuous_scene_predictive_coding.py:364">lines 364-389</a>):</p>
+    <div class="formula-box purple">
+      # Raw Euclidean gradient includes scalar precision:<br/>
+      grad_ws = -(c_cpl * gamma_z) * outer(e_z, tanh(h))<br/>
+      # Natural block-metric _weight_gradients divides by<br/>
+      # M_W = diag(c_h, c_h, c_cpl*gamma_z), cancelling the<br/>
+      # scalar factor so all weight blocks share one lr!
+    </details>
+</div>
+
+<script>
+let targetMode = 'clamped';
+
+function setMode(m) {
+  targetMode = m;
+  document.getElementById('btn-clamped').classList.toggle('active', m === 'clamped');
+  document.getElementById('btn-inferred').classList.toggle('active', m === 'inferred');
+  updateAll();
+}
+
+function f(x) { return Math.tanh(x); }
+function df(x) { const t = Math.tanh(x); return 1.0 - t * t; }
+function energy(a, b, w, pi) {
+  const e = b - w * f(a);
+  return 0.5 * pi * e * e;
+}
+
+function fmtSigned(v, digits=6) {
+  return (v >= 0 ? '+' : '') + v.toFixed(digits);
+}
+
+function updateAll() {
+  const a = parseFloat(document.getElementById('sl-a').value);
+  const b = parseFloat(document.getElementById('sl-b').value);
+  const w = parseFloat(document.getElementById('sl-w').value);
+  const sig2 = parseFloat(document.getElementById('sl-sig').value);
+  const pi = 1.0 / sig2;
+
+  document.getElementById('val-a').textContent = a.toFixed(3);
+  document.getElementById('val-b').textContent = b.toFixed(3);
+  document.getElementById('val-w').textContent = w.toFixed(3);
+  document.getElementById('val-sig').textContent = `${sig2.toFixed(2)} (pi=${pi.toFixed(2)})`;
+
+  const fa = f(a);
+  const dfa = df(a);
+  const bhat = w * fa;
+  const e = b - bhat;
+  const xi = pi * e;
+  const E = 0.5 * pi * e * e;
+
+  const da = pi * e * w * dfa;
+  const dbRaw = -pi * e;
+  const db = (targetMode === 'clamped') ? 0.0 : dbRaw;
+  const dw = pi * e * fa;
+
+  const eps = 1e-6;
+  const daFd = -(energy(a + eps, b, w, pi) - energy(a - eps, b, w, pi)) / (2 * eps);
+  const dbFd = -(energy(a, b + eps, w, pi) - energy(a, b - eps, w, pi)) / (2 * eps);
+  const dwFd = -(energy(a, b, w + eps, pi) - energy(a, b, w - eps, pi)) / (2 * eps);
+  const maxErr = Math.max(Math.abs(da - daFd), Math.abs(dbRaw - dbFd), Math.abs(dw - dwFd));
+
+  document.getElementById('fd-badge').textContent = `Finite-Diff Verified: max |err| = ${maxErr.toExponential(2)}`;
+
+  document.getElementById('tb-bhat').textContent = bhat.toFixed(6);
+  document.getElementById('tb-e').textContent = fmtSigned(e, 6);
+  document.getElementById('tb-xi').textContent = fmtSigned(xi, 6);
+  document.getElementById('tb-E').textContent = E.toFixed(6);
+  document.getElementById('tb-da').textContent = fmtSigned(da, 6);
+  document.getElementById('tb-da-fd').textContent = fmtSigned(daFd, 6);
+  document.getElementById('tb-db-form').innerHTML = (targetMode === 'clamped')
+    ? '<code>0 (clamped to observation)</code>'
+    : '<code>-pi * e = -pi * (b - b_hat)</code>';
+  document.getElementById('tb-db').textContent = (targetMode === 'clamped') ? '0.000000' : fmtSigned(db, 6);
+  document.getElementById('tb-db-fd').textContent = `${fmtSigned(dbFd, 6)} (raw -dE/db)`;
+  document.getElementById('tb-dw').textContent = fmtSigned(dw, 6);
+  document.getElementById('tb-dw-fd').textContent = fmtSigned(dwFd, 6);
+  for (const [id, value] of [['tb-da', da], ['tb-db', db], ['tb-dw', dw]]) {
+    document.getElementById(id).className = value > 0 ? 'pos' : value < 0 ? 'neg' : 'zero';
+  }
+
+  document.getElementById('svg-a').textContent = `a = ${a.toFixed(3)}`;
+  document.getElementById('svg-fa').textContent = `f(a) = ${fa.toFixed(3)}`;
+  document.getElementById('svg-w').textContent = `w = ${w.toFixed(3)}`;
+  document.getElementById('svg-bhat').textContent = `b_hat = ${bhat.toFixed(3)}`;
+  document.getElementById('svg-e').textContent = `e = ${fmtSigned(e, 3)}`;
+  document.getElementById('svg-pie').textContent = `pi*e = ${fmtSigned(xi, 3)}`;
+  document.getElementById('svg-b-title').textContent = (targetMode === 'clamped') ? 'b: clamped' : 'b: inferred';
+  document.getElementById('svg-b').textContent = `b = ${b.toFixed(3)}`;
+  document.getElementById('svg-db').textContent = (targetMode === 'clamped') ? 'db/dt = 0 (fixed)' : `db/dt = ${fmtSigned(db, 3)}`;
+  document.getElementById('svg-dw-label').textContent = `dw/dt = +pi*e*f(a) = ${fmtSigned(dw, 3)}`;
+  document.getElementById('svg-da-label').textContent = `da/dt = +f'(a)*w*(pi*e) = ${fmtSigned(da, 3)}`;
+  document.getElementById('svg-db-label').textContent = (targetMode === 'clamped')
+    ? `Target b is CLAMPED (db/dt = 0; raw pull -pi*e = ${fmtSigned(dbRaw, 3)})`
+    : `Target b is INFERRED: db/dt = -pi * e = ${fmtSigned(db, 3)}`;
+}
+
+function stepDynamics() {
+  const dt = 0.05;
+  let a = parseFloat(document.getElementById('sl-a').value);
+  let b = parseFloat(document.getElementById('sl-b').value);
+  let w = parseFloat(document.getElementById('sl-w').value);
+  const sig2 = parseFloat(document.getElementById('sl-sig').value);
+  const pi = 1.0 / sig2;
+
+  const fa = f(a);
+  const dfa = df(a);
+  const e = b - w * fa;
+
+  a += dt * (pi * e * w * dfa);
+  if (targetMode === 'inferred') {
+    b += dt * (-pi * e);
+  }
+  w += dt * (pi * e * fa);
+
+  document.getElementById('sl-a').value = Math.max(-2, Math.min(2, a));
+  document.getElementById('sl-b').value = Math.max(-2, Math.min(2, b));
+  document.getElementById('sl-w').value = Math.max(-2, Math.min(2, w));
+  updateAll();
+}
+
+updateAll();
+</script>
+</body>
+</html>

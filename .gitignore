@@ -8,3 +8,4 @@ outputs/pose_ripple_validation/
 config/audio_devices.json
 .tmux-workspace/
 __pycache__/
+*.drawio.bkp

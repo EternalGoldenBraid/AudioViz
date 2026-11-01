@@ -28,6 +28,7 @@ from OpenGL import platform
 from pyqtgraph import opengl as gl
 
 from audioviz.utils.source_preview import SourceScenePreview
+from audioviz.utils.continuous_graph_preview import ContinuousGraphPreview
 from audioviz.visualization.ripple_renderers import _canvas_to_rgb
 
 
@@ -180,6 +181,128 @@ class PredictionLayerView(gl.GLViewWidget):
                 self._set_label(name, (center - 1.5, 0, 0.5), f"{text}: no evidence")
         self.update()
 
+    def set_graph_snapshot(self, snapshot: ContinuousGraphPreview) -> None:
+        self._hide_items()
+        height = 6 * snapshot.visual_shape[0] / snapshot.visual_shape[1]
+        origin = (-3, -height / 2)
+        for name, image, depth, title in (
+            ("world/camera", snapshot.reference, -3.5, "Full reference; only outlined evidence enters model"),
+            ("world/prediction", snapshot.prediction, -1.0, "Whole-world prediction: sigmoid(z)"),
+        ):
+            if image is not None:
+                self._set_plane(name, rgb_texture(image), (*origin, depth), 6, text=title)
+            else:
+                self._set_label(name, (-3, height / 2 + .15, depth), "Camera reference unavailable")
+
+        error_texture = (
+            hidden_texture(np.sqrt(np.mean(snapshot.error**2, axis=-1)))
+            if snapshot.error is not None else rgb_texture(np.full_like(snapshot.prediction, 65 / 255))
+        )
+        self._set_plane(
+            "world/error", error_texture, (*origin, .5), 6,
+            text=(
+                "Whole-frame RGB RMSE (diagnostic only)"
+                if snapshot.error is not None else "Reference error unavailable (no current camera frame)"
+            ),
+        )
+        self._set_plane(
+            "world/root", rgb_texture(snapshot.canvas), (5, -height / 2, 1), 3,
+            text="Canvas / root input",
+        )
+        for name, mask, depth in (
+            ("camera", snapshot.fovea, -3.47),
+            ("prediction", snapshot.fovea, -.97),
+            ("error", snapshot.observed, .53),
+        ):
+            # Cell outlines retain the exact sampled support, including clipped apertures.
+            points = []
+            nrows, ncols = mask.shape
+            for row, col in np.argwhere(mask):
+                x, y = -3 + 6 * col / ncols, height / 2 - height * (row + 1) / nrows
+                dx, dy = 6 / ncols, height / nrows
+                if row == nrows - 1 or not mask[row + 1, col]:
+                    points.extend(((x, y, depth), (x+dx, y, depth)))
+                if row == 0 or not mask[row - 1, col]:
+                    points.extend(((x, y+dy, depth), (x+dx, y+dy, depth)))
+                if col == ncols - 1 or not mask[row, col + 1]:
+                    points.extend(((x+dx, y, depth), (x+dx, y+dy, depth)))
+                if col == 0 or not mask[row, col - 1]:
+                    points.extend(((x, y, depth), (x, y+dy, depth)))
+            self._set_lines(f"support/{name}", np.asarray(points).reshape(-1, 3), mode="lines")
+            self.lines[f"support/{name}"].setData(color=(1, .85, .2, 1), width=2)
+
+        indices = snapshot.visual_indices
+        rows, cols = snapshot.visual_shape
+        pixels = indices // 3
+        sensory = np.column_stack((
+            -3 + 6 * (pixels % cols + .5) / cols,
+            height / 2 - height * (pixels // cols + .5) / rows,
+            np.full(len(indices), -0.94),
+        ))
+        root = sensory.copy()
+        root[:, 0] = 5 + (sensory[:, 0] + 3) / 2
+        root[:, 1] /= 2
+        root[:, 2] = 1.04
+        count = len(snapshot.hidden)
+        hidden = np.column_stack((
+            np.linspace(-3, 3, count), np.full(count, -.2), np.full(count, 3.8),
+        ))
+        audio = np.column_stack((
+            np.full(len(snapshot.audio), -5),
+            np.linspace(-1, 1, len(snapshot.audio)), np.full(len(snapshot.audio), -.94),
+        ))
+        sensory_all = np.concatenate((sensory, audio))
+        for name, positions, values in (
+            ("hidden", hidden, snapshot.hidden), ("sensory", sensory, np.zeros(len(sensory))),
+            ("root", root, np.zeros(len(root))), ("audio", audio, snapshot.audio),
+        ):
+            if name not in self.nodes:
+                self.nodes[name] = gl.GLScatterPlotItem(size=9, pxMode=True)
+                self.addItem(self.nodes[name])
+            colors = np.tile((.7, .7, .7, 1), (len(values), 1))
+            colors[values > 0] = (1, .6, .3, 1)
+            colors[values < 0] = (.3, .7, 1, 1)
+            self.nodes[name].setData(pos=positions, color=colors)
+            self.nodes[name].setVisible(True)
+        for index, position in zip(snapshot.hidden_indices, hidden):
+            self._set_label(f"h/{index}", tuple(position + (0, .25, .1)), f"h{index}")
+        for index, position, value in zip(snapshot.audio_indices, audio, snapshot.audio):
+            self._set_label(f"a/{index}", tuple(position + (-1.8, 0, 0)), f"audio{index}: {value:+.2f}")
+        self._set_label("population", (-3, 3.1, 3.8),
+                        f"One recurrent population: showing {count}/{snapshot.hidden_count} real neurons")
+        self._set_weight_edges("Ws: h -> z/audio", hidden, sensory_all, snapshot.sensory_weights)
+        self._set_weight_edges("Wc: root -> h", root, hidden, snapshot.canvas_weights)
+        self._set_weight_edges("Wh: h -> h", hidden, hidden, snapshot.recurrent_weights, recurrent=True)
+        self.update()
+
+    def _set_weight_edges(self, name, sources, targets, weights, *, recurrent=False) -> None:
+        flat = np.flatnonzero(weights)
+        selected = flat[np.argsort(np.abs(weights.reshape(-1)[flat]), kind="stable")[-24:]]
+        points, colors = [], []
+        for index in selected:
+            target, source = np.unravel_index(index, weights.shape)
+            start, end = sources[source], targets[target]
+            color = (1, .55, .3, .65) if weights[target, source] > 0 else (.3, .65, 1, .65)
+            if recurrent:
+                middle = (start + end) / 2 + (0, .6 + .1 * source, .4)
+                points.extend((start, middle))
+                colors.extend((color, color))
+                start = middle
+            direction = end - start
+            length = np.linalg.norm(direction)
+            if length == 0:
+                continue
+            unit = direction / length
+            side = np.cross(unit, (0, 0, 1))
+            if np.linalg.norm(side) < .01:
+                side = np.cross(unit, (0, 1, 0))
+            side *= .08 / np.linalg.norm(side)
+            base = end - .2 * unit
+            points.extend((start, end, base + side, end, base - side, end))
+            colors.extend((color,) * 6)
+        self._set_lines(name, np.asarray(points).reshape(-1, 3), mode="lines")
+        self.lines[name].setData(color=np.asarray(colors).reshape(-1, 4))
+
     def _set_hidden(self, source: SourceScenePreview, center: float, aspect: float) -> None:
         hidden = source.hidden
         if hidden is None:
@@ -226,21 +349,6 @@ class PredictionLayerView(gl.GLViewWidget):
             x, y, z = position
             self._set_lines(name, np.array([[x, y, z], [x + width, y, z]]), mode="lines")
             self._set_label(name, (x, y + 1.8, z), text)
-        elif representation == "graph":
-            if source.edges is None:
-                raise ValueError("A graph scene source must provide edge indices.")
-            points = np.column_stack((
-                position[0] + values[:, 0] * width,
-                position[1] + (1 - values[:, 1]) * width,
-                np.full(len(values), position[2]),
-            ))
-            if name not in self.nodes:
-                self.nodes[name] = gl.GLScatterPlotItem(color=(0.4, 0.85, 0.6, 1), size=6)
-                self.addItem(self.nodes[name])
-            self.nodes[name].setData(pos=points)
-            self.nodes[name].setVisible(True)
-            self._set_lines(name, points[source.edges].reshape(-1, 3), mode="lines")
-            self._set_label(name, (position[0], position[1] + width + 0.15, position[2]), text)
         else:
             raise ValueError(f"Unsupported scene representation: {representation}")
 
@@ -249,6 +357,7 @@ class PredictionLayerView(gl.GLViewWidget):
             self.labels[name] = gl.GLTextItem(
                 color=(225, 230, 235, 255), font=QtGui.QFont("Sans Serif", 9)
             )
+            self.labels[name].setDepthValue(1000)
             self.addItem(self.labels[name])
         self.labels[name].setData(pos=position, text=text)
         self.labels[name].setVisible(True)

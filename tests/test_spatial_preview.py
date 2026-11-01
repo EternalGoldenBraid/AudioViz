@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from audioviz.engine import RippleEngine
 from audioviz.utils.spatial_preview import preview_indices, spatial_preview
@@ -41,3 +42,17 @@ def test_engine_preview_samples_corrected_field_before_gpu_host_transfer():
     assert not preview.flags.writeable
     engine.Z.fill(0)
     assert np.any(preview != 0)
+
+
+def test_image_preview_supports_a_larger_explicit_bound():
+    field = np.zeros((1080, 1920, 3), dtype=np.float32)
+    preview = spatial_preview(field, max_side=512)
+    assert preview.shape == (288, 512, 3)
+    assert not preview.flags.writeable
+    assert spatial_preview(field).shape == (36, 64, 3)
+
+
+@pytest.mark.parametrize("max_side", (0, -1, True, 1.5))
+def test_preview_rejects_invalid_bounds(max_side):
+    with pytest.raises(ValueError, match="positive integer"):
+        preview_indices((10, 20), max_side=max_side)

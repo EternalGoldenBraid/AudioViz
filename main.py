@@ -1,5 +1,7 @@
 import sys
 import signal
+import argparse
+from copy import deepcopy
 from pathlib import Path
 from typing import Union, Optional, Dict
 
@@ -18,14 +20,16 @@ from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
 from audioviz.sources import (
     AudioSourceConfig,
     CameraFrameSourceConfig,
-    RipplePoseConfig,
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
 from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
-from audioviz.readouts import PredictiveCodingConfig
+from audioviz.readouts import (
+    ContinuousScenePredictiveCodingGraph, GaussianSpatialPrecision, PredictiveCodingConfig,
+)
+from audioviz.sources.gaze import ActiveVisionConfig
 from audioviz.utils.audio_devices import select_devices
 from audioviz.utils.audio_devices import AudioDeviceDesktop 
 from audioviz.utils.guitar_profiles import GuitarProfile  
@@ -36,8 +40,8 @@ APP_CONFIG = {
     "is_streaming": True,
     "windows": {
         "spectrogram": {
-            "enabled": True,
-            # "enabled": False,
+            # "enabled": True,
+            "enabled": False,
             "title": "Audio Visualizer",
             "size": (800, 600),
         },
@@ -74,18 +78,31 @@ AUDIO_CONFIG = {
 }
 
 RIPPLE_CONFIG = {
+    "model": {
+        "foveal_radius": 32,
+        "hidden_units": 6,
+        "memory_time_constant": 1/3,
+    },
+    "gaze": {
+        "mode": "mouse",
+        "position": (0.5, 0.5),
+    },
     "field": {
         "n_sources": 5,
         # "plane_size_m": (500.0, 500.0),
         "plane_size_m": (50.0, 50.0),
+        # "resolution": (80, 120),
         # "resolution": (480, 640),
         # "resolution": (1080, 1920),
+        # "resolution": (960, 1200),
         # "resolution": (600, 800),
+        # "resolution": (400, 600),
         # "resolution": (300, 400),
-        "resolution": (100, 200),
+        "resolution": (200, 200),
         # "resolution": (48, 64),
     },
     "dynamics": {
+        "wave_propagation_enabled": False,
         "amplitude": 1.,
         "decay_alpha": 0.01,
         "speed": 340.0,
@@ -93,7 +110,9 @@ RIPPLE_CONFIG = {
         "boundary_condition": "neumann",
     },
     "renderer": {
-        "backend": "numpy",  # numpy | gpu | opengl
+        # "backend": "numpy",  # numpy | gpu | opengl
+        # "backend": "opengl",  # numpy | gpu | opengl
+        "backend": "gpu",  # numpy | gpu | opengl
         "rgb_canvas_enabled": True,
         "auto_color_activation_threshold": 0.1,
         "auto_color_floor": 0.1,
@@ -104,8 +123,7 @@ RIPPLE_CONFIG = {
             "frequency": 20.0,
         },
         "audio": {
-            # "enabled": False,
-            "enabled": True,
+            "enabled": False,
             "signal_gate_threshold": 0.60,
             "drive_amplitude": 0.05,
             "peak_picking": {
@@ -124,23 +142,6 @@ RIPPLE_CONFIG = {
                 "linear_offset": 0.0,
             },
         },
-        "pose": {
-            "enabled": False,
-            # "render_mode": "standing-body",
-            "render_mode": "overlay",
-            "model_path": "models/pose_landmarker_lite.task",
-            "camera_index": 0,
-            "debug_view": False,
-            "medium": {
-                "graph_stiffness": 0.25,
-                "field_width_fraction": 1.0,
-                "field_height_fraction": 1.0,
-            },
-            "boundary": {
-                "transmission": 0.54,
-                "dissipation": 0.06,
-            },
-        },
         "camera_frame": {
             "enabled": True,
             # "enabled": True,
@@ -153,15 +154,14 @@ RIPPLE_CONFIG = {
             "enabled": True,
             "inputs": ("camera_frame",),
             "inference": {
-                "hidden_channels": 6,
                 "steps": 8,
                 "hidden_rate": 0.1,
-                "canvas_rate": 0.01,
+                "canvas_rate": 0.0,
             },
             "learning": {
                 "enabled": False,
-                "learning_rate": 1.,
-                "weight_decay": 1e-4,
+                "learning_rate": 0.03,
+                "weight_decay": 0.0,
                 "weight_clip": 10.0,
                 "gradient_clip": 1.0,
             },
@@ -175,15 +175,47 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     renderer = config["renderer"]
     audio = sources["audio"]
     audio_mapping = audio["mapping"]
-    pose = sources["pose"]
-    pose_medium = pose["medium"]
-    pose_boundary = pose["boundary"]
     camera_frame = sources["camera_frame"]
     prediction_error = config["transforms"]["prediction_error"]
     prediction_error_inference = prediction_error["inference"]
     prediction_error_learning = prediction_error["learning"]
     backend = renderer["backend"]
-
+    model = config["model"]
+    gaze = config["gaze"]
+    hidden_units = model["hidden_units"]
+    limit = ContinuousScenePredictiveCodingGraph.MAX_HIDDEN_NODES
+    if isinstance(hidden_units, bool) or not isinstance(hidden_units, int) or not 1 <= hidden_units <= limit:
+        raise ValueError(f"model.hidden_units must be an integer between 1 and {limit}")
+    resolution = config["field"]["resolution"]
+    if (
+        not isinstance(resolution, (tuple, list)) or len(resolution) != 2
+        or any(isinstance(size, bool) or not isinstance(size, int) or size <= 0 for size in resolution)
+    ):
+        raise ValueError("field.resolution must contain two positive integers (rows, columns)")
+    pixel_limit = ContinuousScenePredictiveCodingGraph.MAX_VISUAL_SLOTS
+    if resolution[0] * resolution[1] > pixel_limit:
+        raise ValueError(f"field.resolution must not exceed {pixel_limit} world pixels")
+    pathway = PredictiveCodingConfig(
+        hidden_channels=hidden_units,
+        dtype="float32" if backend == "opengl" else "float64",
+        inference_steps=prediction_error_inference["steps"],
+        inference_rate=prediction_error_inference["hidden_rate"],
+        canvas_rate=prediction_error_inference["canvas_rate"],
+        learning_enabled=prediction_error_learning["enabled"],
+        learning_rate=prediction_error_learning["learning_rate"],
+        weight_decay=prediction_error_learning["weight_decay"],
+        weight_clip=prediction_error_learning["weight_clip"],
+        gradient_clip=prediction_error_learning["gradient_clip"],
+    )
+    active_vision = ActiveVisionConfig(
+        mode=gaze["mode"],
+        precision=GaussianSpatialPrecision(gaze=tuple(gaze["position"])),
+        memory_time_constant=model["memory_time_constant"],
+        audio_precision=1.0 if audio["enabled"] else None,
+        shared_sensory_graph=True,
+        world_anchored=True,
+        foveal_radius=model["foveal_radius"],
+    )
     return {
         **config["field"],
         **config["dynamics"],
@@ -213,36 +245,15 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
                 enabled=prediction_error["enabled"],
                 inputs=tuple(prediction_error["inputs"]),
             ),
-            visual_pathway=PredictiveCodingConfig(
-                hidden_channels=prediction_error_inference["hidden_channels"],
-                inference_steps=prediction_error_inference["steps"],
-                inference_rate=prediction_error_inference["hidden_rate"],
-                canvas_rate=prediction_error_inference["canvas_rate"],
-                cross_modal_enabled=prediction_error_inference.get("cross_modal_enabled", False),
-                learning_enabled=prediction_error_learning["enabled"],
-                learning_rate=prediction_error_learning["learning_rate"],
-                weight_decay=prediction_error_learning["weight_decay"],
-                weight_clip=prediction_error_learning["weight_clip"],
-                gradient_clip=prediction_error_learning["gradient_clip"],
-            ),
-        ),
-        "pose_config": RipplePoseConfig(
-            enabled=pose["enabled"],
-            render_mode=pose["render_mode"],
-            model_path=pose["model_path"],
-            camera_index=pose["camera_index"],
-            debug_view=pose["debug_view"],
-            graph_stiffness=pose_medium["graph_stiffness"],
-            field_width_fraction=pose_medium["field_width_fraction"],
-            field_height_fraction=pose_medium["field_height_fraction"],
-            body_boundary_transmission=pose_boundary["transmission"],
-            body_boundary_dissipation=pose_boundary["dissipation"],
+            visual_pathway=pathway,
         ),
         "use_gpu": backend == "gpu",
         "use_shader": backend == "opengl",
         "rgb_canvas_enabled": renderer["rgb_canvas_enabled"],
         "auto_color_activation_threshold": renderer["auto_color_activation_threshold"],
         "auto_color_floor": renderer["auto_color_floor"],
+        "active_vision": active_vision,
+        "shared_graph_factory": ContinuousScenePredictiveCodingGraph,
     }
 
 
@@ -260,7 +271,7 @@ def configure_audio_source_processor(processor: AudioProcessor, config: Dict) ->
     processor.set_num_top_frequencies(int(peak_picking["top_k_count"]))
 
 
-def main():
+def _create_audio_processor(ripple_config):
     # --- Config Phase ---
 
     is_streaming = APP_CONFIG["is_streaming"]
@@ -333,9 +344,6 @@ def main():
     
     # --- Run Phase ---
     
-    app = QtWidgets.QApplication([])
-    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
-    
     # Audio processor
     processor = AudioProcessor(
         sr=int(sr),
@@ -353,19 +361,51 @@ def main():
         io_blocksize=io_config["io_blocksize"],
         number_top_k_frequencies=n_fft // 2,
     )
-    configure_audio_source_processor(processor, RIPPLE_CONFIG)
+    configure_audio_source_processor(processor, ripple_config)
+    return processor, plotting_config, (io_config["io_blocksize"]/sr)*1000
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Continuous whole-scene predictive coding with foveal evidence. Configure the world grid, model and sources in RIPPLE_CONFIG in main.py.",
+    )
+    parser.parse_args(argv)
+    app_config, source_config = deepcopy(APP_CONFIG), deepcopy(RIPPLE_CONFIG)
+    windows = app_config["windows"]
+    ripple_config = build_ripple_visualizer_config(source_config) if windows["ripples"]["enabled"] else None
+    if ripple_config is not None:
+        logger.info(
+            "Continuous scene: {} world grid, radius {} pixels, {} total recurrent hidden units, {} gaze, {} image backend; "
+            "learning {}. Configure the world in RIPPLE_CONFIG['field'] and neural sizes in ['model'].",
+            source_config["field"]["resolution"],
+            source_config["model"]["foveal_radius"], source_config["model"]["hidden_units"],
+            source_config["gaze"]["mode"], source_config["renderer"]["backend"],
+            "enabled" if source_config["transforms"]["prediction_error"]["learning"]["enabled"] else "disabled",
+        )
+    camera_only = (
+        ripple_config is not None and ripple_config["active_vision"] is not None
+        and ripple_config["active_vision"].audio_precision is None
+        and not windows["spectrogram"]["enabled"] and not windows["helix"]["enabled"]
+    )
+    if QtWidgets.QApplication.instance() is None:
+        # Graph windows reuse pyqtgraph's cached shader programs.
+        QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts)
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
+    processor = None
+    plotting_config = None
+    if not camera_only:
+        processor, plotting_config, block_duration_ms = _create_audio_processor(source_config)
     
-    # Create a processing timer
-    block_duration_ms = (io_config["io_blocksize"] / sr) * 1000
-    processing_timer = QtCore.QTimer()
-    # processing_timer.setInterval(20)  # e.g., 50 Hz
-    processing_timer.setInterval(int(block_duration_ms*(1 - 1e-3))) 
-    processing_timer.timeout.connect(processor.process_pending_audio)
-    processing_timer.start()
+        processing_timer = QtCore.QTimer()
+        processing_timer.setInterval(int(block_duration_ms*(1 - 1e-3)))
+        processing_timer.timeout.connect(processor.process_pending_audio)
+        processing_timer.start()
     
     # Visualizer
-    spectrogram_window_config = APP_CONFIG["windows"]["spectrogram"]
+    spectrogram_window_config = windows["spectrogram"]
     if spectrogram_window_config["enabled"]:
+        assert processor is not None and plotting_config is not None
         visualizer = SpectrogramVisualizer(
             processor=processor,
             cmap=plotting_config["cmap"],
@@ -377,7 +417,7 @@ def main():
         visualizer.show()
     
     # Create Pitch Helix Visualizer
-    helix_window_config = APP_CONFIG["windows"]["helix"]
+    helix_window_config = windows["helix"]
     if helix_window_config["enabled"]:
         standard_guitar = GuitarProfile(
             open_strings=[82.41, 110.00, 146.83, 196.00, 246.94, 329.63],
@@ -398,11 +438,14 @@ def main():
         helix_window.show()
     
     # Create Ripple Wave Visualizer
-    ripples_window_config = APP_CONFIG["windows"]["ripples"]
+    ripples_window_config = windows["ripples"]
     if ripples_window_config["enabled"]:
-        ripple_config = build_ripple_visualizer_config(RIPPLE_CONFIG)
+        active_vision = ripple_config["active_vision"]
+        ripple_processor = (
+            processor if active_vision is None or active_vision.audio_precision is not None else None
+        )
         ripple_window = RippleWaveVisualizer(
-            processor=processor,
+            processor=ripple_processor,
             **ripple_config
         )
         ripple_window.setWindowTitle(ripples_window_config["title"])
@@ -410,19 +453,22 @@ def main():
         ripple_window.show()
     
     # Start audio
-    processor_success = processor.start()
-    if not processor_success:
-        logger.error("Failed to start audio processing. Exiting.")
-        return
+    if processor is not None:
+        processor_success = processor.start()
+        if not processor_success:
+            logger.error("Failed to start audio processing. Exiting.")
+            return
     
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-    app.aboutToQuit.connect(processor.stop)
+    if processor is not None:
+        app.aboutToQuit.connect(processor.stop)
     
     try:
         sys.exit(app.exec())
     except KeyboardInterrupt:
         print("Exiting...")
-        processor.stop()
+        if processor is not None:
+            processor.stop()
         app.quit()
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ def list_devices():
         print(f"[{idx}] {dev['name']} ({', '.join(io_flag)})")
 
     # Null device is always available
-    print(f"[{idx+1}] Null Device (no audio input/output)")
+    print("[-1] Null Device (no audio input/output)")
     return devices
 
 def prompt_for_device(devices, kind: str = "input"):
@@ -53,7 +53,7 @@ def prompt_for_device(devices, kind: str = "input"):
         try:
             index = int(input(f"Select {kind} device index: "))
 
-            if index == len(devices):
+            if index == -1:
                 print("Using Null Device (no audio input/output)")
                 index = -1
                 return index, {
@@ -62,6 +62,8 @@ def prompt_for_device(devices, kind: str = "input"):
                     "default_samplerate": 44100,
                 }
 
+            if index < 0 or index >= len(devices):
+                raise IndexError(index)
             device = devices[index]
             if kind == "input" and device['max_input_channels'] == 0:
                 print("Selected device has no input channels.")
