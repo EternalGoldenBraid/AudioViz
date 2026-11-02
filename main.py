@@ -364,6 +364,7 @@ def main():
     processing_timer.start()
     
     # Visualizer
+    visualizer = None
     spectrogram_window_config = APP_CONFIG["windows"]["spectrogram"]
     if spectrogram_window_config["enabled"]:
         visualizer = SpectrogramVisualizer(
@@ -408,6 +409,8 @@ def main():
         ripple_window.setWindowTitle(ripples_window_config["title"])
         ripple_window.resize(*ripples_window_config["size"])
         ripple_window.show()
+        if visualizer is not None and not ripple_window.use_shader:
+            visualizer.set_canvas_provider(ripple_window.engine.get_field_preview)
     
     # Start audio
     processor_success = processor.start()

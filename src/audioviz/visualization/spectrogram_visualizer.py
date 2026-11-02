@@ -1,6 +1,8 @@
 import time
+from collections.abc import Callable
 
 from PyQt5 import QtWidgets
+from loguru import logger
 import pyqtgraph as pg
 # pg.setConfigOptions(useOpenGL=True) 
 # pg.setConfigOptions(antialias=True)
@@ -25,6 +27,11 @@ class SpectrogramVisualizer(VisualizerBase):
         self.cmap: cm.colors.Colormap = cmap
         self.norm: Normalize = norm
         self.waveform_plot_duration: float = waveform_plot_duration
+        self.canvas_provider: Callable[[], np.ndarray] | None = None
+        self.landscape = None
+        self._landscape_failed = False
+        self._last_frame = -1
+        self._last_3d_update = -float("inf")
 
         self.spectrogram_plot_item: pg.PlotItem
         self.spectrogram_view: pg.ImageView
@@ -44,6 +51,29 @@ class SpectrogramVisualizer(VisualizerBase):
 
     def init_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
+        controls = QtWidgets.QHBoxLayout()
+        self.landscape_toggle = QtWidgets.QCheckBox("3D audio landscape")
+        self.landscape_toggle.toggled.connect(self._toggle_landscape)
+        controls.addWidget(self.landscape_toggle)
+        reset = QtWidgets.QPushButton("Isometric view")
+        reset.clicked.connect(self._reset_landscape)
+        controls.addWidget(reset)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.landscape_help = QtWidgets.QLabel(
+            "Drag to orbit; wheel to zoom; Ctrl-drag to pan. Depth = history (Now at front).\n"
+            f"Waveform: {self.waveform_plot_duration:g} s per ribbon / amplitude [-1, 1]; "
+            f"spectrogram: {'mel bands' if self.processor.n_mels is not None else 'frequency (Hz)'} "
+            f"/ magnitude [{self.norm.vmin:g}, {self.norm.vmax:g}] dB. "
+            "The live canvas sits underneath; geometry is display-only."
+        )
+        self.landscape_help.setWordWrap(True)
+        self.landscape_help.hide()
+        layout.addWidget(self.landscape_help)
+        self.landscape_error = QtWidgets.QLabel()
+        self.landscape_error.setWordWrap(True)
+        self.landscape_error.hide()
+        layout.addWidget(self.landscape_error)
     
         # Spectrogram plot using ImageItem
         self.spectrogram_plot_item = pg.PlotItem(title="Spectrogram")
@@ -61,6 +91,7 @@ class SpectrogramVisualizer(VisualizerBase):
     
         # Pack into GraphicsLayoutWidget
         spectrogram_widget = pg.GraphicsLayoutWidget()
+        self.spectrogram_widget = spectrogram_widget
         spectrogram_widget.addItem(self.spectrogram_plot_item)
     
         layout.addWidget(spectrogram_widget)
@@ -73,10 +104,52 @@ class SpectrogramVisualizer(VisualizerBase):
         self.waveform_curve = self.waveform_plot.plot(pen="y")
         layout.addWidget(self.waveform_plot)
 
+    def set_canvas_provider(self, provider: Callable[[], np.ndarray]) -> None:
+        self.canvas_provider = provider
+
+    def _toggle_landscape(self, enabled: bool) -> None:
+        if enabled and self.landscape is None:
+            try:
+                from .audio_landscape_view import AudioLandscapeView
+            except ImportError as error:
+                self._landscape_error(str(error))
+                return
+            history = self.processor.num_samples_in_buffer / self.processor.sr
+            self.landscape = AudioLandscapeView(cmap=self.cmap, history_seconds=history, parent=self)
+            self.landscape.rendering_failed.connect(self._landscape_error)
+            self.layout().addWidget(self.landscape, stretch=1)
+        if self.landscape is not None:
+            self.landscape.setVisible(enabled)
+            if not enabled:
+                self.landscape.waveforms.clear()
+        self.spectrogram_widget.setVisible(not enabled)
+        self.waveform_plot.setVisible(not enabled)
+        self.landscape_help.setVisible(enabled)
+        self._last_frame = -1
+
+    def _landscape_error(self, message: str) -> None:
+        logger.error("3D audio landscape unavailable: {}", message)
+        self._landscape_failed = True
+        self.landscape_toggle.setChecked(False)
+        self.landscape_toggle.setEnabled(False)
+        self.landscape_error.setText(f"3D unavailable: {message}. The 2D plots remain available.")
+        self.landscape_error.show()
+
+    def _reset_landscape(self) -> None:
+        if self.landscape is not None:
+            self.landscape.reset_view()
+
     def update_visualization(self) -> None:
         """
         Currently averaging spectrograms across channels.
         """
+        landscape_active = self.landscape_toggle.isChecked() and not self._landscape_failed
+        now = time.monotonic()
+        if landscape_active and (not self.isVisible() or now - self._last_3d_update < .1):
+            return
+        if landscape_active:
+            self.landscape.set_canvas(self.canvas_provider() if self.canvas_provider is not None else None)
+            self._last_3d_update = now
         snapshot = self.processor.get_latest_snapshot()
         if snapshot is None:
             return  # No new data yet
@@ -84,6 +157,19 @@ class SpectrogramVisualizer(VisualizerBase):
         audio, spectrograms = snapshot
         
         spectrogram = np.mean(spectrograms, axis=0)
+        if landscape_active:
+            mean_waveform = np.mean(audio, axis=1)
+            n_samples = max(1, int(self.waveform_plot_duration * self.processor.sr))
+            mean_waveform = mean_waveform[-n_samples:]
+            # STFT stores magnitudes; mel analysis stores power.
+            to_db = lr.power_to_db if self.processor.n_mels is not None else lr.amplitude_to_db
+            levels = np.asarray(self.norm(to_db(spectrogram, ref=1.0, top_db=None)))
+            frame = self.processor.frame_counter
+            self.landscape.set_audio(
+                mean_waveform, levels, timestamp=now, new_frame=frame != self._last_frame,
+            )
+            self._last_frame = frame
+            return
         time_start_spectrogram = time.time()
         # Process spectrogram
         spectrogram_db = lr.power_to_db(spectrogram, ref=1.0)

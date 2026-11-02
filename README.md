@@ -409,6 +409,29 @@ the graph is separately optional. This visualization does not change topology
 or prune weights. Arbitrary predictive graph topologies remain a separate
 extension.
 
+### 3D waveform and spectrogram landscape
+
+In the Audio Visualizer, select **3D audio landscape** to replace the two flat
+plots with an orbitable isometric view. The waveform shows sample time across
+each ribbon, signed amplitude as height, and successive windows receding into
+history. The spectrogram shows frequency across, history into depth, and
+magnitude as height and color. The newest data meets the front **Now** edge.
+Magnitude uses the configured fixed dB range (amplitude dB for STFT, power dB
+for mel), without per-frame normalization.
+
+When the ripple window uses an array-backed CPU/GPU canvas, a sampled copy of
+its corrected live surface forms the floor behind the audio geometry. This is
+display-only: neither inference nor wave dynamics change. With no ripple
+window, the audio landscape still works without the backdrop.
+
+Drag to orbit, wheel to zoom, Ctrl-drag to pan; **Isometric view** restores
+45-degree azimuth and 35.264-degree elevation. The existing 2D view remains
+available. Geometry refreshes at most 10 Hz while visible, with at most
+128 frequency bins by 96 time columns and 48 waveform ribbons of 256 points.
+Waveform history records only newly processed audio generations and expires
+over the configured audio-buffer duration. An unavailable OpenGL context
+reports an error and returns to the 2D plots.
+
 ### Independent multimodal 3D scene
 
 Click **Show Multimodal 3D Scene** below the canvas, or **Open multimodal 3D
