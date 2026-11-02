@@ -6,5 +6,13 @@
       {"keys": ["minus"]},
       {"expect": {"mixer.camera view": "off", "mixer.canvas feed": "on"}}
     ]
+  },
+  {
+    "name": "a knob on the second mixer page is reachable",
+    "steps": [
+      {"focus": "knob-learning-rate"},
+      {"keys": ["plus"]},
+      {"expect": {"focus": "knob-learning-rate"}}
+    ]
   }
 ]

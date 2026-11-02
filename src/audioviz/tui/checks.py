@@ -20,7 +20,8 @@ from audioviz.tui import control
 
 LAUNCH = "uv run --group tui --with-editable . python -m audioviz.tui.app; read"
 TRACES = Path("outputs/traces")
-FOCUS_TRIES = 40
+FOCUS_TRIES = 60
+WALK_BEFORE_PAGE = 12
 
 
 async def call(request: dict) -> dict:
@@ -51,10 +52,12 @@ async def step(action: dict, state: dict) -> tuple[bool, dict, str]:
         new = await call({"op": "run", "line": action["run"]})
         return True, new, ""
     if "focus" in action:
-        for _ in range(FOCUS_TRIES):
+        for attempt in range(FOCUS_TRIES):
             if state["focus"] == action["focus"]:
                 return True, state, ""
-            state = await call({"op": "keys", "keys": ["w"]})
+            # a paged group hides knobs until its page turns, so turn it when `w` has gone round
+            key = "n" if attempt % WALK_BEFORE_PAGE == WALK_BEFORE_PAGE - 1 else "w"
+            state = await call({"op": "keys", "keys": [key]})
         return state["focus"] == action["focus"], state, f"focus is {state['focus']!r}"
     if "expect" in action:
         state = await call({"op": "state"})
