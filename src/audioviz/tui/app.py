@@ -21,10 +21,11 @@ from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE
 from audioviz.tui.graph_runtime import GraphRuntime
 from audioviz.tui.devices import DevicePicker, list_devices
 from audioviz.tui.halfblock import RENDER_MODES, render_cells
+from audioviz.tui.hot_reload import HotReload
 from audioviz.tui.mixer import CONTROLS
 from audioviz.tui.settings import settings_controls
 from audioviz.tui.themes import THEMES
-from audioviz.tui.views import VIEWS
+from audioviz.tui import views as views_module
 
 MAX_LAYERS = 8
 BRAILLE_MIN_CELLS = 1200  # tiles at least this large render at braille density
@@ -89,7 +90,7 @@ class ViewTile(Static, can_focus=True):
             return
         mode = self.mode_for(size.width * size.height)
         sub_rows, sub_cols = RENDER_MODES[mode]
-        image = VIEWS[self.view](self.runtime, size.height * sub_rows, size.width * sub_cols)
+        image = views_module.VIEWS[self.view](self.runtime, size.height * sub_rows, size.width * sub_cols)
         if image is None:
             self.update(f"{self.view}: waiting for data")
             return
@@ -167,7 +168,7 @@ class AudioVizApp(App):
     OPACITY_STEP = 0.1
 
     def __init__(self, audio: str = "default", camera: bool = True, state_dir: Path | None = None,
-                 autosave: bool = True) -> None:
+                 autosave: bool = True, hot_reload: bool = True) -> None:
         super().__init__()
         self.audio = audio
         self.mode = "NORMAL"
@@ -175,6 +176,8 @@ class AudioVizApp(App):
         self.cache_path = state_dir / "state.json" if state_dir else CACHE_PATH
         self.saves_dir = state_dir / "saves" if state_dir else SAVES_DIR
         self.autosave = autosave
+        self.hot_reload = hot_reload
+        self._reloader = HotReload()
         self._saved: dict | None = None
         self.placements = default_layout(120, 36)  # resized to the real stage on mount
         self.groups: list[list[str]] = []  # tiles that move, lift and fade together
@@ -214,6 +217,8 @@ class AudioVizApp(App):
         self.apply_layout()
         self.runtime.start()
         self.set_interval(1 / 15, self.refresh_tiles)
+        if self.hot_reload:
+            self.set_interval(0.5, self.reload_code)
         if self.autosave:
             self.set_interval(AUTOSAVE_SECONDS, self.autosave_state)
         self.query_one("#canvas").focus()
@@ -603,9 +608,9 @@ class AudioVizApp(App):
             elif name == "devices":
                 self.open_devices()
             elif name == "views":
-                log.write(" ".join(VIEWS))
+                log.write(" ".join(views_module.VIEWS))
             elif name == "view":
-                if args[0] not in VIEWS:
+                if args[0] not in views_module.VIEWS:
                     raise ValueError(f"unknown view {args[0]!r}")
                 focused = self.focused
                 if not isinstance(focused, ViewTile):
@@ -653,7 +658,7 @@ class AudioVizApp(App):
         self.stack = stack + [n for n in self.placements if n not in stack]
         self.groups = [[n for n in g if n in self.placements] for g in data.get("groups", [])]
         for tile in self.query(ViewTile):
-            if data.get("views", {}).get(tile.id) in VIEWS:
+            if data.get("views", {}).get(tile.id) in views_module.VIEWS:
                 tile.set_view(data["views"][tile.id])
             self.set_render(tile, data.get("render", {}).get(tile.id))
         for controls, context, saved in ((self.settings, self, data.get("settings", {})),
@@ -664,6 +669,14 @@ class AudioVizApp(App):
         if data.get("theme") in self.available_themes:
             self.theme = data["theme"]
         self.set_tile_background(data.get("tile_background"))
+
+    def reload_code(self) -> None:
+        log = self.query_one("#log", LogTile)
+        try:
+            for name in self._reloader.poll():
+                log.write(f"reloaded {name}")
+        except Exception as error:  # a half-typed edit keeps the previous code running
+            log.write(f"reload failed: {error!r}")
 
     def autosave_state(self) -> None:
         data = self.snapshot()

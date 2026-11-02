@@ -172,3 +172,26 @@ def test_choice_control_steps_through_values():
     assert box["v"] == "c" and control.position(None) == 1.0
     control.nudge(None, -1)
     assert box["v"] == "b"
+
+
+def test_hot_reload_picks_up_an_edited_view_and_survives_a_syntax_error():
+    import os
+    from pathlib import Path
+    from audioviz.tui import views
+    from audioviz.tui.hot_reload import HotReload
+
+    path = Path(views.__file__)
+    original = path.read_text()
+    reloader = HotReload()
+    try:
+        path.write_text(original + "\nMARKER = 1\n")
+        assert reloader.poll() == ["views"] and views.MARKER == 1
+
+        path.write_text(original + "\ndef broken(:\n")
+        with pytest.raises(SyntaxError):
+            reloader.poll()
+        assert views.MARKER == 1 and reloader.poll() == []  # old code stays live, no retry storm
+    finally:
+        path.write_text(original)
+        os.utime(path)
+        reloader.poll()

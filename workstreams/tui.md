@@ -15,7 +15,16 @@ and mixer tiles, Vim visual mode `v` to group tiles, autosave to `~/.cache/audio
 `:w [name]` writes state + screenshot to `~/.config/audioviz/saves/`. Grid 128 runs slower than
 realtime (~80 ms/step); the hidden tile sometimes waits for data; the canvas is flat.
 
-**Future.** `t-K` sampling of every signal (or a chosen subset) into the saved state; Gaze daemon over a Unix socket (position from the ray, layer depth from
+**Learned.** Step time is ~86% predictive-coding inference (`infer_joint`), not wave propagation,
+so the OpenGL/CuPy engine backends would not speed the TUI (and OpenGL has no observation
+correction). Resolution is bounded by that readout.
+
+**Live editing.** Edit `views.py` or `halfblock.py` while the app runs: tiles pick it up on the
+next frame (`reloaded views` in the log); a syntax error keeps the old code live.
+
+**Future.** Knobs as tiles and a node tree (a group is a node whose children are nodes; mixer and
+settings become preset groups; viewer distance could pick the tree level). Speed up `infer_joint`.
+`t-K` sampling of every signal (or a chosen subset) into the saved state; Gaze daemon over a Unix socket (position from the ray, layer depth from
 viewer distance), attractor dynamics in the hidden view, theme-aware data colormaps.
 
 **Restore.**
