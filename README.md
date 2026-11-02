@@ -412,13 +412,20 @@ extension.
 ### 3D waveform and spectrogram landscape
 
 In the Audio Visualizer, select **3D audio landscape** to replace the two flat
-plots with an orbitable isometric view. The waveform becomes a compact sphere:
+plots with an orbitable isometric view. The waveform shapes a fixed compact source:
 the latest 256 samples wrap around longitude, signed amplitude deforms the
 radius, and RMS amplitude adds a small overall expansion. Deformation tapers
-at the poles and joins across the longitude seam. Up to four sparse, fading
-shells expand outward to show a short 1.2-second temporal wake. This is a
-chosen audio-to-shape mapping, not a spherical-harmonic analysis or recovered
-sound direction.
+at the poles and joins across the longitude seam. Each fresh audio generation
+releases a small cohort of tracers from its surface, leaving a fading directional
+wake. The live canvas's three signed state channels supply the x/y/z velocity
+components: `velocity = 3 * tanh(state)` in scene units per second. The field is
+bilinearly sampled at the tracer's x/y location and is constant through depth.
+Image row zero matches the far edge of the backdrop. There is no drift without
+a canvas, outside its footprint, or in a zero field.
+
+This is an experimental visual mapping, not electromagnetic simulation,
+spherical-harmonic analysis, or recovered sound direction. Changing the canvas
+field turns existing material as well as newly released tracers.
 
 The spectrogram shows frequency across, history into depth, and
 magnitude as height and color. The newest data meets the front **Now** edge.
@@ -434,10 +441,12 @@ Drag to orbit, wheel to zoom, Ctrl-drag to pan; **Isometric view** restores
 45-degree azimuth and 35.264-degree elevation. The existing 2D view remains
 available. Geometry refreshes at most 10 Hz while visible, with at most
 128 frequency bins by 96 time columns. The sphere uses a fixed 16-by-48 mesh;
-the wake retains at most 12 waveform snapshots and draws at most four wire shells.
-Wavefront history records only newly processed audio generations and expires
-after 1.2 seconds without new samples. Valid silent samples produce a round
-sphere. An unavailable OpenGL context
+the wake holds at most 768 tracers, each with eight trail points and a two-second
+lifetime. Motion steps are capped at 0.2 seconds after a stalled refresh; expiry
+uses actual elapsed time. Only newly processed audio generations release tracers.
+The source disappears after 1.2 seconds without fresh samples; already emitted
+material continues moving and fading. Valid silent samples produce a round
+source. An unavailable OpenGL context
 reports an error and returns to the 2D plots.
 
 ### Independent multimodal 3D scene

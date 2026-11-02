@@ -62,11 +62,11 @@ class SpectrogramVisualizer(VisualizerBase):
         layout.addLayout(controls)
         self.landscape_help = QtWidgets.QLabel(
             "Drag to orbit; wheel to zoom; Ctrl-drag to pan. "
-            "Waveform time expands outward; spectrogram history recedes into depth.\n"
-            "Sphere: latest waveform samples deform its radius; a short fading shell wake shows the past. "
+            "Source releases tracers; signed canvas channels steer x/y/z, unchanged through depth.\n"
+            "Waveform shapes the fixed source; the fading wake carries its past along the field. "
             f"Spectrogram: {'mel bands' if self.processor.n_mels is not None else 'frequency (Hz)'} "
             f"/ magnitude [{self.norm.vmin:g}, {self.norm.vmax:g}] dB. "
-            "The live canvas sits underneath. This is a visual mapping, not reconstructed sound direction."
+            "No canvas field means no drift. Display-only advection, not electromagnetic simulation."
         )
         self.landscape_help.setWordWrap(True)
         self.landscape_help.hide()
@@ -122,7 +122,7 @@ class SpectrogramVisualizer(VisualizerBase):
         if self.landscape is not None:
             self.landscape.setVisible(enabled)
             if not enabled:
-                self.landscape.waveforms.clear()
+                self.landscape.clear_audio()
         self.spectrogram_widget.setVisible(not enabled)
         self.waveform_plot.setVisible(not enabled)
         self.landscape_help.setVisible(enabled)
@@ -154,7 +154,7 @@ class SpectrogramVisualizer(VisualizerBase):
         snapshot = self.processor.get_latest_snapshot()
         if snapshot is None:
             if landscape_active:
-                self.landscape.advance_wavefront(now)
+                self.landscape.advance_source(now)
             return  # No new data yet
         
         audio, spectrograms = snapshot

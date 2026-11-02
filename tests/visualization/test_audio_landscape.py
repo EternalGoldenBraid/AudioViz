@@ -24,34 +24,36 @@ def test_landscape_geometry_is_bounded_and_new_frames_have_real_history(qapp, mo
     levels = np.broadcast_to(np.linspace(0, 1, 200), (300, 200))
     for frame in range(60):
         view.set_audio(waveform, levels, timestamp=frame / 20, new_frame=True)
-    assert len(view.waveforms) == view.MAX_WAVEFORMS
+    assert np.count_nonzero(view.wake.active) == view.wake.MAX_PARTICLES
     assert surface["z"].shape == (128, 96)
     assert surface["colors"].shape == (128 * 96, 4)
     view.surface.parseMeshData()
     np.testing.assert_array_equal(surface["z"][:, 0], 2.5)
     np.testing.assert_array_equal(surface["z"][:, -1], 0)
-    assert view.waveforms[-1][1].shape == (256,)
-    assert np.max(np.abs(view.waveforms[-1][1])) == 1
-    assert view.wavefront.visible()
-    view.wavefront.parseMeshData()
+    assert view.waveform.shape == (256,)
+    assert np.max(np.abs(view.waveform)) == 1
+    assert view.source.visible()
+    view.source.parseMeshData()
     assert view._sphere_directions.shape[0] < 1000
-    assert len(view.shell_lines) == 4
-    assert all(line.visible() for line in view.shell_lines)
-    assert all(line.pos.shape[0] < 1000 for line in view.shell_lines)
+    assert view.tracers.visible()
+    assert view.trails.pos.shape == (768 * 14, 3)
+    births = view.wake.born.copy()
     view.set_audio(waveform, levels, timestamp=3, new_frame=False)
-    assert len(view.waveforms) == 12
+    np.testing.assert_array_equal(view.wake.born, births)
     view.set_audio(waveform, levels, timestamp=9, new_frame=False)
-    assert not view.waveforms
-    assert not view.wavefront.visible()
-    assert not any(line.visible() for line in view.shell_lines)
+    assert not view.wake.active.any()
+    assert not view.source.visible()
+    assert not view.tracers.visible()
+    assert not view.trails.visible()
     view.set_canvas(np.ones((8, 12, 3)))
     assert view.planes["canvas"].visible()
     view.set_canvas(None)
     assert not view.planes["canvas"].visible()
+    assert view.wake.field is None
     view.close()
 
 
-def test_wavefront_has_a_closed_seam_shared_poles_and_expanding_fading_wake(qapp):
+def test_source_has_a_closed_seam_and_releases_a_fading_directional_wake(qapp):
     from audioviz.visualization.audio_landscape_view import AudioLandscapeView
 
     view = AudioLandscapeView(cmap=colormaps["viridis"], history_seconds=5)
@@ -59,30 +61,40 @@ def test_wavefront_has_a_closed_seam_shared_poles_and_expanding_fading_wake(qapp
         [-1., 0., 0.], [-1., -0., 0.], [0., 0., 1.], [0., 0., -1.],
     ])
     waveform = np.sin(np.linspace(0, 3 * np.pi, 256))
-    vertices = view._wavefront_vertices(directions, waveform)
+    vertices = view._source_vertices(directions, waveform)
     np.testing.assert_allclose(vertices[0], vertices[1])
-    radius = np.linalg.norm(vertices - view.WAVEFRONT_CENTER, axis=1)
+    radius = np.linalg.norm(vertices - view.SOURCE_CENTER, axis=1)
     np.testing.assert_allclose(radius[2], radius[3])
-    silence = view._wavefront_vertices(view._sphere_directions, np.zeros(256))
+    silence = view._source_vertices(view._sphere_directions, np.zeros(256))
     np.testing.assert_allclose(
-        np.linalg.norm(silence - view.WAVEFRONT_CENTER, axis=1), 1, atol=1e-7,
+        np.linalg.norm(silence - view.SOURCE_CENTER, axis=1), 1, atol=1e-7,
     )
-    active = view._wavefront_vertices(view._sphere_directions, waveform)
-    active_radius = np.linalg.norm(active - view.WAVEFRONT_CENTER, axis=1)
+    active = view._source_vertices(view._sphere_directions, waveform)
+    active_radius = np.linalg.norm(active - view.SOURCE_CENTER, axis=1)
     assert np.ptp(active_radius) > .3
     assert np.min(active_radius) > .7
+    field = np.zeros((8, 12, 3))
+    field[:, :, 0] = 1
+    view.set_canvas(field)
     view.set_audio(waveform, np.zeros((4, 5)), timestamp=0, new_frame=True)
-    view.set_audio(waveform, np.zeros((4, 5)), timestamp=.2, new_frame=True)
-    before = np.linalg.norm(view.shell_lines[0].pos - view.WAVEFRONT_CENTER, axis=1)
-    opacity = view.shell_lines[0].color[3]
-    view.advance_wavefront(.6)
-    after = np.linalg.norm(view.shell_lines[0].pos - view.WAVEFRONT_CENTER, axis=1)
-    assert np.all(after > before)
-    assert view.shell_lines[0].color[3] < opacity
-    assert len(view.waveforms) == 2
-    view.advance_wavefront(1.5)
-    assert not view.wavefront.visible()
-    assert not any(line.visible() for line in view.shell_lines)
+    before = view.wake.positions[:24].copy()
+    opacity = view.tracers.color[:, 3].copy()
+    view.advance_source(.1)
+    after = view.wake.positions[:24]
+    np.testing.assert_allclose(after[:, 0] - before[:, 0], .3 * np.tanh(1))
+    np.testing.assert_array_equal(after[:, 1:], before[:, 1:])
+    assert np.all(view.tracers.color[:, 3] < opacity)
+    assert np.count_nonzero(view.wake.active) == 24
+    view.advance_source(1.3)
+    assert not view.source.visible()
+    assert view.tracers.visible()
+    view.advance_source(2)
+    assert not view.tracers.visible()
+    view.set_audio(waveform, np.zeros((4, 5)), timestamp=2.1, new_frame=True)
+    view.clear_audio()
+    assert not view.wake.active.any()
+    assert view.waveform is None
+    assert not view.source.visible()
     view.close()
 
 
@@ -97,9 +109,9 @@ def test_landscape_toggle_uses_fixed_db_scale_new_generations_and_read_only_canv
 
         def __init__(self, **kwargs):
             super().__init__(kwargs["parent"])
-            self.waveforms = []
             self.frames = []
             self.resets = 0
+            self.cleared = False
 
         def set_audio(self, waveform, levels, **kwargs):
             self.frames.append((waveform, levels, kwargs))
@@ -110,8 +122,11 @@ def test_landscape_toggle_uses_fixed_db_scale_new_generations_and_read_only_canv
         def reset_view(self):
             self.resets += 1
 
-        def advance_wavefront(self, timestamp):
+        def advance_source(self, timestamp):
             self.advanced_at = timestamp
+
+        def clear_audio(self):
+            self.cleared = True
 
     monkeypatch.setattr(landscape_module, "AudioLandscapeView", LandscapeStub)
     clock = [0.]
@@ -164,6 +179,7 @@ def test_landscape_toggle_uses_fixed_db_scale_new_generations_and_read_only_canv
     assert len(view.landscape.frames) == 3
     assert view.landscape.advanced_at == .8
     view.landscape.rendering_failed.emit("test context failure")
+    assert view.landscape.cleared
     assert not view.landscape_toggle.isChecked()
     assert not view.landscape_toggle.isEnabled()
     assert view.waveform_plot.isVisible()
