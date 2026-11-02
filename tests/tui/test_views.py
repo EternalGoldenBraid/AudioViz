@@ -271,3 +271,34 @@ def test_a_paged_group_shows_one_page_of_members_in_shared_slots(tmp_path):
         await pilot.press("p")
         assert [n for n in group if app.visible(n)] == group[:size]
     _headless(tmp_path, scenario)
+
+
+def test_keys_file_rebinds_actions_and_reports_what_it_cannot_use(tmp_path):
+    from audioviz.tui import keys
+
+    defaults = {(b.section, b.action): b.keys for b in keys.DEFAULTS}
+    assert len(keys.keymap(keys.DEFAULTS)) == sum(len(k) for k in defaults.values())  # no key bound twice per mode
+
+    path = tmp_path / "keys.toml"
+    path.write_text('[view]\nzoom = "x"\n[navigate]\nnext_tile = ["tab", "]"]\nbogus = "q"\n[app]\nquit = 3\n')
+    overrides, problems = keys.load_overrides(path)
+    table = keys.keymap(keys.bindings(overrides))
+    assert table[("normal", "x")] == "zoom" and ("normal", "z") not in table
+    assert table[("normal", "right_square_bracket")] == "next_tile"  # symbols as shown by `?` are accepted
+    assert len(problems) == 2
+
+    path.write_text(keys.default_toml())  # the generated file is a valid no-op override
+    assert keys.keymap(keys.bindings(keys.load_overrides(path)[0])) == keys.keymap(keys.DEFAULTS)
+
+
+def test_question_mark_lists_bindings_and_a_rebound_key_takes_effect(tmp_path):
+    async def scenario(app, pilot):
+        await pilot.press("question_mark")
+        assert type(app.screen).__name__ == "KeysScreen"
+        await pilot.press("escape")
+        assert type(app.screen).__name__ != "KeysScreen"
+        app.keys_path.write_text('[view]\nzoom = "x"\n')
+        app.run_command("keys", ["reload"])
+        await pilot.press("x")
+        assert app.zoomed
+    _headless(tmp_path, scenario)

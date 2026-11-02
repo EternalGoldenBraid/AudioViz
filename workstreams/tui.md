@@ -38,3 +38,8 @@ viewer distance), attractor dynamics in the hidden view, theme-aware data colorm
 Drive it live: `python -m audioviz.tui.control keys w j | run "theme amber" | state | screenshot`.
 
 Keys: `w` focus, `z` zoom, `r` render, `H/J/K/L` move, `[ ]` depth, `:` commands.
+
+**Keys.** Bindings are data in `src/audioviz/tui/keys.py` (sections: navigate, arrange, group, view, knob, app).
+`?` opens a sectioned overlay; `~/.config/audioviz/keys.toml` rebinds actions by name (`:keys write` creates the
+full default file, `:keys reload` applies edits; a custom binding takes a key over from a default one, and
+unknown actions are listed in the overlay). An in-app rebind UI can sit on the same file later.

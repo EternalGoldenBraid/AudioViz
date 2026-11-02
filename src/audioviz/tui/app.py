@@ -21,7 +21,9 @@ from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE
 from audioviz.tui.graph_runtime import GraphRuntime
 from audioviz.tui.devices import DevicePicker, list_devices
 from audioviz.tui.halfblock import RENDER_MODES, render_cells
+from audioviz.tui import keys as keys_module
 from audioviz.tui.hot_reload import HotReload
+from audioviz.tui.keys_overlay import KeysScreen
 from audioviz.tui.mixer import CONTROLS
 from audioviz.tui.settings import settings_controls
 from audioviz.tui.themes import THEMES
@@ -186,6 +188,8 @@ class AudioVizApp(App):
         self.runtime = GraphRuntime(camera=camera)
         self.cache_path = state_dir / "state.json" if state_dir else CACHE_PATH
         self.saves_dir = state_dir / "saves" if state_dir else SAVES_DIR
+        self.keys_path = state_dir / "keys.toml" if state_dir else keys_module.CONFIG_PATH
+        self.load_keys()
         self.autosave = autosave
         self.settings = settings_controls()
         self.hot_reload = hot_reload
@@ -531,60 +535,65 @@ class AudioVizApp(App):
                 self._close_command()
                 event.stop()
             return
+        mode = "visual" if self.mode == "VISUAL" else "normal"
+        action = self.keymap.get((mode, event.key))
+        if (action is not None and self.run_action(action)) or mode == "visual":
+            event.stop()  # selection mode swallows every key
+
+    def run_action(self, action: str) -> bool:
+        """False when the action does not apply to the focused tile, so the key stays unhandled."""
         dx, dy = self.MOVE_STEP
-        if self.mode == "VISUAL":
-            visual = {
-                "h": lambda: self.extend_selection(-1, 0), "l": lambda: self.extend_selection(1, 0),
-                "k": lambda: self.extend_selection(0, -1), "j": lambda: self.extend_selection(0, 1),
-                "g": lambda: self.end_visual(True), "enter": lambda: self.end_visual(True),
-                "escape": lambda: self.end_visual(False),
-            }
-            if event.key in visual:
-                visual[event.key]()
-            event.stop()
-            return
-        if isinstance(self.focused, KnobTile) and event.key in ("h", "l", "j", "k", "minus", "plus", "equals_sign", "left", "right"):
-            knob = self.focused
-            {"h": lambda: self.focus_toward(-1, 0), "l": lambda: self.focus_toward(1, 0),
-             "j": lambda: self.focus_toward(0, 1), "k": lambda: self.focus_toward(0, -1),
-             "minus": lambda: knob.adjust(-1), "left": lambda: knob.adjust(-1),
-             "plus": lambda: knob.adjust(1), "equals_sign": lambda: knob.adjust(1),
-             "right": lambda: knob.adjust(1)}[event.key]()
-            event.stop()
-            return
+        knob = self.focused if isinstance(self.focused, KnobTile) else None
+        if action in ("turn_down", "turn_up") and knob is None:
+            return False
         actions = {
-            "n": lambda: self.turn_page(1),
-            "p": lambda: self.turn_page(-1),
-            "escape": self.rise,
-            "enter": self.dive,
-            "v": self.start_visual,
-            "U": lambda: self.make_group(self.members(self._focused_name())[:1]),
-            "tab": lambda: self._move_focus(1),
-            "shift+tab": lambda: self._move_focus(-1),
-            "w": lambda: self._move_focus(1),
-            "z": self.toggle_zoom,
-            "F": self.toggle_immersive,
-            "a": self.open_devices,
-            "r": self.cycle_render,
-            "h": lambda: self.focus_toward(-1, 0),
-            "k": lambda: self.focus_toward(0, -1),
-            "l": lambda: self.focus_toward(1, 0),
-            "j": lambda: self.focus_toward(0, 1),
-            "H": lambda: self.move_tile(-dx, 0),
-            "L": lambda: self.move_tile(dx, 0),
-            "K": lambda: self.move_tile(0, -dy),
-            "J": lambda: self.move_tile(0, dy),
-            "right_square_bracket": lambda: self.lift_tile(1),
-            "left_square_bracket": lambda: self.lift_tile(-1),
-            "full_stop": lambda: self.nudge_opacity(self.OPACITY_STEP),
-            "comma": lambda: self.nudge_opacity(-self.OPACITY_STEP),
-            "colon": self._open_command,
-            "ctrl+q": self.exit,
+            "focus_left": lambda: self.focus_toward(-1, 0), "focus_right": lambda: self.focus_toward(1, 0),
+            "focus_up": lambda: self.focus_toward(0, -1), "focus_down": lambda: self.focus_toward(0, 1),
+            "next_tile": lambda: self._move_focus(1), "prev_tile": lambda: self._move_focus(-1),
+            "rise": self.rise, "dive": self.dive,
+            "move_left": lambda: self.move_tile(-dx, 0), "move_right": lambda: self.move_tile(dx, 0),
+            "move_up": lambda: self.move_tile(0, -dy), "move_down": lambda: self.move_tile(0, dy),
+            "lift": lambda: self.lift_tile(1), "lower": lambda: self.lift_tile(-1),
+            "opacity_up": lambda: self.nudge_opacity(self.OPACITY_STEP),
+            "opacity_down": lambda: self.nudge_opacity(-self.OPACITY_STEP),
+            "visual": self.start_visual,
+            "ungroup": lambda: self.make_group(self.members(self._focused_name())[:1]),
+            "page_next": lambda: self.turn_page(1), "page_prev": lambda: self.turn_page(-1),
+            "select_left": lambda: self.extend_selection(-1, 0), "select_right": lambda: self.extend_selection(1, 0),
+            "select_up": lambda: self.extend_selection(0, -1), "select_down": lambda: self.extend_selection(0, 1),
+            "commit_group": lambda: self.end_visual(True), "cancel_group": lambda: self.end_visual(False),
+            "zoom": self.toggle_zoom, "immersive": self.toggle_immersive, "render": self.cycle_render,
+            "devices": self.open_devices,
+            "turn_down": lambda: knob.adjust(-1), "turn_up": lambda: knob.adjust(1),
+            "command": self._open_command, "help": self.show_keys, "quit": self.exit,
         }
-        action = actions.get(event.key)
-        if action:
-            action()
-            event.stop()
+        actions[action]()
+        return True
+
+    def load_keys(self) -> list[str]:
+        overrides, problems = keys_module.load_overrides(self.keys_path)
+        self.bindings = keys_module.bindings(overrides)
+        self.keymap = keys_module.keymap(self.bindings)
+        self.key_problems = problems
+        return problems
+
+    def run_keys_command(self, args: list[str]) -> None:
+        log = self.query_one("#log", LogTile)
+        if args[:1] == ["write"]:
+            if self.keys_path.exists():
+                log.write(f"{self.keys_path} exists; edit it, then :keys reload")
+            else:
+                self.keys_path.parent.mkdir(parents=True, exist_ok=True)
+                self.keys_path.write_text(keys_module.default_toml())
+                log.write(f"wrote {self.keys_path}")
+        elif args[:1] == ["reload"]:
+            problems = self.load_keys()
+            log.write(f"reloaded {self.keys_path}" + "".join(f"\n{p}" for p in problems))
+        else:
+            self.show_keys()
+
+    def show_keys(self) -> None:
+        self.push_screen(KeysScreen(self.bindings, self.key_problems))
 
     def _open_command(self) -> None:
         self._return_focus = self.focused
@@ -626,11 +635,12 @@ class AudioVizApp(App):
                 log.write("move <dx> <dy>  view <name>  views")
                 log.write("audio list|synthetic|default|<index>  gain <v>")
                 log.write("theme [name]  bg <color|theme>  group <tiles>  ungroup")
-                log.write(":w [name] save state+screenshot  :e [name] load   v visual select, g group, U ungroup")
+                log.write(":w [name] save state+screenshot  :e [name] load   ? key bindings  :keys [write|reload]")
                 log.write("out off|prediction|evidence  volume <v>  audio tone <hz>")
                 log.write("resolution <n>  render half|quad|braille|auto  zoom")
-                log.write("screenshot [name]  q   keys: z zoom, r render, w/tab focus")
-                log.write("h/j/k/l focus  H/J/K/L move  [ ] depth  , . opacity")
+                log.write("screenshot [name]  q")
+            elif name == "keys":
+                self.run_keys_command(args)
             elif name == "damping":
                 self.runtime.engine.set_damping(float(args[0]))
             elif name == "speed":
