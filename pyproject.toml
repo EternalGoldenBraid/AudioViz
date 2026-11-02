@@ -20,6 +20,9 @@ dependencies = [
 dev = [
     "pytest>=9.0.2",
 ]
+tui = [
+    "textual>=0.80.0",
+]
 pose-demo = [
     "mediapipe>=0.10.21",
     "opencv-python>=4.12.0.88",
