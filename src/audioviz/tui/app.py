@@ -1,9 +1,11 @@
 """Terminal front end: modal, Vim-style control over layered, floating tiles."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,11 +22,15 @@ from audioviz.tui.graph_runtime import GraphRuntime
 from audioviz.tui.devices import DevicePicker, list_devices
 from audioviz.tui.halfblock import RENDER_MODES, render_cells
 from audioviz.tui.mixer import CONTROLS
+from audioviz.tui.settings import settings_controls
 from audioviz.tui.themes import THEMES
 from audioviz.tui.views import VIEWS
 
 MAX_LAYERS = 8
 BRAILLE_MIN_CELLS = 1200  # tiles at least this large render at braille density
+AUTOSAVE_SECONDS = 5
+CACHE_PATH = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "audioviz" / "state.json"
+SAVES_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "audioviz" / "saves"
 
 
 @dataclass
@@ -36,6 +42,22 @@ class Placement:
     width: int
     height: int
     opacity: float = 1.0
+
+
+def default_layout(width: int, height: int) -> dict[str, Placement]:
+    """Four columns of views over a mixer + settings strip, sized to the stage."""
+    edges = [round(i * width / 4) for i in range(5)]
+    bottom = min(11, height // 2)
+    rest = height - bottom
+    upper = round(rest * 0.6)
+    layout = {}
+    for row, y, h in ((("canvas", "camera", "spectrogram", "log"), 0, upper),
+                      (("waveform", "prediction", "error", "hidden"), upper, rest - upper)):
+        for i, name in enumerate(row):
+            layout[name] = Placement(edges[i], y, edges[i + 1] - edges[i], h)
+    layout["mixer"] = Placement(0, rest, edges[2], bottom)
+    layout["settings"] = Placement(edges[2], rest, width - edges[2], bottom)
+    return layout
 
 
 class ViewTile(Static, can_focus=True):
@@ -75,26 +97,30 @@ class ViewTile(Static, can_focus=True):
 
 
 class MixerTile(Static, can_focus=True):
-    """Slider rows for the graph parameters; j/k select a row, h/l adjust it."""
+    """Slider rows over a list of Controls; j/k select a row, h/l adjust it."""
 
     DEFAULT_CSS = """
     MixerTile { position: absolute; border: round $primary-darken-2; padding: 0 1; background: $surface; }
     MixerTile:focus { border: heavy $accent; }
     """
 
-    def __init__(self, runtime: GraphRuntime, **kwargs) -> None:
+    def __init__(self, context, controls, title: str, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.runtime = runtime
+        self.context = context  # the object the controls read and write: a runtime or the app
+        self.controls = controls
         self.row = 0
-        self.border_title = "mixer"
+        self.border_title = title
 
     def select(self, delta: int) -> None:
-        self.row = (self.row + delta) % len(CONTROLS)
+        self.row = (self.row + delta) % len(self.controls)
         self.refresh_view()
 
     def adjust(self, steps: int) -> None:
-        with self.runtime.lock:
-            CONTROLS[self.row].nudge(self.runtime, steps)
+        try:
+            with getattr(self.context, "lock", nullcontext()):
+                self.controls[self.row].nudge(self.context, steps)
+        except Exception as error:  # a failing setting (busy device, bad value) must not take down the shell
+            self.app.query_one("#log", LogTile).write(f"{self.controls[self.row].name}: {error}")
         self.refresh_view()
 
     def refresh_view(self) -> None:
@@ -103,13 +129,13 @@ class MixerTile(Static, can_focus=True):
             return
         bar = max(width - 24, 4)
         text = Text()
-        for index, control in enumerate(CONTROLS):
-            filled = round(control.position(self.runtime) * bar)
+        for index, control in enumerate(self.controls):
+            filled = round(control.position(self.context) * bar)
             selected = index == self.row and self.has_focus
             text.append(f"{'>' if selected else ' '}{control.name:<15}", style="bold" if selected else "")
             text.append("█" * filled, style="green" if selected else "dark_green")
             text.append("░" * (bar - filled), style="grey37")
-            text.append(f" {control.format(self.runtime)}\n")
+            text.append(f" {control.format(self.context)}\n")
         self.update(text)
 
 
@@ -131,6 +157,7 @@ class AudioVizApp(App):
     #stage {{ background: $background; layers: {" ".join(f"z{i}" for i in range(MAX_LAYERS))}; }}
     .-immersive #mode {{ display: none; }}
     .-immersive ViewTile {{ border: none !important; }}
+    .-selected {{ border: double $warning !important; }}
     #command {{ dock: bottom; display: none; border: none; height: 1; margin-bottom: 1; padding: 0 1; }}
     #command.-active {{ display: block; }}
     #mode {{ dock: bottom; height: 1; background: $primary-darken-2; padding: 0 1; }}
@@ -139,21 +166,20 @@ class AudioVizApp(App):
     MOVE_STEP = (2, 1)
     OPACITY_STEP = 0.1
 
-    def __init__(self, audio: str = "default") -> None:
+    def __init__(self, audio: str = "default", camera: bool = True, state_dir: Path | None = None,
+                 autosave: bool = True) -> None:
         super().__init__()
         self.audio = audio
         self.mode = "NORMAL"
-        self.runtime = GraphRuntime()
-        self.placements = {
-            "canvas": Placement(0, 0, 40, 16),
-            "mixer": Placement(0, 34, 40, 9),
-            "spectrogram": Placement(40, 0, 40, 16),
-            "log": Placement(80, 0, 40, 16),
-            "waveform": Placement(0, 16, 40, 9),
-            "prediction": Placement(40, 16, 40, 9),
-            "error": Placement(80, 16, 40, 9),
-            "hidden": Placement(0, 25, 40, 9),
-        }
+        self.runtime = GraphRuntime(camera=camera)
+        self.cache_path = state_dir / "state.json" if state_dir else CACHE_PATH
+        self.saves_dir = state_dir / "saves" if state_dir else SAVES_DIR
+        self.autosave = autosave
+        self._saved: dict | None = None
+        self.placements = default_layout(120, 36)  # resized to the real stage on mount
+        self.groups: list[list[str]] = []  # tiles that move, lift and fade together
+        self.selection: list[str] = []  # being collected in VISUAL mode
+        self.settings = settings_controls()
         self.stack = list(self.placements)  # bottom -> top
         self._return_focus = None
         self.zoomed: str | None = None
@@ -169,7 +195,9 @@ class AudioVizApp(App):
                 if name == "log":
                     yield LogTile(id="log", wrap=True)
                 elif name == "mixer":
-                    yield MixerTile(self.runtime, id="mixer")
+                    yield MixerTile(self.runtime, CONTROLS, "mixer", id="mixer")
+                elif name == "settings":
+                    yield MixerTile(self, self.settings, "settings", id="settings")
                 else:
                     yield ViewTile(name, self.runtime, id=name)
         yield Static("NORMAL", id="mode")
@@ -180,9 +208,14 @@ class AudioVizApp(App):
             self.register_theme(theme)
         self.theme = "black"
         self.query_one("#log", LogTile).border_title = "log"
+        for name, placement in default_layout(self.size.width, max(self.size.height - 1, 12)).items():
+            self.placements[name] = placement
+        self.load_state(self.cache_path, quiet=True)
         self.apply_layout()
         self.runtime.start()
         self.set_interval(1 / 15, self.refresh_tiles)
+        if self.autosave:
+            self.set_interval(AUTOSAVE_SECONDS, self.autosave_state)
         self.query_one("#canvas").focus()
         self.select_audio(self.audio)
         self.run_worker(self._serve_control(), exclusive=False)
@@ -196,6 +229,8 @@ class AudioVizApp(App):
         """Observable state for the control socket."""
         mixer = self.query_one("#mixer", MixerTile)
         return {
+            "groups": self.groups,
+            "camera_error": self.runtime.camera.error,
             "focus": self._focused_name(),
             "mode": self.mode,
             "zoomed": self.zoomed,
@@ -212,10 +247,13 @@ class AudioVizApp(App):
                 "row": CONTROLS[mixer.row].name,
                 **{c.name: c.format(self.runtime) for c in CONTROLS},
             },
+            "settings": {c.name: c.format(self) for c in self.settings},
         }
 
     def on_unmount(self) -> None:
         control.SOCKET.unlink(missing_ok=True)
+        if self.autosave:
+            self.autosave_state()
         self.runtime.stop()
 
     def refresh_tiles(self) -> None:
@@ -223,9 +261,9 @@ class AudioVizApp(App):
             if tile.display:
                 tile.refresh_view()
         self.set_mode(self.mode)
-        mixer = self.query_one("#mixer", MixerTile)
-        if mixer.display:
-            mixer.refresh_view()
+        for tile in self.query(MixerTile):
+            if tile.display:
+                tile.refresh_view()
 
     def apply_layout(self) -> None:
         stage = self.query_one("#stage").size
@@ -240,6 +278,8 @@ class AudioVizApp(App):
             styles.height = stage.height if zoomed else placement.height
             styles.opacity = 1.0 if zoomed else placement.opacity
             styles.layer = f"z{depth}"
+            number = next((i + 1 for i, group in enumerate(self.groups) if name in group), None)
+            widget.border_subtitle = f"group {number}" if number else ""
         self.set_mode(self.mode)
 
     def on_resize(self) -> None:
@@ -297,17 +337,55 @@ class AudioVizApp(App):
         focused = self.focused
         return focused.id if focused is not None and focused.id in self.placements else self.stack[-1]
 
+    def members(self, name: str) -> list[str]:
+        """The tile's group, or the tile alone."""
+        return next((group for group in self.groups if name in group), [name])
+
     def move_tile(self, dx: int, dy: int) -> None:
-        placement = self.placements[self._focused_name()]
-        placement.x, placement.y = max(0, placement.x + dx), max(0, placement.y + dy)
+        for name in self.members(self._focused_name()):
+            placement = self.placements[name]
+            placement.x, placement.y = max(0, placement.x + dx), max(0, placement.y + dy)
         self.apply_layout()
 
     def lift_tile(self, delta: int) -> None:
-        name = self._focused_name()
-        index = self.stack.index(name)
-        target = min(max(index + delta, 0), len(self.stack) - 1)
-        self.stack.insert(target, self.stack.pop(index))
+        """Move the tile's group through the stack as one contiguous block."""
+        block = [name for name in self.stack if name in self.members(self._focused_name())]
+        first = self.stack.index(block[0])
+        rest = [name for name in self.stack if name not in block]
+        target = min(max(first + delta, 0), len(rest))
+        self.stack = rest[:target] + block + rest[target:]
         self.apply_layout()
+
+    def make_group(self, names: list[str]) -> None:
+        self.groups = [[n for n in group if n not in names] for group in self.groups]
+        self.groups = [group for group in self.groups if len(group) > 1]
+        if len(names) > 1:
+            self.groups.append(list(names))
+        self.apply_layout()
+
+    def start_visual(self) -> None:
+        self.selection = [self._focused_name()]
+        self.set_mode("VISUAL")
+        self.mark_selection()
+
+    def end_visual(self, commit: bool) -> None:
+        if commit:
+            self.make_group(self.selection)
+        self.selection = []
+        self.set_mode("NORMAL")
+        self.mark_selection()
+
+    def extend_selection(self, dx: int, dy: int) -> None:
+        target = self.neighbour(self._focused_name(), dx, dy)
+        if target:
+            self.query_one(f"#{target}").focus()
+            if target not in self.selection:
+                self.selection.append(target)
+            self.mark_selection()
+
+    def mark_selection(self) -> None:
+        for name in self.placements:
+            self.query_one(f"#{name}").set_class(name in self.selection, "-selected")
 
     def set_tile_background(self, color: str | None) -> None:
         """Colour behind every tile; None follows the theme's surface."""
@@ -329,10 +407,11 @@ class AudioVizApp(App):
 
     def set_render(self, tile: ViewTile, mode: str | None) -> None:
         tile.render_mode = mode
-        tile.border_title = f"{tile.view} [{mode or 'auto'}]"
+        tile.border_title = f"{tile.view} [{mode}]" if mode else tile.view
 
     def set_opacity(self, value: float) -> None:
-        self.placements[self._focused_name()].opacity = min(max(value, 0.1), 1.0)
+        for name in self.members(self._focused_name()):
+            self.placements[name].opacity = min(max(value, 0.1), 1.0)
         self.apply_layout()
 
     def nudge_opacity(self, delta: float) -> None:
@@ -379,6 +458,17 @@ class AudioVizApp(App):
                 event.stop()
             return
         dx, dy = self.MOVE_STEP
+        if self.mode == "VISUAL":
+            visual = {
+                "h": lambda: self.extend_selection(-1, 0), "l": lambda: self.extend_selection(1, 0),
+                "k": lambda: self.extend_selection(0, -1), "j": lambda: self.extend_selection(0, 1),
+                "g": lambda: self.end_visual(True), "enter": lambda: self.end_visual(True),
+                "escape": lambda: self.end_visual(False),
+            }
+            if event.key in visual:
+                visual[event.key]()
+            event.stop()
+            return
         if isinstance(self.focused, MixerTile) and event.key == "escape":
             self.query_one(f"#{self._before_mixer}").focus()
             event.stop()
@@ -390,6 +480,8 @@ class AudioVizApp(App):
             event.stop()
             return
         actions = {
+            "v": self.start_visual,
+            "U": lambda: self.make_group(self.members(self._focused_name())[:1]),
             "tab": lambda: self._move_focus(1),
             "shift+tab": lambda: self._move_focus(-1),
             "w": lambda: self._move_focus(1),
@@ -437,10 +529,11 @@ class AudioVizApp(App):
         if line:
             self.run_command(line[0], line[1:])
 
-    def screenshot(self, name: str = "tui") -> Path:
+    def screenshot(self, name: str = "tui", directory: Path | None = None) -> Path:
         """Save an SVG (and a PNG when rsvg-convert exists) of the current screen."""
-        self.SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-        svg = Path(self.save_screenshot(f"{name}.svg", str(self.SCREENSHOT_DIR)))
+        directory = directory or self.SCREENSHOT_DIR
+        directory.mkdir(parents=True, exist_ok=True)
+        svg = Path(self.save_screenshot(f"{name}.svg", str(directory)))
         converter = shutil.which("rsvg-convert")
         if converter is None:
             return svg
@@ -455,7 +548,8 @@ class AudioVizApp(App):
                 log.write("damping|speed <v>  opacity <v>  raise|lower")
                 log.write("move <dx> <dy>  view <name>  views")
                 log.write("audio list|synthetic|default|<index>  gain <v>")
-                log.write("theme [name]  bg <color|theme>")
+                log.write("theme [name]  bg <color|theme>  group <tiles>  ungroup")
+                log.write(":w [name] save state+screenshot  :e [name] load   v visual select, g group, U ungroup")
                 log.write("out off|prediction|evidence  volume <v>  audio tone <hz>")
                 log.write("resolution <n>  render half|quad|braille|auto  zoom")
                 log.write("screenshot [name]  q   keys: z zoom, r render, w/tab focus")
@@ -479,6 +573,16 @@ class AudioVizApp(App):
                     self.theme = args[0]
             elif name in ("bg", "background"):
                 self.set_tile_background(None if args[0] == "theme" else args[0])
+            elif name == "group":
+                if any(n not in self.placements for n in args):
+                    raise ValueError(f"unknown tile in {args}")
+                self.make_group(args)
+            elif name == "ungroup":
+                self.make_group(self.members(self._focused_name())[:1])
+            elif name in ("w", "write"):
+                self.write_session(args[0] if args else "state")
+            elif name in ("e", "edit"):
+                self.load_state(self.saves_dir / f"{args[0] if args else 'state'}.json")
             elif name == "out":
                 self.runtime.out.set_mode(args[0], speakers=len(args) < 2 or args[1] != "silent")
                 log.write(f"output: {self.runtime.out.mode}")
@@ -527,6 +631,67 @@ class AudioVizApp(App):
             log.write(f"error: {error!r}")
 
 
+    def snapshot(self) -> dict:
+        """Everything a restart needs to look and sound the same; sound output stays off for safety."""
+        return {
+            "placements": {k: vars(v) for k, v in self.placements.items()},
+            "stack": self.stack,
+            "groups": self.groups,
+            "theme": self.theme,
+            "tile_background": self.tile_background,
+            "views": {t.id: t.view for t in self.query(ViewTile)},
+            "render": {t.id: t.render_mode for t in self.query(ViewTile)},
+            "mixer": {c.name: c.get(self.runtime) for c in CONTROLS},
+            "settings": {c.name: c.get(self) for c in self.settings if c.name != "sound out"},
+        }
+
+    def restore(self, data: dict) -> None:
+        for name, values in data.get("placements", {}).items():
+            if name in self.placements:
+                self.placements[name] = Placement(**values)
+        stack = [n for n in data.get("stack", []) if n in self.placements]
+        self.stack = stack + [n for n in self.placements if n not in stack]
+        self.groups = [[n for n in g if n in self.placements] for g in data.get("groups", [])]
+        for tile in self.query(ViewTile):
+            if data.get("views", {}).get(tile.id) in VIEWS:
+                tile.set_view(data["views"][tile.id])
+            self.set_render(tile, data.get("render", {}).get(tile.id))
+        for controls, context, saved in ((self.settings, self, data.get("settings", {})),
+                                         (CONTROLS, self.runtime, data.get("mixer", {}))):
+            for control in controls:  # settings first: a resolution change rebuilds the graph
+                if control.name in saved:
+                    control.set(context, saved[control.name])
+        if data.get("theme") in self.available_themes:
+            self.theme = data["theme"]
+        self.set_tile_background(data.get("tile_background"))
+
+    def autosave_state(self) -> None:
+        data = self.snapshot()
+        if data != self._saved:
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self.cache_path.write_text(json.dumps(data, indent=1))
+            self._saved = data
+
+    def load_state(self, path: Path, quiet: bool = False) -> None:
+        try:
+            self.restore(json.loads(path.read_text()))
+        except FileNotFoundError:
+            if not quiet:
+                self.query_one("#log", LogTile).write(f"no saved state at {path}")
+        except Exception as error:  # a stale or hand-edited file must not stop the app starting
+            self.query_one("#log", LogTile).write(f"could not load {path}: {error!r}")
+        else:
+            self.apply_layout()
+
+    def write_session(self, name: str) -> None:
+        """Write the state and a screenshot side by side."""
+        self.saves_dir.mkdir(parents=True, exist_ok=True)
+        path = self.saves_dir / f"{name}.json"
+        path.write_text(json.dumps(self.snapshot(), indent=1))
+        self.call_after_refresh(
+            lambda: self.query_one("#log", LogTile).write(f"wrote {path} and {self.screenshot(name, self.saves_dir)}")
+        )
+
     def set_mode(self, mode: str) -> None:
         self.mode = mode
         zoom = f"   zoom: {self.zoomed}" if self.zoomed else ""
@@ -568,7 +733,9 @@ def main() -> None:
     parser.add_argument(
         "--audio", default="default", help="default | synthetic | <input device index>"
     )
-    AudioVizApp(audio=parser.parse_args().audio).run()
+    parser.add_argument("--no-camera", action="store_true", help="do not open the camera")
+    args = parser.parse_args()
+    AudioVizApp(audio=args.audio, camera=not args.no_camera).run()
 
 
 if __name__ == "__main__":

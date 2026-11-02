@@ -10,10 +10,12 @@ Real microphone input drives the graph.
 mixer, fullscreen, resolution 96, themes (black first). Verified by headless
 screenshots and by driving a live tmux pane.
 
-**Present.** Uncommitted in `src/audioviz/tui/`. The canvas is flat (audio evidence
-is global) and the default evidence gain is undecided.
+**Present.** Live mic and camera by default (camera tile, camera drives the canvas), settings
+and mixer tiles, Vim visual mode `v` to group tiles, autosave to `~/.cache/audioviz/state.json`,
+`:w [name]` writes state + screenshot to `~/.config/audioviz/saves/`. Grid 128 runs slower than
+realtime (~80 ms/step); the hidden tile sometimes waits for data; the canvas is flat.
 
-**Future.** Gaze daemon over a Unix socket (position from the ray, layer depth from
+**Future.** `t-K` sampling of every signal (or a chosen subset) into the saved state; Gaze daemon over a Unix socket (position from the ray, layer depth from
 viewer distance), attractor dynamics in the hidden view, theme-aware data colormaps.
 
 **Restore.**

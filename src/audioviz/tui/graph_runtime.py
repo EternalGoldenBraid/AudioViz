@@ -4,14 +4,16 @@ import threading
 from dataclasses import replace
 from time import monotonic
 
+from audioviz.sources.camera import CameraFrameSourceConfig
 from audioviz.engine import RippleEngine
 from audioviz.sources.audio import AudioSourceConfig
 from audioviz.sources.orchestrator import RippleSourceOrchestrator, RippleSourceOrchestratorConfig
 from audioviz.sources.synthetic import SyntheticSourceConfig
 from audioviz.tui.audio_out import AudioOut
+from audioviz.tui.camera_feed import CameraFeed
 from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE, AudioFeed
 
-DEFAULT_RESOLUTION = 96
+DEFAULT_RESOLUTION = 128
 STEP_INTERVAL = BLOCK_SIZE / SAMPLE_RATE
 
 
@@ -21,9 +23,13 @@ class GraphRuntime:
     The grid size is the cost knob: step time grows roughly with the pixel count.
     """
 
-    def __init__(self, feed: AudioFeed | None = None, resolution: int = DEFAULT_RESOLUTION) -> None:
+    def __init__(
+        self, feed: AudioFeed | None = None, resolution: int = DEFAULT_RESOLUTION, camera: bool = True
+    ) -> None:
         self.feed = feed or AudioFeed()
         self.out = AudioOut()
+        self.camera = CameraFeed()
+        has_camera = camera and self.camera.open()
         self.lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -31,6 +37,7 @@ class GraphRuntime:
         self._build(resolution, config=RippleSourceOrchestratorConfig(
             audio=AudioSourceConfig(enabled=True),
             synthetic=SyntheticSourceConfig(enabled=False),
+            camera_frame=CameraFrameSourceConfig(enabled=has_camera),
         ))
 
     def _build(self, resolution: int, *, config: RippleSourceOrchestratorConfig, damping: float = 0.995, speed: float = 1.0) -> None:
@@ -48,6 +55,7 @@ class GraphRuntime:
             engine=engine,
             resolution=grid,
             n_sources=1,
+            camera_capture=self.camera if self.camera.isOpened() else None,
         )
         orchestrator.set_diagnostics_enabled(True)
         with self.lock:
@@ -66,6 +74,11 @@ class GraphRuntime:
                 self.orchestrator.config,
                 audio=replace(self.orchestrator.config.audio, observation_gain=audio.observation_gain),
                 visual_pathway=self.orchestrator.visual_readout.config,
+                camera_frame=replace(
+                    self.orchestrator.config.camera_frame,
+                    enabled=self.orchestrator.camera_source.enabled,
+                    gain=self.orchestrator.camera_source.gain,
+                ),
             )
             self._build(resolution, config=config, damping=self.engine.damping, speed=self.engine.speed)
 
@@ -103,6 +116,7 @@ class GraphRuntime:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
         self.out.close()
+        self.camera.release()
         self.feed.close()
 
     def _loop(self) -> None:

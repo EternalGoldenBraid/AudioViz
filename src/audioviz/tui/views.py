@@ -37,6 +37,10 @@ def spectrogram(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | Non
     return heat_to_rgb(unit[::-1])
 
 
+def camera(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+    return runtime.camera.rgb()
+
+
 def canvas(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray:
     """The corrected canvas: signed RGB field, auto-scaled so faint activity stays visible."""
     field = runtime.engine.get_field_numpy()
@@ -105,6 +109,7 @@ VIEWS: dict[str, View] = {
     "waveform": waveform,
     "spectrogram": spectrogram,
     "canvas": canvas,
+    "camera": camera,
     "prediction": prediction,
     "error": prediction_error,
     "hidden": hidden,

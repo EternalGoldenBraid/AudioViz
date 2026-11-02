@@ -18,9 +18,16 @@ class Control:
     set: Callable[[GraphRuntime, float], None]
     log: bool = False
     toggle: bool = False
+    choices: tuple | None = None  # discrete values; h/l step through them
 
-    def position(self, runtime: GraphRuntime) -> float:
+    def _index(self, runtime) -> int:
+        value = self.get(runtime)
+        return self.choices.index(value) if value in self.choices else 0
+
+    def position(self, runtime) -> float:
         """Current value as a slider position in [0, 1]."""
+        if self.choices:
+            return self._index(runtime) / max(len(self.choices) - 1, 1)
         value = self.get(runtime)
         if self.toggle:
             return float(bool(value))
@@ -30,7 +37,11 @@ class Control:
             low, high = self.low, self.high
         return min(max((value - low) / (high - low), 0.0), 1.0)
 
-    def nudge(self, runtime: GraphRuntime, steps: int) -> None:
+    def nudge(self, runtime, steps: int) -> None:
+        if self.choices:
+            index = min(max(self._index(runtime) + (1 if steps > 0 else -1), 0), len(self.choices) - 1)
+            self.set(runtime, self.choices[index])
+            return
         if self.toggle:
             self.set(runtime, 1.0 if steps > 0 else 0.0)
             return
@@ -41,8 +52,10 @@ class Control:
             value = self.low + position * (self.high - self.low)
         self.set(runtime, value)
 
-    def format(self, runtime: GraphRuntime) -> str:
+    def format(self, runtime) -> str:
         value = self.get(runtime)
+        if self.choices:
+            return str(value)
         return ("on" if value else "off") if self.toggle else f"{value:.4g}"
 
 
@@ -60,6 +73,10 @@ def _set_gain(runtime: GraphRuntime, value: float) -> None:
 
 CONTROLS: tuple[Control, ...] = (
     Control("evidence gain", 0.1, 10000.0, lambda r: r.orchestrator.audio_source.observation_gain, _set_gain, log=True),
+    Control("camera", 0, 1, lambda r: r.orchestrator.camera_source.enabled,
+            lambda r, v: r.orchestrator.camera_source.set_enabled(bool(v) and r.camera.isOpened()), toggle=True),
+    Control("camera gain", 0.1, 10.0, lambda r: r.orchestrator.camera_source.gain,
+            lambda r, v: r.orchestrator.camera_source.set_gain(v), log=True),
     Control("damping", 0.9, 1.0, lambda r: r.engine.damping, lambda r, v: r.engine.set_damping(v)),
     Control("speed", 0.1, 3.0, lambda r: r.engine.speed, lambda r, v: r.engine.set_speed(v)),
     Control("inference rate", 0.001, 1.0, _config("inference_rate"), _pathway("inference_rate"), log=True),
