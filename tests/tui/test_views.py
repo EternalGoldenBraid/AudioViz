@@ -109,6 +109,7 @@ def test_spatial_focus_picks_nearest_neighbour_in_each_direction():
 
     app = AudioVizApp.__new__(AudioVizApp)
     from audioviz.tui.app import Placement
+    app.groups, app.pages = [], {}
     app.placements = {
         "a": Placement(0, 0, 10, 5), "b": Placement(10, 0, 10, 5),
         "c": Placement(0, 5, 10, 5), "far": Placement(30, 0, 10, 5),
@@ -252,4 +253,21 @@ def test_rising_focuses_the_whole_group_and_navigation_steps_between_groups(tmp_
         assert set(app.group_focus).isdisjoint(app.members("knob-damping"))  # stepped to the next node
         await pilot.press("enter")  # dive: back to single tiles
         assert app.group_focus == []
+    _headless(tmp_path, scenario)
+
+
+def test_a_paged_group_shows_one_page_of_members_in_shared_slots(tmp_path):
+    async def scenario(app, pilot):
+        group = app.members("knob-damping")
+        size = app.pages[group[0]]["size"]
+        assert len(group) > size
+        assert [n for n in group if app.visible(n)] == group[:size]
+        first_slots = [(app.placements[n].x, app.placements[n].y) for n in group[:size]]
+        app.query_one("#knob-damping").focus()
+        await pilot.press("n")
+        assert [n for n in group if app.visible(n)] == group[size:2 * size]
+        assert [(app.placements[n].x, app.placements[n].y) for n in group[size:2 * size]] == first_slots[:len(group) - size]
+        assert app.focused.id in group[size:]
+        await pilot.press("p")
+        assert [n for n in group if app.visible(n)] == group[:size]
     _headless(tmp_path, scenario)

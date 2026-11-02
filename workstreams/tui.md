@@ -23,7 +23,7 @@ correction). Resolution is bounded by that readout.
 next frame (`reloaded views` in the log); a syntax error keeps the old code live.
 
 **Knobs.** Every mixer/settings control is its own tile (`-`/`+` or arrows turn; `h/j/k/l` walk). `camera view` shows the tile, `canvas feed` drives the canvas; the device is released when both are off. Mixer and settings
-are preset groups of knob tiles (group 1, group 2); regroup freely with `v`. `Esc` rises to the whole group (heavy accent on every member; `h/j/k/l` then step between top-level nodes, `H/J/K/L`, `[ ]`, `, .` act on the group); `Enter` dives back to single tiles. A group is still a link, not a container: it has no frame of its own yet.
+are preset groups of knob tiles (group 1, group 2); regroup freely with `v`. `Esc` rises to the whole group (heavy accent on every member; `h/j/k/l` then step between top-level nodes, `H/J/K/L`, `[ ]`, `, .` act on the group); `Enter` dives back to single tiles. The mixer group is paged (6 knobs at a time): `n`/`p` turn the page, the page shows in each knob border; moving the group carries the slots with it. A group is still a link, not a container: it has no frame of its own yet.
 
 **Future.** Nested groups (a group is a node whose children are nodes; viewer distance could pick
 the tree level), a quieter group marker on knobs. Speed up `infer_joint`.

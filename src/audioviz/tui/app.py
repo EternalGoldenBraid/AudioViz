@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rich.text import Text
@@ -46,6 +46,7 @@ class Placement:
 
 
 KNOB_HEIGHT = 3
+MIXER_PAGE = 6  # knobs shown at once in the mixer group
 
 
 def knob_id(name: str) -> str:
@@ -64,11 +65,11 @@ def default_layout(width: int, height: int, mixer_ids: list[str], settings_ids: 
         for i, name in enumerate(row):
             layout[name] = Placement(edges[i], y, edges[i + 1] - edges[i], h)
     per_column = bottom // KNOB_HEIGHT
-    for ids, x0, x1 in ((mixer_ids, 0, edges[2]), (settings_ids, edges[2], width)):
-        columns = -(-len(ids) // per_column)
+    for ids, x0, x1, slots in ((mixer_ids, 0, edges[2], MIXER_PAGE), (settings_ids, edges[2], width, len(settings_ids))):
+        columns = -(-slots // per_column)
         cell = (x1 - x0) // columns
-        for i, name in enumerate(ids):
-            column, row = divmod(i, per_column)
+        for i, name in enumerate(ids):  # members past the first page reuse the page's slots
+            column, row = divmod(i % slots, per_column)
             last = column == columns - 1
             layout[name] = Placement(
                 x0 + column * cell, rest + row * KNOB_HEIGHT,
@@ -195,6 +196,7 @@ class AudioVizApp(App):
         self.mixer_ids = [k for k, ctx, _ in self.knobs if ctx is self.runtime]
         self.settings_ids = [k for k, ctx, _ in self.knobs if ctx is self]
         self.placements = default_layout(120, 36, self.mixer_ids, self.settings_ids)  # resized to the real stage on mount
+        self.pages: dict[str, dict[str, int]] = {self.mixer_ids[0]: {"size": MIXER_PAGE, "index": 0}}  # by group's first member
         self.group_focus: list[str] = []  # non-empty while a whole group is the focused node
         self.groups: list[list[str]] = [list(self.mixer_ids), list(self.settings_ids)]  # move, lift and fade together
         self.selection: list[str] = []  # being collected in VISUAL mode
@@ -239,16 +241,17 @@ class AudioVizApp(App):
 
     async def _serve_control(self) -> None:
         server = await control.serve(self)
-        async with server:
-            await server.serve_forever()
         if server is None:  # another instance owns the socket; leave it alone
             return
         self.owns_socket = True
+        async with server:
+            await server.serve_forever()
 
     def describe(self) -> dict:
         """Observable state for the control socket."""
         return {
             "groups": self.groups,
+            "pages": self.pages,
             "camera_error": self.runtime.camera.error,
             "focus": self._focused_name(),
             "group_focus": self.group_focus,
@@ -290,13 +293,51 @@ class AudioVizApp(App):
             widget = self.query_one(f"#{name}")
             styles = widget.styles
             zoomed = self.zoomed == name
-            widget.display = self.zoomed in (None, name)
+            widget.display = self.zoomed in (None, name) and self.visible(name)
             styles.offset = (0, 0) if zoomed else (placement.x, placement.y)
             styles.width = stage.width if zoomed else placement.width
             styles.height = stage.height if zoomed else placement.height
             styles.opacity = 1.0 if zoomed else placement.opacity
             styles.layer = f"z{depth}"
+            widget.border_subtitle = self.page_label(name)
         self.set_mode(self.mode)
+
+    def page_of(self, name: str) -> tuple[list[str], dict[str, int]] | None:
+        group = self.members(name)
+        page = self.pages.get(group[0])
+        return (group, page) if page and len(group) > page["size"] else None
+
+    def visible(self, name: str) -> bool:
+        paged = self.page_of(name)
+        if paged is None:
+            return True
+        group, page = paged
+        return group.index(name) // page["size"] == page["index"]
+
+    def page_label(self, name: str) -> str:
+        paged = self.page_of(name)
+        if paged is None:
+            return ""
+        group, page = paged
+        return f"{page['index'] + 1}/{-(-len(group) // page['size'])}"
+
+    def turn_page(self, delta: int) -> None:
+        """Show the group's next page: its members take over the slots of the page being left."""
+        name = self._focused_name()
+        paged = self.page_of(name)
+        if paged is None:
+            return
+        group, page = paged
+        size = page["size"]
+        count = -(-len(group) // size)
+        new = (page["index"] + delta) % count
+        slots = [replace(self.placements[n]) for n in group[page["index"] * size:(page["index"] + 1) * size]]
+        arriving = group[new * size:(new + 1) * size]
+        for slot, member in zip(slots, arriving):
+            self.placements[member] = replace(slot)
+        page["index"] = new
+        self.apply_layout()
+        self.query_one(f"#{arriving[min(group.index(name) % size, len(arriving) - 1)]}").focus()
 
     def mark_group_focus(self) -> None:
         for name in self.placements:
@@ -387,6 +428,7 @@ class AudioVizApp(App):
         self.groups = [group for group in self.groups if len(group) > 1]
         if len(names) > 1:
             self.groups.append(list(names))
+        self.pages = {k: v for k, v in self.pages.items() if any(g[0] == k for g in self.groups)}
         self.apply_layout()
 
     def start_visual(self) -> None:
@@ -455,7 +497,7 @@ class AudioVizApp(App):
         cx, cy = (left + right) / 2, (top + bottom)
         best, best_cost = None, float("inf")
         for other, p in self.placements.items():
-            if other in group:
+            if other in group or not self.visible(other):
                 continue
             ox, oy = p.x + p.width / 2 - cx, (p.y + p.height / 2) * 2 - cy
             along, across = (ox * dx, abs(oy)) if dx else (oy * dy, abs(ox))
@@ -477,7 +519,7 @@ class AudioVizApp(App):
         self.query_one(f"#{target}").focus()
 
     def _move_focus(self, step: int) -> None:
-        names = [name for name in self.placements if self.zoomed in (None, name)]
+        names = [name for name in self.placements if self.zoomed in (None, name) and self.visible(name)]
         current = names.index(self._focused_name())
         self.query_one(f"#{names[(current + step) % len(names)]}").focus()
 
@@ -511,6 +553,8 @@ class AudioVizApp(App):
             event.stop()
             return
         actions = {
+            "n": lambda: self.turn_page(1),
+            "p": lambda: self.turn_page(-1),
             "escape": self.rise,
             "enter": self.dive,
             "v": self.start_visual,
@@ -670,6 +714,7 @@ class AudioVizApp(App):
             "placements": {k: vars(v) for k, v in self.placements.items()},
             "stack": self.stack,
             "groups": self.groups,
+            "pages": self.pages,
             "theme": self.theme,
             "tile_background": self.tile_background,
             "views": {t.id: t.view for t in self.query(ViewTile)},
@@ -688,6 +733,8 @@ class AudioVizApp(App):
         if "groups" in data and same_tiles:
             groups = [[n for n in g if n in self.placements] for g in data["groups"]]
             self.groups = [g for g in groups if len(g) > 1]
+            self.pages = {k: v for k, v in data.get("pages", {}).items()
+                          if any(g[0] == k and len(g) > v["size"] * v["index"] for g in self.groups)}
         for tile in self.query(ViewTile):
             if data.get("views", {}).get(tile.id) in views_module.VIEWS:
                 tile.set_view(data["views"][tile.id])
