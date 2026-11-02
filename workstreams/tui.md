@@ -21,4 +21,6 @@ viewer distance), attractor dynamics in the hidden view, theme-aware data colorm
     copilot --resume efa7117b-d1b5-4bdb-bf79-7d9c8036c52e
     uv run --group tui --with-editable . python -m audioviz.tui.app --audio synthetic
 
+Drive it live: `python -m audioviz.tui.control keys w j | run "theme amber" | state | screenshot`.
+
 Keys: `w` focus, `z` zoom, `r` render, `H/J/K/L` move, `[ ]` depth, `:` commands.
