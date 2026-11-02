@@ -45,10 +45,17 @@ class Placement:
     opacity: float = 1.0
 
 
-def default_layout(width: int, height: int) -> dict[str, Placement]:
-    """Four columns of views over a mixer + settings strip, sized to the stage."""
+KNOB_HEIGHT = 3
+
+
+def knob_id(name: str) -> str:
+    return "knob-" + name.replace(" ", "-")
+
+
+def default_layout(width: int, height: int, mixer_ids: list[str], settings_ids: list[str]) -> dict[str, Placement]:
+    """Four columns of views over a strip of knob tiles: mixer knobs left, settings knobs right."""
     edges = [round(i * width / 4) for i in range(5)]
-    bottom = min(11, height // 2)
+    bottom = min(11, height // 2) // KNOB_HEIGHT * KNOB_HEIGHT
     rest = height - bottom
     upper = round(rest * 0.6)
     layout = {}
@@ -56,8 +63,17 @@ def default_layout(width: int, height: int) -> dict[str, Placement]:
                       (("waveform", "prediction", "error", "hidden"), upper, rest - upper)):
         for i, name in enumerate(row):
             layout[name] = Placement(edges[i], y, edges[i + 1] - edges[i], h)
-    layout["mixer"] = Placement(0, rest, edges[2], bottom)
-    layout["settings"] = Placement(edges[2], rest, width - edges[2], bottom)
+    per_column = bottom // KNOB_HEIGHT
+    for ids, x0, x1 in ((mixer_ids, 0, edges[2]), (settings_ids, edges[2], width)):
+        columns = -(-len(ids) // per_column)
+        cell = (x1 - x0) // columns
+        for i, name in enumerate(ids):
+            column, row = divmod(i, per_column)
+            last = column == columns - 1
+            layout[name] = Placement(
+                x0 + column * cell, rest + row * KNOB_HEIGHT,
+                (x1 - x0 - column * cell) if last else cell, KNOB_HEIGHT,
+            )
     return layout
 
 
@@ -97,46 +113,39 @@ class ViewTile(Static, can_focus=True):
         self.update(render_cells(image, size.height, size.width, mode))
 
 
-class MixerTile(Static, can_focus=True):
-    """Slider rows over a list of Controls; j/k select a row, h/l adjust it."""
+class KnobTile(Static, can_focus=True):
+    """One Control as a tile: h/l turn it. It is a leaf node like any view, so it can be moved, grouped and lifted."""
 
     DEFAULT_CSS = """
-    MixerTile { position: absolute; border: round $primary-darken-2; padding: 0 1; background: $surface; }
-    MixerTile:focus { border: heavy $accent; }
+    KnobTile { position: absolute; border: round $primary-darken-2; padding: 0 1; background: $surface; }
+    KnobTile:focus { border: heavy $accent; }
     """
 
-    def __init__(self, context, controls, title: str, **kwargs) -> None:
+    def __init__(self, context, control, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.context = context  # the object the controls read and write: a runtime or the app
-        self.controls = controls
-        self.row = 0
-        self.border_title = title
-
-    def select(self, delta: int) -> None:
-        self.row = (self.row + delta) % len(self.controls)
-        self.refresh_view()
+        self.context = context  # the object the control reads and writes: a runtime or the app
+        self.control = control
+        self.border_title = control.name
 
     def adjust(self, steps: int) -> None:
         try:
             with getattr(self.context, "lock", nullcontext()):
-                self.controls[self.row].nudge(self.context, steps)
+                self.control.nudge(self.context, steps)
         except Exception as error:  # a failing setting (busy device, bad value) must not take down the shell
-            self.app.query_one("#log", LogTile).write(f"{self.controls[self.row].name}: {error}")
+            self.app.query_one("#log", LogTile).write(f"{self.control.name}: {error}")
         self.refresh_view()
 
     def refresh_view(self) -> None:
         width = self.content_size.width
-        if width < 20:
+        if width < 6:
             return
-        bar = max(width - 24, 4)
+        value = self.control.format(self.context)
+        bar = max(width - len(value) - 1, 2)
+        filled = round(self.control.position(self.context) * bar)
         text = Text()
-        for index, control in enumerate(self.controls):
-            filled = round(control.position(self.context) * bar)
-            selected = index == self.row and self.has_focus
-            text.append(f"{'>' if selected else ' '}{control.name:<15}", style="bold" if selected else "")
-            text.append("█" * filled, style="green" if selected else "dark_green")
-            text.append("░" * (bar - filled), style="grey37")
-            text.append(f" {control.format(self.context)}\n")
+        text.append("█" * filled, style="green")
+        text.append("░" * (bar - filled), style="grey37")
+        text.append(f" {value}")
         self.update(text)
 
 
@@ -176,20 +185,22 @@ class AudioVizApp(App):
         self.cache_path = state_dir / "state.json" if state_dir else CACHE_PATH
         self.saves_dir = state_dir / "saves" if state_dir else SAVES_DIR
         self.autosave = autosave
+        self.settings = settings_controls()
         self.hot_reload = hot_reload
         self._reloader = HotReload()
         self._saved: dict | None = None
-        self.placements = default_layout(120, 36)  # resized to the real stage on mount
-        self.groups: list[list[str]] = []  # tiles that move, lift and fade together
+        self.knobs = [(knob_id(c.name), self.runtime, c) for c in CONTROLS]
+        self.knobs += [(knob_id(c.name), self, c) for c in self.settings]
+        self.mixer_ids = [k for k, ctx, _ in self.knobs if ctx is self.runtime]
+        self.settings_ids = [k for k, ctx, _ in self.knobs if ctx is self]
+        self.placements = default_layout(120, 36, self.mixer_ids, self.settings_ids)  # resized to the real stage on mount
+        self.groups: list[list[str]] = [list(self.mixer_ids), list(self.settings_ids)]  # move, lift and fade together
         self.selection: list[str] = []  # being collected in VISUAL mode
-        self.settings = settings_controls()
         self.stack = list(self.placements)  # bottom -> top
         self._return_focus = None
         self.zoomed: str | None = None
-        self._last_focus = None
         self.immersive = False
         self._tmux_zoomed = False
-        self._before_mixer = "canvas"  # where escape returns to
         self.tile_background: str | None = None  # overrides the theme surface
 
     def compose(self) -> ComposeResult:
@@ -197,10 +208,9 @@ class AudioVizApp(App):
             for name in self.placements:
                 if name == "log":
                     yield LogTile(id="log", wrap=True)
-                elif name == "mixer":
-                    yield MixerTile(self.runtime, CONTROLS, "mixer", id="mixer")
-                elif name == "settings":
-                    yield MixerTile(self, self.settings, "settings", id="settings")
+                elif name.startswith("knob-"):
+                    _, context, control = next(k for k in self.knobs if k[0] == name)
+                    yield KnobTile(context, control, id=name)
                 else:
                     yield ViewTile(name, self.runtime, id=name)
         yield Static("NORMAL", id="mode")
@@ -211,7 +221,7 @@ class AudioVizApp(App):
             self.register_theme(theme)
         self.theme = "black"
         self.query_one("#log", LogTile).border_title = "log"
-        for name, placement in default_layout(self.size.width, max(self.size.height - 1, 12)).items():
+        for name, placement in default_layout(self.size.width, max(self.size.height - 1, 12), self.mixer_ids, self.settings_ids).items():
             self.placements[name] = placement
         self.load_state(self.cache_path, quiet=True)
         self.apply_layout()
@@ -232,7 +242,6 @@ class AudioVizApp(App):
 
     def describe(self) -> dict:
         """Observable state for the control socket."""
-        mixer = self.query_one("#mixer", MixerTile)
         return {
             "groups": self.groups,
             "camera_error": self.runtime.camera.error,
@@ -248,10 +257,7 @@ class AudioVizApp(App):
             "step_ms": round(self.runtime.step_ms, 1),
             "stack": self.stack,
             "placements": {k: vars(v) for k, v in self.placements.items()},
-            "mixer": {
-                "row": CONTROLS[mixer.row].name,
-                **{c.name: c.format(self.runtime) for c in CONTROLS},
-            },
+            "mixer": {c.name: c.format(self.runtime) for c in CONTROLS},
             "settings": {c.name: c.format(self) for c in self.settings},
         }
 
@@ -266,7 +272,7 @@ class AudioVizApp(App):
             if tile.display:
                 tile.refresh_view()
         self.set_mode(self.mode)
-        for tile in self.query(MixerTile):
+        for tile in self.query(KnobTile):
             if tile.display:
                 tile.refresh_view()
 
@@ -333,11 +339,6 @@ class AudioVizApp(App):
         self.apply_layout()
         self.query_one(f"#{self._focused_name()}").focus()
 
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        if isinstance(event.widget, MixerTile) and isinstance(self._last_focus, ViewTile):
-            self._before_mixer = self._last_focus.id
-        self._last_focus = event.widget
-
     def _focused_name(self) -> str:
         focused = self.focused
         return focused.id if focused is not None and focused.id in self.placements else self.stack[-1]
@@ -399,7 +400,7 @@ class AudioVizApp(App):
         if color is not None:
             Color.parse(color)  # raises on an invalid colour
         self.tile_background = color
-        for tile in self.query("ViewTile, MixerTile, LogTile"):
+        for tile in self.query("ViewTile, KnobTile, LogTile"):
             tile.styles.background = color if color else None
 
     def cycle_render(self) -> None:
@@ -474,14 +475,10 @@ class AudioVizApp(App):
                 visual[event.key]()
             event.stop()
             return
-        if isinstance(self.focused, MixerTile) and event.key == "escape":
-            self.query_one(f"#{self._before_mixer}").focus()
-            event.stop()
-            return
-        if isinstance(self.focused, MixerTile) and event.key in ("h", "l", "j", "k"):
-            mixer = self.focused
-            {"h": lambda: mixer.adjust(-1), "l": lambda: mixer.adjust(1),
-             "j": lambda: mixer.select(1), "k": lambda: mixer.select(-1)}[event.key]()
+        if isinstance(self.focused, KnobTile) and event.key in ("h", "l", "j", "k"):
+            knob = self.focused
+            {"h": lambda: knob.adjust(-1), "l": lambda: knob.adjust(1),
+             "j": lambda: self.focus_toward(0, 1), "k": lambda: self.focus_toward(0, -1)}[event.key]()
             event.stop()
             return
         actions = {
@@ -656,7 +653,9 @@ class AudioVizApp(App):
                 self.placements[name] = Placement(**values)
         stack = [n for n in data.get("stack", []) if n in self.placements]
         self.stack = stack + [n for n in self.placements if n not in stack]
-        self.groups = [[n for n in g if n in self.placements] for g in data.get("groups", [])]
+        if "groups" in data:
+            groups = [[n for n in g if n in self.placements] for g in data["groups"]]
+            self.groups = [g for g in groups if len(g) > 1]
         for tile in self.query(ViewTile):
             if data.get("views", {}).get(tile.id) in views_module.VIEWS:
                 tile.set_view(data["views"][tile.id])

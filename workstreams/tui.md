@@ -22,8 +22,11 @@ correction). Resolution is bounded by that readout.
 **Live editing.** Edit `views.py` or `halfblock.py` while the app runs: tiles pick it up on the
 next frame (`reloaded views` in the log); a syntax error keeps the old code live.
 
-**Future.** Knobs as tiles and a node tree (a group is a node whose children are nodes; mixer and
-settings become preset groups; viewer distance could pick the tree level). Speed up `infer_joint`.
+**Knobs.** Every mixer/settings control is its own tile (`h/l` turn, `j/k` walk). Mixer and settings
+are preset groups of knob tiles (group 1, group 2); regroup freely with `v`.
+
+**Future.** Nested groups (a group is a node whose children are nodes; viewer distance could pick
+the tree level), a quieter group marker on knobs. Speed up `infer_joint`.
 `t-K` sampling of every signal (or a chosen subset) into the saved state; Gaze daemon over a Unix socket (position from the ray, layer depth from
 viewer distance), attractor dynamics in the hidden view, theme-aware data colormaps.
 

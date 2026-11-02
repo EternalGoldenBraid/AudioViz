@@ -134,7 +134,7 @@ def test_grouped_tiles_move_together_and_visual_mode_groups_neighbours(tmp_path)
     async def scenario(app, pilot):
         app.query_one("#canvas").focus()
         await pilot.press("v", "l", "g")  # canvas + its right neighbour
-        (group,) = app.groups
+        group = app.groups[-1]  # presets (mixer, settings) come first
         assert group[0] == "canvas" and len(group) == 2
         before = {n: (app.placements[n].x, app.placements[n].y) for n in app.placements}
         await pilot.press("J")
@@ -142,13 +142,13 @@ def test_grouped_tiles_move_together_and_visual_mode_groups_neighbours(tmp_path)
             moved = app.placements[name].y - before[name][1]
             assert moved == (1 if name in group else 0), name
         await pilot.press("U")
-        assert app.groups == []
+        assert group not in app.groups
     _headless(tmp_path, scenario)
 
 
 def test_state_round_trips_through_write_and_load(tmp_path):
     async def scenario(app, pilot):
-        app.run_command("group", ["canvas", "mixer"])
+        app.run_command("group", ["canvas", "knob-damping"])
         app.run_command("theme", ["amber"])
         app.placements["log"].x = 7
         app.run_command("w", ["t"])
@@ -158,7 +158,7 @@ def test_state_round_trips_through_write_and_load(tmp_path):
         app.run_command("theme", ["black"])
         app.placements["log"].x = 0
         app.run_command("e", ["t"])
-        assert app.groups == [["canvas", "mixer"]] and app.theme == "amber" and app.placements["log"].x == 7
+        assert ["canvas", "knob-damping"] in app.groups and app.theme == "amber" and app.placements["log"].x == 7
     _headless(tmp_path, scenario)
 
 
@@ -195,3 +195,16 @@ def test_hot_reload_picks_up_an_edited_view_and_survives_a_syntax_error():
         path.write_text(original)
         os.utime(path)
         reloader.poll()
+
+
+def test_knob_tile_turns_its_control_and_navigates_between_knobs(tmp_path):
+    async def scenario(app, pilot):
+        before = app.runtime.engine.damping
+        app.query_one("#knob-damping").focus()
+        await pilot.press("h", "h", "h")
+        assert app.runtime.engine.damping < before
+        assert app.focused.id == "knob-damping"
+        await pilot.press("j")  # j/k walk the knob column; h/l turn
+        assert app.focused.id != "knob-damping" and app.focused.id.startswith("knob-")
+        assert any("knob-damping" in g and "knob-speed" in g for g in app.groups)  # mixer preset group
+    _headless(tmp_path, scenario)
