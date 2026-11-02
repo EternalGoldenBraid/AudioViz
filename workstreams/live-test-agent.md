@@ -36,6 +36,13 @@ harness docs before choosing the glue.
 (own socket via `AUDIOVIZ_SOCKET`, so a running app is untouched), runs the checks, kills the pane,
 exits non-zero on failure. Check steps: `keys`, `run`, `focus`, `expect`.
 
+**Step 2 status.** `qwen3.5:4b` is pulled (Ollama is not a service here: start `ollama serve`).
+`python -m audioviz.tui.agent "<task>"` runs a tool-calling loop (tools: keys, focus, state, report,
+thinking off, temperature 0) and traces the conversation to `outputs/traces/agent-*.jsonl`. It is written
+but NOT yet verified: the first run was interrupted. Next: run it, check it reports the same verdict as
+the scripted runner, then compare `qwen3:4b` and `granite4`. Mixer knobs are paged (`n`/`p`), the
+`focus` step handles that.
+
 **Fine-tuning.** Every step is traced to `outputs/traces/*.jsonl` (state diff, action, verdict).
 These traces are the training set for the small agent: (check text, state, action) -> next action,
 labelled by the scripted runner's verdicts. Later: continual learning from new traces. Eventually the
