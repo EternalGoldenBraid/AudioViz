@@ -34,7 +34,7 @@ class KeysScreen(ModalScreen):
                 text = Text(section.upper() + "\n", style="bold", no_wrap=True, overflow="ellipsis")
                 for row in rows:
                     keys = " ".join(label(k) for k in row.keys)
-                    hint = " (select)" if row.mode == "visual" else ""
+                    hint = {"visual": " (select)", "edit": " (entered)"}.get(row.mode, "")
                     text.append(f"{keys:<12}", style="bold yellow")
                     text.append(f"{row.description}{hint}\n")
                 yield Static(text)

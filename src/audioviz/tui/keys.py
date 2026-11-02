@@ -21,7 +21,7 @@ class Binding:
     action: str
     keys: tuple[str, ...]
     description: str
-    mode: str = "normal"  # "visual": while selecting tiles to group; "knob": while a knob is focused, ahead of "normal"
+    mode: str = "normal"  # "visual": while selecting tiles to group; "knob": while a knob is focused; "edit": while a knob is entered
     custom: bool = False  # set by keys.toml; a custom binding takes a key over from a default one
 
 
@@ -33,7 +33,7 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("navigate", "next_tile", ("tab", "w"), "focus the next tile"),
     Binding("navigate", "prev_tile", ("shift+tab",), "focus the previous tile"),
     Binding("navigate", "rise", ("escape",), "focus the whole group"),
-    Binding("navigate", "dive", ("enter",), "back to single tiles"),
+    Binding("navigate", "dive", ("enter",), "enter a knob, or leave group focus"),
     Binding("arrange", "move_left", ("H",), "move the tile or group left"),
     Binding("arrange", "move_down", ("J",), "move down"),
     Binding("arrange", "move_up", ("K",), "move up"),
@@ -56,8 +56,11 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("view", "immersive", ("F",), "fullscreen"),
     Binding("view", "render", ("r",), "cycle the render mode"),
     Binding("view", "devices", ("a",), "pick audio devices"),
-    Binding("knob", "turn_down", ("h", "minus", "left"), "turn the focused knob down", "knob"),
-    Binding("knob", "turn_up", ("l", "plus", "equals_sign", "right"), "turn the focused knob up", "knob"),
+    Binding("knob", "turn_down", ("minus", "left"), "turn the focused knob down", "knob"),
+    Binding("knob", "turn_up", ("plus", "equals_sign", "right"), "turn the focused knob up", "knob"),
+    Binding("knob", "slide_down", ("h",), "slide down while entered", "edit"),
+    Binding("knob", "slide_up", ("l",), "slide up while entered", "edit"),
+    Binding("knob", "exit_edit", ("enter", "escape"), "leave the knob", "edit"),
     Binding("app", "command", ("colon",), "open the command line"),
     Binding("app", "help", ("question_mark",), "show these bindings"),
     Binding("app", "quit", ("ctrl+q",), "quit"),
@@ -121,6 +124,6 @@ def default_toml() -> str:
         if b.section != section:
             section = b.section
             lines += ["", f"[{section}]"]
-        suffix = " (selection mode)" if b.mode == "visual" else ""
+        suffix = {"visual": " (selection mode)", "edit": " (entered knob)"}.get(b.mode, "")
         lines.append(f"{b.action} = {list(b.keys)!r}".replace("'", '"') + f"  # {b.description}{suffix}")
     return "\n".join(lines) + "\n"

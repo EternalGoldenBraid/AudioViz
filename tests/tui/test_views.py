@@ -199,16 +199,24 @@ def test_hot_reload_picks_up_an_edited_view_and_survives_a_syntax_error():
         reloader.poll()
 
 
-def test_knob_tile_turns_its_control_and_navigates_between_knobs(tmp_path):
+def test_knob_tile_turns_directly_and_slides_with_h_l_once_entered(tmp_path):
     async def scenario(app, pilot):
         before = app.runtime.engine.damping
-        app.query_one("#knob-damping").focus()
-        await pilot.press("h", "minus", "left")  # three ways to turn down
+        knob = app.query_one("#knob-damping")
+        knob.focus()
+        await pilot.press("minus", "left")  # turn without entering
         assert app.runtime.engine.damping < before
-        await pilot.press("l", "l", "l", "l")
-        assert app.runtime.engine.damping > before
-        assert app.focused.id == "knob-damping"
-        await pilot.press("j")  # j/k walk the knob column; h/l turn
+        low = app.runtime.engine.damping
+        await pilot.press("h")  # not entered: h walks to another knob and turns nothing
+        assert app.focused.id != "knob-damping" and app.runtime.engine.damping == low
+        knob.focus()
+        await pilot.press("enter")
+        assert knob.editing and app.mode == "EDIT"
+        await pilot.press("l", "l", "l", "j")  # entered: h/l slide, every other key is swallowed
+        assert app.runtime.engine.damping > low and app.focused is knob
+        await pilot.press("escape")
+        assert not knob.editing and app.mode == "NORMAL"
+        await pilot.press("j")
         assert app.focused.id != "knob-damping" and app.focused.id.startswith("knob-")
         assert any("knob-damping" in g and "knob-speed" in g for g in app.groups)  # mixer preset group
     _headless(tmp_path, scenario)
