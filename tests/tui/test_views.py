@@ -238,3 +238,18 @@ def test_camera_view_and_canvas_feed_share_the_device():
     assert runtime.camera.isOpened()  # the canvas still uses the device
     runtime.set_canvas_feed(False)
     assert not runtime.camera.isOpened()
+
+
+def test_rising_focuses_the_whole_group_and_navigation_steps_between_groups(tmp_path):
+    async def scenario(app, pilot):
+        app.query_one("#knob-damping").focus()
+        await pilot.press("escape")  # rise: the mixer group becomes the focused node
+        assert app.group_focus == app.members("knob-damping")
+        before = app.placements["knob-damping"].x
+        await pilot.press("L")
+        assert app.placements["knob-damping"].x == before + app.MOVE_STEP[0]  # the whole group moves
+        await pilot.press("l")
+        assert set(app.group_focus).isdisjoint(app.members("knob-damping"))  # stepped to the next node
+        await pilot.press("enter")  # dive: back to single tiles
+        assert app.group_focus == []
+    _headless(tmp_path, scenario)

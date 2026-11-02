@@ -168,6 +168,7 @@ class AudioVizApp(App):
     .-immersive #mode {{ display: none; }}
     .-immersive ViewTile {{ border: none !important; }}
     .-selected {{ border: double $warning !important; }}
+    .-group-focus {{ border: heavy $accent !important; }}
     #command {{ dock: bottom; display: none; border: none; height: 1; margin-bottom: 1; padding: 0 1; }}
     #command.-active {{ display: block; }}
     #mode {{ dock: bottom; height: 1; background: $primary-darken-2; padding: 0 1; }}
@@ -194,6 +195,7 @@ class AudioVizApp(App):
         self.mixer_ids = [k for k, ctx, _ in self.knobs if ctx is self.runtime]
         self.settings_ids = [k for k, ctx, _ in self.knobs if ctx is self]
         self.placements = default_layout(120, 36, self.mixer_ids, self.settings_ids)  # resized to the real stage on mount
+        self.group_focus: list[str] = []  # non-empty while a whole group is the focused node
         self.groups: list[list[str]] = [list(self.mixer_ids), list(self.settings_ids)]  # move, lift and fade together
         self.selection: list[str] = []  # being collected in VISUAL mode
         self.stack = list(self.placements)  # bottom -> top
@@ -246,6 +248,7 @@ class AudioVizApp(App):
             "groups": self.groups,
             "camera_error": self.runtime.camera.error,
             "focus": self._focused_name(),
+            "group_focus": self.group_focus,
             "mode": self.mode,
             "zoomed": self.zoomed,
             "immersive": self.immersive,
@@ -289,9 +292,22 @@ class AudioVizApp(App):
             styles.height = stage.height if zoomed else placement.height
             styles.opacity = 1.0 if zoomed else placement.opacity
             styles.layer = f"z{depth}"
-            number = next((i + 1 for i, group in enumerate(self.groups) if name in group), None)
-            widget.border_subtitle = f"group {number}" if number else ""
         self.set_mode(self.mode)
+
+    def mark_group_focus(self) -> None:
+        for name in self.placements:
+            self.query_one(f"#{name}").set_class(name in self.group_focus, "-group-focus")
+
+    def rise(self) -> None:
+        """Focus the whole group of the focused tile: navigation then steps between top-level nodes."""
+        members = self.members(self._focused_name())
+        if len(members) > 1 and not self.zoomed:
+            self.group_focus = members
+            self.mark_group_focus()
+
+    def dive(self) -> None:
+        self.group_focus = []
+        self.mark_group_focus()
 
     def on_resize(self) -> None:
         if self.zoomed:
@@ -423,16 +439,19 @@ class AudioVizApp(App):
     def nudge_opacity(self, delta: float) -> None:
         self.set_opacity(self.placements[self._focused_name()].opacity + delta)
 
-    def neighbour(self, name: str, dx: int, dy: int) -> str | None:
+    def neighbour(self, name: str, dx: int, dy: int, outer: bool = False) -> str | None:
         """Nearest tile in a direction: its centre must lie that way; sideways offset costs double.
 
         Cells are about twice as tall as wide, so vertical distance is doubled to compare like with like.
         """
-        here = self.placements[name]
-        cx, cy = here.x + here.width / 2, (here.y + here.height / 2) * 2
+        group = self.members(name) if outer else [name]
+        rects = [self.placements[n] for n in group]
+        left, top = min(p.x for p in rects), min(p.y for p in rects)
+        right, bottom = max(p.x + p.width for p in rects), max(p.y + p.height for p in rects)
+        cx, cy = (left + right) / 2, (top + bottom)
         best, best_cost = None, float("inf")
         for other, p in self.placements.items():
-            if other == name:
+            if other in group:
                 continue
             ox, oy = p.x + p.width / 2 - cx, (p.y + p.height / 2) * 2 - cy
             along, across = (ox * dx, abs(oy)) if dx else (oy * dy, abs(ox))
@@ -446,9 +465,12 @@ class AudioVizApp(App):
     def focus_toward(self, dx: int, dy: int) -> None:
         if self.zoomed:
             return
-        target = self.neighbour(self._focused_name(), dx, dy)
-        if target:
-            self.query_one(f"#{target}").focus()
+        target = self.neighbour(self._focused_name(), dx, dy, outer=bool(self.group_focus))
+        if target is None:
+            return
+        self.group_focus = self.members(target) if self.group_focus and len(self.members(target)) > 1 else []
+        self.mark_group_focus()
+        self.query_one(f"#{target}").focus()
 
     def _move_focus(self, step: int) -> None:
         names = [name for name in self.placements if self.zoomed in (None, name)]
@@ -485,6 +507,8 @@ class AudioVizApp(App):
             event.stop()
             return
         actions = {
+            "escape": self.rise,
+            "enter": self.dive,
             "v": self.start_visual,
             "U": lambda: self.make_group(self.members(self._focused_name())[:1]),
             "tab": lambda: self._move_focus(1),

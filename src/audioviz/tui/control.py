@@ -11,7 +11,7 @@ import os
 import sys
 from pathlib import Path
 
-SOCKET = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "audioviz.sock"
+SOCKET = Path(os.environ.get("AUDIOVIZ_SOCKET") or Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "audioviz.sock")
 
 
 async def serve(app) -> asyncio.AbstractServer:
