@@ -14,7 +14,19 @@ from pathlib import Path
 SOCKET = Path(os.environ.get("AUDIOVIZ_SOCKET") or Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "audioviz.sock")
 
 
-async def serve(app) -> asyncio.AbstractServer:
+async def alive() -> bool:
+    try:
+        _, writer = await asyncio.open_unix_connection(str(SOCKET))
+    except OSError:
+        return False
+    writer.close()
+    return True
+
+
+async def serve(app) -> asyncio.AbstractServer | None:
+    """Own the socket, or return None when another running app already does."""
+    if await alive():
+        return None
     SOCKET.unlink(missing_ok=True)
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

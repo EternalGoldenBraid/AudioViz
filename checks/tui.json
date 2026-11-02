@@ -1,0 +1,10 @@
+[
+  {
+    "name": "camera view knob turns off without touching canvas feed",
+    "steps": [
+      {"focus": "knob-camera-view"},
+      {"keys": ["minus"]},
+      {"expect": {"mixer.camera view": "off", "mixer.canvas feed": "on"}}
+    ]
+  }
+]

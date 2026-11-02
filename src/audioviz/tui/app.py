@@ -241,6 +241,9 @@ class AudioVizApp(App):
         server = await control.serve(self)
         async with server:
             await server.serve_forever()
+        if server is None:  # another instance owns the socket; leave it alone
+            return
+        self.owns_socket = True
 
     def describe(self) -> dict:
         """Observable state for the control socket."""
@@ -265,7 +268,8 @@ class AudioVizApp(App):
         }
 
     def on_unmount(self) -> None:
-        control.SOCKET.unlink(missing_ok=True)
+        if getattr(self, "owns_socket", False):
+            control.SOCKET.unlink(missing_ok=True)
         if self.autosave:
             self.autosave_state()
         self.runtime.stop()

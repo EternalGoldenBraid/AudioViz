@@ -32,6 +32,16 @@ check, result, observed value. Open questions: which small model handles tool ca
 reliably on this laptop, and how the PI harness extensions wire tools in. Read the PI
 harness docs before choosing the glue.
 
+**Status.** Step 1 done: `python -m audioviz.tui.checks [checks/tui.json]` launches a private app
+(own socket via `AUDIOVIZ_SOCKET`, so a running app is untouched), runs the checks, kills the pane,
+exits non-zero on failure. Check steps: `keys`, `run`, `focus`, `expect`.
+
+**Fine-tuning.** Every step is traced to `outputs/traces/*.jsonl` (state diff, action, verdict).
+These traces are the training set for the small agent: (check text, state, action) -> next action,
+labelled by the scripted runner's verdicts. Later: continual learning from new traces. Eventually the
+agent's own computational graph becomes a neighbour of the app's predictive-coding graph, and the
+two join; keep the control socket's state/action vocabulary as the shared interface.
+
 **Out of scope.** Visual judgement of screenshots, performance tuning, anything that
 writes to git or pushes.
 
