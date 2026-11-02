@@ -30,6 +30,8 @@ class CameraFeed:
             self.error = str(error)
             return False
         self._capture = capture
+        self.error = None
+        self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         return True
@@ -46,12 +48,16 @@ class CameraFeed:
         return frame[..., ::-1] if ok else None
 
     def release(self) -> None:
+        """Stop capturing and free the device; the last frame is dropped so tiles show no data."""
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+            self._thread = None
         if self._capture is not None:
             self._capture.release()
             self._capture = None
+        with self._lock:
+            self._frame = None
 
     def _loop(self) -> None:
         while not self._stop.is_set():

@@ -38,7 +38,7 @@ def spectrogram(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | Non
 
 
 def camera(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
-    return runtime.camera.rgb()
+    return runtime.camera.rgb()  # None while the camera is off or has not delivered a frame
 
 
 def canvas(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray:

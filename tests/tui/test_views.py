@@ -208,3 +208,19 @@ def test_knob_tile_turns_its_control_and_navigates_between_knobs(tmp_path):
         assert app.focused.id != "knob-damping" and app.focused.id.startswith("knob-")
         assert any("knob-damping" in g and "knob-speed" in g for g in app.groups)  # mixer preset group
     _headless(tmp_path, scenario)
+
+
+def test_camera_off_releases_the_device_and_clears_the_tile():
+    from audioviz.tui.camera_feed import CameraFeed
+
+    class Device:
+        released = False
+        def release(self):
+            self.released = True
+
+    feed = CameraFeed()
+    feed._capture, feed._frame = Device(), np.ones((2, 2, 3), np.uint8)
+    device = feed._capture
+    assert feed.isOpened() and feed.rgb() is not None
+    feed.release()
+    assert device.released and not feed.isOpened() and feed.rgb() is None

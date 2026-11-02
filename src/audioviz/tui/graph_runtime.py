@@ -55,7 +55,7 @@ class GraphRuntime:
             engine=engine,
             resolution=grid,
             n_sources=1,
-            camera_capture=self.camera if self.camera.isOpened() else None,
+            camera_capture=self.camera,
         )
         orchestrator.set_diagnostics_enabled(True)
         with self.lock:
@@ -100,6 +100,15 @@ class GraphRuntime:
             self.orchestrator.correct_from_observations()
             self._sound()
         self.step_ms = (monotonic() - started) * 1000.0
+
+    def set_camera(self, on: bool) -> None:
+        """On opens the device (when it can) and drives the canvas; off releases the device."""
+        source = self.orchestrator.camera_source
+        if on and not self.camera.isOpened():
+            self.camera.open()
+        source.set_enabled(on and self.camera.isOpened())
+        if not on:
+            self.camera.release()
 
     def _sound(self) -> None:
         source = self.orchestrator.audio_source
