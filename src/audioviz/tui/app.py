@@ -651,12 +651,13 @@ class AudioVizApp(App):
         }
 
     def restore(self, data: dict) -> None:
+        same_tiles = set(data.get("placements", {})) == set(self.placements)  # a changed tile set gets the default layout
         for name, values in data.get("placements", {}).items():
-            if name in self.placements:
+            if same_tiles:
                 self.placements[name] = Placement(**values)
         stack = [n for n in data.get("stack", []) if n in self.placements]
         self.stack = stack + [n for n in self.placements if n not in stack]
-        if "groups" in data:
+        if "groups" in data and same_tiles:
             groups = [[n for n in g if n in self.placements] for g in data["groups"]]
             self.groups = [g for g in groups if len(g) > 1]
         for tile in self.query(ViewTile):
