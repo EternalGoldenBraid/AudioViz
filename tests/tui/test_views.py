@@ -203,10 +203,12 @@ def test_knob_tile_turns_its_control_and_navigates_between_knobs(tmp_path):
     async def scenario(app, pilot):
         before = app.runtime.engine.damping
         app.query_one("#knob-damping").focus()
-        await pilot.press("minus", "minus", "minus")
+        await pilot.press("h", "minus", "left")  # three ways to turn down
         assert app.runtime.engine.damping < before
+        await pilot.press("l", "l", "l", "l")
+        assert app.runtime.engine.damping > before
         assert app.focused.id == "knob-damping"
-        await pilot.press("j")  # h/j/k/l walk between knobs; -/+ turn
+        await pilot.press("j")  # j/k walk the knob column; h/l turn
         assert app.focused.id != "knob-damping" and app.focused.id.startswith("knob-")
         assert any("knob-damping" in g and "knob-speed" in g for g in app.groups)  # mixer preset group
     _headless(tmp_path, scenario)

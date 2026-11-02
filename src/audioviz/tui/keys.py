@@ -21,7 +21,7 @@ class Binding:
     action: str
     keys: tuple[str, ...]
     description: str
-    mode: str = "normal"  # "visual" bindings apply while selecting tiles to group
+    mode: str = "normal"  # "visual": while selecting tiles to group; "knob": while a knob is focused, ahead of "normal"
     custom: bool = False  # set by keys.toml; a custom binding takes a key over from a default one
 
 
@@ -56,8 +56,8 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("view", "immersive", ("F",), "fullscreen"),
     Binding("view", "render", ("r",), "cycle the render mode"),
     Binding("view", "devices", ("a",), "pick audio devices"),
-    Binding("knob", "turn_down", ("minus", "left"), "turn the focused knob down"),
-    Binding("knob", "turn_up", ("plus", "equals_sign", "right"), "turn the focused knob up"),
+    Binding("knob", "turn_down", ("h", "minus", "left"), "turn the focused knob down", "knob"),
+    Binding("knob", "turn_up", ("l", "plus", "equals_sign", "right"), "turn the focused knob up", "knob"),
     Binding("app", "command", ("colon",), "open the command line"),
     Binding("app", "help", ("question_mark",), "show these bindings"),
     Binding("app", "quit", ("ctrl+q",), "quit"),

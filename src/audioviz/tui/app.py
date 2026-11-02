@@ -117,7 +117,7 @@ class ViewTile(Static, can_focus=True):
 
 
 class KnobTile(Static, can_focus=True):
-    """One Control as a tile: -/+ (or arrows) turn it; h/j/k/l walk between knobs. It is a leaf node like any view, so it can be moved, grouped and lifted."""
+    """One Control as a tile: h/l, -/+ or arrows turn it; j/k and Tab walk between knobs. It is a leaf node like any view, so it can be moved, grouped and lifted."""
 
     DEFAULT_CSS = """
     KnobTile { position: absolute; border: round $primary-darken-2; padding: 0 1; background: $surface; }
@@ -536,6 +536,8 @@ class AudioVizApp(App):
                 event.stop()
             return
         mode = "visual" if self.mode == "VISUAL" else "normal"
+        if mode == "normal" and not self.group_focus and isinstance(self.focused, KnobTile) and ("knob", event.key) in self.keymap:
+            mode = "knob"
         action = self.keymap.get((mode, event.key))
         if (action is not None and self.run_action(action)) or mode == "visual":
             event.stop()  # selection mode swallows every key
@@ -543,9 +545,7 @@ class AudioVizApp(App):
     def run_action(self, action: str) -> bool:
         """False when the action does not apply to the focused tile, so the key stays unhandled."""
         dx, dy = self.MOVE_STEP
-        knob = self.focused if isinstance(self.focused, KnobTile) else None
-        if action in ("turn_down", "turn_up") and knob is None:
-            return False
+        knob = self.focused
         actions = {
             "focus_left": lambda: self.focus_toward(-1, 0), "focus_right": lambda: self.focus_toward(1, 0),
             "focus_up": lambda: self.focus_toward(0, -1), "focus_down": lambda: self.focus_toward(0, 1),
