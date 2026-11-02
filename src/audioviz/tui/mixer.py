@@ -73,8 +73,10 @@ def _set_gain(runtime: GraphRuntime, value: float) -> None:
 
 CONTROLS: tuple[Control, ...] = (
     Control("evidence gain", 0.1, 10000.0, lambda r: r.orchestrator.audio_source.observation_gain, _set_gain, log=True),
-    Control("camera", 0, 1, lambda r: r.camera.isOpened(),
+    Control("camera view", 0, 1, lambda r: r.show_camera,
             lambda r, v: r.set_camera(bool(v)), toggle=True),
+    Control("canvas feed", 0, 1, lambda r: r.feed_canvas,
+            lambda r, v: r.set_canvas_feed(bool(v)), toggle=True),
     Control("camera gain", 0.1, 10.0, lambda r: r.orchestrator.camera_source.gain,
             lambda r, v: r.orchestrator.camera_source.set_gain(v), log=True),
     Control("damping", 0.9, 1.0, lambda r: r.engine.damping, lambda r, v: r.engine.set_damping(v)),

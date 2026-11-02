@@ -22,7 +22,7 @@ correction). Resolution is bounded by that readout.
 **Live editing.** Edit `views.py` or `halfblock.py` while the app runs: tiles pick it up on the
 next frame (`reloaded views` in the log); a syntax error keeps the old code live.
 
-**Knobs.** Every mixer/settings control is its own tile (`h/l` turn, `j/k` walk). Mixer and settings
+**Knobs.** Every mixer/settings control is its own tile (`-`/`+` or arrows turn; `h/j/k/l` walk). `camera view` shows the tile, `canvas feed` drives the canvas; the device is released when both are off. Mixer and settings
 are preset groups of knob tiles (group 1, group 2); regroup freely with `v`.
 
 **Future.** Nested groups (a group is a node whose children are nodes; viewer distance could pick

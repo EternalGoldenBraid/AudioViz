@@ -114,7 +114,7 @@ class ViewTile(Static, can_focus=True):
 
 
 class KnobTile(Static, can_focus=True):
-    """One Control as a tile: h/l turn it. It is a leaf node like any view, so it can be moved, grouped and lifted."""
+    """One Control as a tile: -/+ (or arrows) turn it; h/j/k/l walk between knobs. It is a leaf node like any view, so it can be moved, grouped and lifted."""
 
     DEFAULT_CSS = """
     KnobTile { position: absolute; border: round $primary-darken-2; padding: 0 1; background: $surface; }
@@ -475,10 +475,13 @@ class AudioVizApp(App):
                 visual[event.key]()
             event.stop()
             return
-        if isinstance(self.focused, KnobTile) and event.key in ("h", "l", "j", "k"):
+        if isinstance(self.focused, KnobTile) and event.key in ("h", "l", "j", "k", "minus", "plus", "equals_sign", "left", "right"):
             knob = self.focused
-            {"h": lambda: knob.adjust(-1), "l": lambda: knob.adjust(1),
-             "j": lambda: self.focus_toward(0, 1), "k": lambda: self.focus_toward(0, -1)}[event.key]()
+            {"h": lambda: self.focus_toward(-1, 0), "l": lambda: self.focus_toward(1, 0),
+             "j": lambda: self.focus_toward(0, 1), "k": lambda: self.focus_toward(0, -1),
+             "minus": lambda: knob.adjust(-1), "left": lambda: knob.adjust(-1),
+             "plus": lambda: knob.adjust(1), "equals_sign": lambda: knob.adjust(1),
+             "right": lambda: knob.adjust(1)}[event.key]()
             event.stop()
             return
         actions = {

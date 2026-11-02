@@ -23,6 +23,7 @@ def test_every_view_renders_an_rgb_image(runtime, name):
 
 def test_camera_view_shows_the_latest_frame_as_rgb(runtime):
     assert VIEWS["camera"](runtime, 20, 40) is None  # no device in this runtime
+    runtime.show_camera = True
     runtime.camera._frame = np.zeros((4, 6, 3), np.uint8)
     runtime.camera._frame[..., 0] = 200  # blue channel in BGR
     try:
@@ -201,10 +202,10 @@ def test_knob_tile_turns_its_control_and_navigates_between_knobs(tmp_path):
     async def scenario(app, pilot):
         before = app.runtime.engine.damping
         app.query_one("#knob-damping").focus()
-        await pilot.press("h", "h", "h")
+        await pilot.press("minus", "minus", "minus")
         assert app.runtime.engine.damping < before
         assert app.focused.id == "knob-damping"
-        await pilot.press("j")  # j/k walk the knob column; h/l turn
+        await pilot.press("j")  # h/j/k/l walk between knobs; -/+ turn
         assert app.focused.id != "knob-damping" and app.focused.id.startswith("knob-")
         assert any("knob-damping" in g and "knob-speed" in g for g in app.groups)  # mixer preset group
     _headless(tmp_path, scenario)
@@ -224,3 +225,16 @@ def test_camera_off_releases_the_device_and_clears_the_tile():
     assert feed.isOpened() and feed.rgb() is not None
     feed.release()
     assert device.released and not feed.isOpened() and feed.rgb() is None
+
+
+def test_camera_view_and_canvas_feed_share_the_device():
+    runtime = GraphRuntime(camera=False)
+    opened = []
+    runtime.camera.open = lambda: opened.append(1) or runtime.camera.isOpened()
+    runtime.camera._capture = object()  # pretends the device is open
+    runtime.camera.release = lambda: setattr(runtime.camera, "_capture", None)
+    runtime.set_canvas_feed(True)
+    runtime.set_camera(False)
+    assert runtime.camera.isOpened()  # the canvas still uses the device
+    runtime.set_canvas_feed(False)
+    assert not runtime.camera.isOpened()

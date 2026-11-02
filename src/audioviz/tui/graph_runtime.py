@@ -30,6 +30,7 @@ class GraphRuntime:
         self.out = AudioOut()
         self.camera = CameraFeed()
         has_camera = camera and self.camera.open()
+        self.show_camera = self.feed_canvas = has_camera
         self.lock = threading.RLock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -102,12 +103,19 @@ class GraphRuntime:
         self.step_ms = (monotonic() - started) * 1000.0
 
     def set_camera(self, on: bool) -> None:
-        """On opens the device (when it can) and drives the canvas; off releases the device."""
-        source = self.orchestrator.camera_source
-        if on and not self.camera.isOpened():
+        """Shows or hides the camera tile; the device stays open while the canvas still uses it."""
+        self.show_camera = on
+        self._sync_camera()
+
+    def set_canvas_feed(self, on: bool) -> None:
+        self.feed_canvas = on
+        self._sync_camera()
+
+    def _sync_camera(self) -> None:
+        if (self.show_camera or self.feed_canvas) and not self.camera.isOpened():
             self.camera.open()
-        source.set_enabled(on and self.camera.isOpened())
-        if not on:
+        self.orchestrator.camera_source.set_enabled(self.feed_canvas and self.camera.isOpened())
+        if not (self.show_camera or self.feed_canvas):
             self.camera.release()
 
     def _sound(self) -> None:
