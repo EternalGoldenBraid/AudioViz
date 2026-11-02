@@ -412,9 +412,15 @@ extension.
 ### 3D waveform and spectrogram landscape
 
 In the Audio Visualizer, select **3D audio landscape** to replace the two flat
-plots with an orbitable isometric view. The waveform shows sample time across
-each ribbon, signed amplitude as height, and successive windows receding into
-history. The spectrogram shows frequency across, history into depth, and
+plots with an orbitable isometric view. The waveform becomes a compact sphere:
+the latest 256 samples wrap around longitude, signed amplitude deforms the
+radius, and RMS amplitude adds a small overall expansion. Deformation tapers
+at the poles and joins across the longitude seam. Up to four sparse, fading
+shells expand outward to show a short 1.2-second temporal wake. This is a
+chosen audio-to-shape mapping, not a spherical-harmonic analysis or recovered
+sound direction.
+
+The spectrogram shows frequency across, history into depth, and
 magnitude as height and color. The newest data meets the front **Now** edge.
 Magnitude uses the configured fixed dB range (amplitude dB for STFT, power dB
 for mel), without per-frame normalization.
@@ -427,9 +433,11 @@ window, the audio landscape still works without the backdrop.
 Drag to orbit, wheel to zoom, Ctrl-drag to pan; **Isometric view** restores
 45-degree azimuth and 35.264-degree elevation. The existing 2D view remains
 available. Geometry refreshes at most 10 Hz while visible, with at most
-128 frequency bins by 96 time columns and 48 waveform ribbons of 256 points.
-Waveform history records only newly processed audio generations and expires
-over the configured audio-buffer duration. An unavailable OpenGL context
+128 frequency bins by 96 time columns. The sphere uses a fixed 16-by-48 mesh;
+the wake retains at most 12 waveform snapshots and draws at most four wire shells.
+Wavefront history records only newly processed audio generations and expires
+after 1.2 seconds without new samples. Valid silent samples produce a round
+sphere. An unavailable OpenGL context
 reports an error and returns to the 2D plots.
 
 ### Independent multimodal 3D scene

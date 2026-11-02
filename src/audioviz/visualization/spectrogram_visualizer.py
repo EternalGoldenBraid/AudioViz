@@ -61,11 +61,12 @@ class SpectrogramVisualizer(VisualizerBase):
         controls.addStretch()
         layout.addLayout(controls)
         self.landscape_help = QtWidgets.QLabel(
-            "Drag to orbit; wheel to zoom; Ctrl-drag to pan. Depth = history (Now at front).\n"
-            f"Waveform: {self.waveform_plot_duration:g} s per ribbon / amplitude [-1, 1]; "
-            f"spectrogram: {'mel bands' if self.processor.n_mels is not None else 'frequency (Hz)'} "
+            "Drag to orbit; wheel to zoom; Ctrl-drag to pan. "
+            "Waveform time expands outward; spectrogram history recedes into depth.\n"
+            "Sphere: latest waveform samples deform its radius; a short fading shell wake shows the past. "
+            f"Spectrogram: {'mel bands' if self.processor.n_mels is not None else 'frequency (Hz)'} "
             f"/ magnitude [{self.norm.vmin:g}, {self.norm.vmax:g}] dB. "
-            "The live canvas sits underneath; geometry is display-only."
+            "The live canvas sits underneath. This is a visual mapping, not reconstructed sound direction."
         )
         self.landscape_help.setWordWrap(True)
         self.landscape_help.hide()
@@ -152,6 +153,8 @@ class SpectrogramVisualizer(VisualizerBase):
             self._last_3d_update = now
         snapshot = self.processor.get_latest_snapshot()
         if snapshot is None:
+            if landscape_active:
+                self.landscape.advance_wavefront(now)
             return  # No new data yet
         
         audio, spectrograms = snapshot
