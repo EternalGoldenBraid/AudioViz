@@ -60,12 +60,14 @@ def default_layout(width: int, height: int, mixer_ids: list[str], settings_ids: 
     edges = [round(i * width / 4) for i in range(5)]
     bottom = min(11, height // 2) // KNOB_HEIGHT * KNOB_HEIGHT
     rest = height - bottom
-    upper = round(rest * 0.6)
+    first, second = round(rest * 0.36), round(rest * 0.32)
     layout = {}
-    for row, y, h in ((("canvas", "camera", "spectrogram", "log"), 0, upper),
-                      (("waveform", "prediction", "error", "hidden"), upper, rest - upper)):
+    for row, y, h in ((("canvas", "camera", "visual_prediction", "visual_error"), 0, first),
+                      (("spectrogram", "waveform", "prediction", "error"), first, second),
+                      (("hidden", "log"), first + second, rest - first - second)):
+        columns = [0, 2, 4] if len(row) == 2 else range(len(row) + 1)  # a short row spans two columns each
         for i, name in enumerate(row):
-            layout[name] = Placement(edges[i], y, edges[i + 1] - edges[i], h)
+            layout[name] = Placement(edges[columns[i]], y, edges[columns[i + 1]] - edges[columns[i]], h)
     per_column = bottom // KNOB_HEIGHT
     for ids, x0, x1, slots in ((mixer_ids, 0, edges[2], MIXER_PAGE), (settings_ids, edges[2], width, len(settings_ids))):
         columns = -(-slots // per_column)

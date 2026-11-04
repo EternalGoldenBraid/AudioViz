@@ -89,6 +89,26 @@ def prediction_error(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray 
     return image
 
 
+def _signed_rgb(field: np.ndarray) -> np.ndarray:
+    scale = max(float(np.abs(field).max()), 1e-6)
+    return ((0.5 + 0.5 * np.clip(field / scale, -1.0, 1.0)) * 255).astype(np.uint8)
+
+
+def visual_prediction(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+    """The canvas the model expects, as signed RGB auto-scaled like the canvas tile."""
+    predicted = runtime.visual_prediction
+    return None if predicted is None else _signed_rgb(predicted)
+
+
+def visual_error(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+    """Camera observation minus visual prediction; mid-grey while the canvas has no camera feed."""
+    observed = runtime.orchestrator.visual_observation
+    predicted = runtime.visual_prediction
+    if predicted is None:
+        return None
+    return _signed_rgb(np.zeros_like(predicted) if observed is None else np.asarray(observed) - predicted)
+
+
 def hidden(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
     """Hidden units as rows: evidence->hidden weights | activity | hidden->canvas weights."""
     readout = runtime.audio_readout
@@ -112,5 +132,7 @@ VIEWS: dict[str, View] = {
     "camera": camera,
     "prediction": prediction,
     "error": prediction_error,
+    "visual_prediction": visual_prediction,
+    "visual_error": visual_error,
     "hidden": hidden,
 }

@@ -19,6 +19,8 @@ realtime (~80 ms/step); the hidden tile sometimes waits for data; the canvas is 
 so the OpenGL/CuPy engine backends would not speed the TUI (and OpenGL has no observation
 correction). Resolution is bounded by that readout.
 
+**Visual prediction.** `visual_prediction` shows what the model expects the canvas to be; `visual_error` is camera observation minus that (grey while `canvas feed` is off). Default layout is three rows: canvas, camera, visual prediction, visual error / spectrogram, waveform, prediction, error / hidden, log.
+
 **Live editing.** Edit `views.py` or `halfblock.py` while the app runs: tiles pick it up on the
 next frame (`reloaded views` in the log); a syntax error keeps the old code live.
 
