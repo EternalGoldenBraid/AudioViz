@@ -1,23 +1,34 @@
-# Cochlea: resonator-bank audio frontend
+# Cochlea: raw-audio predictive oscillator bank
 
-> **Status:** active · **Branch:** `tui/lenovo` · **Updated:** 2026-11-05
-> **Now:** design agreed; implementation not started.
-> **Next:** implement and test a streaming damped-oscillator bank, then connect it to the existing audio consumers.
+> **Status:** active · **Branch:** `agent/cochlea` · **Updated:** 2026-11-05
+> **Now:** initial implementation and documentation available for review.
+> **Next:** review the equations and listen to input, prediction, and residual before tuning the model.
 > **Blocked:** none.
-> **Resume:** new implementation-agent session.
-> **Run:** existing AudioViz entry point; add a focused test command with implementation.
+> **Resume:** `copilot --resume 405c9084-e5f0-490d-a823-aaa010083ca4`
+> **Run:** `PYTHONPATH=src uv run --group tui python -m audioviz.tui.app --audio synthetic --no-camera`; select **audio model: cochlea**.
 
-**Essence.** Build a simplified artificial cochlea: N parallel damped mass–spring resonators driven by the incoming audio samples. Their continuously evolving states provide frequency-selective activity at multiple temporal scales, without requiring fixed-window spectrograms.
+**Essence.** Sixteen fixed damped oscillators generate a one-sample-ahead raw
+waveform prediction by summing their positions. The scalar raw-audio residual
+corrects their states. This is a generative observer, not a preprocessing filter
+bank. Position and quadrature provide 32 signed graph coordinates.
 
-**Present.** Design only; no cochlea implementation or validation yet. The current audio pipeline and TUI integration should remain operational during the refactor.
+**Present.** Opt-in local graph integration; exact stable free dynamics; streaming
+inference; input/prediction/error listening; waveform comparison and residual
+views. Spectrograms remain diagnostics. Graph state targets are frozen after raw
+inference; a saved pre-observation graph expectation corrects the next block's
+starting state. Oscillator parameters stay fixed; existing graph weight learning
+is optional. The spectral default and Qt/attached-deck path are unchanged.
 
-**Open.** Choose initial N, frequency range, Q, output representation (oscillation, envelope/energy), and whether existing spectrogram consumers need an adapter. Discretization must remain numerically stable at audio sample rates; avoid naive explicit Euler for high-frequency resonators.
+**Documentation.** [Equations, timing, limitations, and diagrams](../docs/cochlea/index.md).
+Editable two-page source: `docs/cochlea/cochlea.drawio`.
 
-**Future.** Learnable resonator parameters, nonlinear/cochlear coupling, and predictive-coding integration.
+**Validation.** `uv run --group dev python -m pytest -q tests/audio_processing/test_cochlea.py tests/tui/test_cochlea_runtime.py`.
+`PYTHONPATH=src uv run python scripts/validate_cochlea.py` writes an illustrative
+two-tone figure, WAV listening taps, and measured core throughput.
 
-**Notes.**
-- For each node: `m*x'' + b*x' + k*x = g*s(t)`; fix `m=1`, set `f_i` logarithmically from `f_min` to `f_max`, `k_i=(2*pi*f_i)^2`, and `b_i=2*pi*f_i/Q_i`. Start with shared Q.
-- Preserve phase/state continuously across audio blocks; output per-node activity and optionally a smoothed envelope. Low frequencies have longer characteristic times with fixed Q.
-- Prefer a stable discrete resonator/filter realization (e.g. exact state transition or stable biquad) rather than sample-by-sample Python loops over nodes.
-- Tests: pure tones peak near the intended node, mixtures activate multiple bands, silence decays, block-size independence, streaming continuity, finite/stable response across the configured range, and real-time throughput.
-- Integrate behind a small audio-feature interface; keep visualization/excitation consumers working, using an adapter where needed. Do not change the ripple physics in this workstream.
+**Open.** Assess non-bank-tuned tones, speech, noise, and slow graph phase
+expectations. A small fixed bank is not an exact waveform representation.
+
+**Future.** Learnable oscillator parameters, explicit temporal graph forecasting,
+and Qt integration. These require separate validation; no change to ripple
+physics belongs in this stream.

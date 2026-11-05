@@ -5,6 +5,7 @@
 data/*
 models/*.task
 outputs/pose_ripple_validation/
+outputs/cochlea/
 config/audio_devices.json
 .tmux-workspace/
 __pycache__/

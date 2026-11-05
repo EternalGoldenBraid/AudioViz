@@ -1,11 +1,13 @@
 """Audio input for the TUI: a live device or a synthetic tone, feeding one AudioProcessor."""
 
 from collections import deque
+from dataclasses import dataclass
 
 import librosa as lr
 import numpy as np
 
 from audioviz.audio_processing.audio_processor import AudioProcessor
+from audioviz.audio_processing.cochlea import CochleaBlock
 
 SAMPLE_RATE = 22050
 BLOCK_SIZE = 1024
@@ -14,6 +16,12 @@ HOP = 256
 N_MELS = 64
 HISTORY_SECONDS = 4
 MAX_QUEUED_BLOCKS = 8
+
+
+@dataclass(frozen=True)
+class AudioFrame:
+    samples: np.ndarray
+    cochlea: CochleaBlock | None
 
 
 class AudioFeed:
@@ -52,6 +60,7 @@ class AudioFeed:
 
     def use_synthetic(self) -> None:
         self._close_stream()
+        self._reset_cochlea()
         self.tone = None
         self.source = "synthetic"
 
@@ -71,18 +80,28 @@ class AudioFeed:
         stream.start()
         self._stream = stream
         self._queue.clear()
+        self._reset_cochlea()
         self.source = "default input" if device is None else f"device {device}"
 
     def close(self) -> None:
         self._close_stream()
 
-    def pump(self) -> None:
-        """Process every block that arrived since the last call."""
+    def pump(self) -> tuple[AudioFrame, ...]:
+        """Process a bounded batch, retaining each block for ordered playback."""
         if self._stream is None:
-            self.processor.process_audio(self._synthetic_block())
-            return
-        while self._queue:
-            self.processor.process_audio(self._queue.popleft())
+            blocks = (self._synthetic_block(),)
+        else:
+            blocks = tuple(self._queue.popleft() for _ in range(len(self._queue)))
+        frames = []
+        for block in blocks:
+            self.processor.process_audio(block)
+            cochlea = self.processor.cochlea
+            frames.append(AudioFrame(block[:, 0].copy(), None if cochlea is None else cochlea.last_block))
+        return tuple(frames)
+
+    def _reset_cochlea(self) -> None:
+        if self.processor.cochlea is not None:
+            self.processor.cochlea.reset()
 
     def _on_block(self, indata: np.ndarray, frames: int, time, status) -> None:
         self._queue.append(indata.copy())

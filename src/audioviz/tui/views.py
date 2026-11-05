@@ -18,6 +18,7 @@ WAVEFORM_PEAK_FLOOR = 0.02  # keeps room noise from filling the tile
 BACKGROUND = np.array([12, 12, 16], dtype=np.uint8)
 OBSERVED = np.array([40, 90, 120], dtype=np.uint8)
 PREDICTED = np.array([250, 150, 30], dtype=np.uint8)
+COCHLEA_PREVIEW_SAMPLES = 128
 
 
 def waveform(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
@@ -53,7 +54,21 @@ def _band_index(bands: int, cols: int) -> np.ndarray:
 
 
 def prediction(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
-    """Audio evidence (filled bars) against the model's prediction (marker)."""
+    """Spectral bars, or raw audio (blue) and its causal cochlea prediction (orange)."""
+    cochlea = runtime.processor.cochlea
+    if cochlea is not None:
+        block = cochlea.last_block
+        if block is None or not runtime.orchestrator.audio_source.has_recent_observation():
+            return None
+        predicted = block.prediction[-COCHLEA_PREVIEW_SAMPLES:]
+        error = block.error[-COCHLEA_PREVIEW_SAMPLES:]
+        observed = predicted + error
+        scale = max(float(np.abs(observed).max()), float(np.abs(predicted).max()),
+                    float(np.abs(error).max()), WAVEFORM_PEAK_FLOOR)
+        image = np.tile(BACKGROUND, (rows, cols, 1))
+        image[waveform_to_rgb(observed / scale, rows, cols).any(axis=2)] = OBSERVED
+        image[waveform_to_rgb(predicted / scale, rows, cols).any(axis=2)] = PREDICTED
+        return image
     observed = runtime.orchestrator.audio_source.recent_observation()
     predicted = runtime.orchestrator.audio_prediction
     if observed is None or predicted is None:
@@ -70,7 +85,21 @@ def prediction(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None
 
 
 def prediction_error(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
-    """Signed per-band error (evidence - prediction), orange above zero, blue below."""
+    """Signed spectral error, or the cochlea's sample-aligned raw waveform residual."""
+    cochlea = runtime.processor.cochlea
+    if cochlea is not None:
+        block = cochlea.last_block
+        if block is None or not runtime.orchestrator.audio_source.has_recent_observation():
+            return None
+        predicted = block.prediction[-COCHLEA_PREVIEW_SAMPLES:]
+        error = block.error[-COCHLEA_PREVIEW_SAMPLES:]
+        raw = predicted + error
+        scale = max(float(np.abs(raw).max()), float(np.abs(predicted).max()),
+                    float(np.abs(error).max()), WAVEFORM_PEAK_FLOOR)
+        image = np.tile(BACKGROUND, (rows, cols, 1))
+        image[waveform_to_rgb(error / scale, rows, cols).any(axis=2)] = (220, 90, 100)
+        image[rows // 2] = (70, 70, 80)
+        return image
     observed = runtime.orchestrator.audio_source.recent_observation()
     predicted = runtime.orchestrator.audio_prediction
     if observed is None or predicted is None:

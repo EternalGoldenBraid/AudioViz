@@ -99,6 +99,14 @@ Accessible from GUI sliders:
 
 ## Predictive canvas
 
+An opt-in **cochlea** model in the standalone TUI predicts raw audio with a
+small bank of damped oscillator states. Their sum is the waveform prediction;
+its signed residual corrects the states. The graph exchanges oscillator-state
+targets and expectations, and output can monitor input, prediction, or error.
+See [Cochlea: predict the waveform](docs/cochlea/index.md) for the exact dynamics,
+inference and learning equations, listening controls, and editable diagrams.
+The default spectral model and `main.py`'s Qt audio path remain unchanged.
+
 The wave surface has two learned sensory branches:
 
 ```text
