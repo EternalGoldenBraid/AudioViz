@@ -88,6 +88,40 @@ def sensor_error_view(sensor_id: str) -> View:
     return view
 
 
+FLOW_POSITIVE = np.array([255, 140, 40], dtype=np.uint8)
+FLOW_NEGATIVE = np.array([50, 120, 255], dtype=np.uint8)
+
+
+def flows(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+    """Evidence flow per inferred branch (any sensor, in branch order, top to bottom).
+
+    Each branch has two bars: sensory error (observation - own prediction) above, and its push
+    on the shared canvas below. Length is intensity, shared by all branches so they compare;
+    orange means the signed mean is positive (above prediction), blue negative.
+    A branch without evidence this step has no row."""
+    branch_flows = runtime.orchestrator.branch_flows
+    if not branch_flows:
+        return None
+    scale = {
+        name: max(max(getattr(f, name) for f in branch_flows.values()), 1e-9)
+        for name in ("error_intensity", "push_intensity")
+    }
+    image = np.tile(BACKGROUND, (rows, cols, 1))
+    band = rows // len(branch_flows)
+    bar = max(band // 3, 1)
+    for index, flow in enumerate(branch_flows.values()):
+        top = index * band
+        for offset, (intensity, direction) in enumerate((
+            (flow.error_intensity / scale["error_intensity"], flow.error_direction),
+            (flow.push_intensity / scale["push_intensity"], flow.push_direction),
+        )):
+            start = top + bar // 2 + offset * (bar + 1)
+            image[start:start + bar, :max(int(intensity * cols), 1)] = (
+                FLOW_POSITIVE if direction >= 0 else FLOW_NEGATIVE
+            )
+    return image
+
+
 def canvas(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray:
     """The corrected canvas: signed RGB field, auto-scaled so faint activity stays visible."""
     field = runtime.engine.get_field_numpy()
@@ -214,4 +248,5 @@ VIEWS: dict[str, View] = {
     "visual_prediction": visual_prediction,
     "visual_error": visual_error,
     "hidden": hidden,
+    "flows": flows,
 }

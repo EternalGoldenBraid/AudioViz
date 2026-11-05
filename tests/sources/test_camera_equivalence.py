@@ -78,3 +78,44 @@ def test_each_camera_learns_its_own_readout():
         _step(orchestrator)
     assert orchestrator.sensor_readouts["camera 2"] is not orchestrator.visual_readout
     assert not np.array_equal(orchestrator.sensor_readouts["camera 2"].visual_weights, before)
+
+
+def test_branch_flows_show_each_camera_error_and_push_direction():
+    orchestrator = _orchestrator()
+    orchestrator.set_diagnostics_enabled(True)
+    orchestrator.camera_source.excitation = lambda: np.zeros((12, 16, 3), dtype=np.float32)
+    camera_2 = orchestrator.sensors["camera 2"]
+    camera_2.enabled = True
+    camera_2.excitation = lambda: np.ones((12, 16, 3), dtype=np.float32)
+    _step(orchestrator)
+
+    flows = orchestrator.branch_flows
+    assert set(flows) == {"camera 1", "camera 2"}
+    assert flows["camera 2"].error_direction > 0 and flows["camera 2"].push_intensity > 0
+    assert flows["camera 2"].push_direction > 0 > flows["camera 1"].push_direction
+
+
+def test_branch_flows_are_not_collected_without_diagnostics():
+    orchestrator = _orchestrator()
+    orchestrator.sensors["camera 2"].enabled = True
+    orchestrator.sensors["camera 2"].excitation = lambda: np.ones((12, 16, 3), dtype=np.float32)
+    _step(orchestrator)
+    assert orchestrator.branch_flows == {}
+
+
+def test_virtual_cameras_drive_both_branches_through_the_real_capture_path():
+    from audioviz.sources.virtual_camera import VIRTUAL_BASE
+
+    orchestrator = _orchestrator()
+    orchestrator.set_diagnostics_enabled(True)
+    first = orchestrator.camera_source
+    first.capture = None
+    first.camera_index = VIRTUAL_BASE + 1  # dark
+    camera_2 = orchestrator.sensors["camera 2"]
+    camera_2.enabled = True
+    camera_2.camera_index = VIRTUAL_BASE + 2  # bright
+    _step(orchestrator)
+
+    flows = orchestrator.branch_flows
+    assert set(flows) == {"camera 1", "camera 2"}
+    assert flows["camera 2"].push_direction > 0 > flows["camera 1"].push_direction

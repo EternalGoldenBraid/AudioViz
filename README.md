@@ -11,7 +11,7 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 * Audio-driven ripple simulations
 * Real-time visual feedback for musical or spoken input
 * Projected visuals in installations and performances
-* A canvas for future multimodal interactions (e.g., dance, pose-tracking)
+* A canvas for future multimodal interactions (e.g., dance, body motion learned from the sensor graph)
 
 ---
 
@@ -51,35 +51,6 @@ Git; `config/audio_devices.example.json` documents its structure and safe null
 device values.
 
 ---
-
-## 🧍 Pose Model
-
-The pose graph demo expects a local MediaPipe Pose Landmarker `.task` model when
-the installed MediaPipe version uses the Tasks API. Use the Lite bundle as the
-mobile-friendly default:
-
-```bash
-mkdir -p models
-curl -L -o models/pose_landmarker_lite.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task
-```
-
-Run the camera demo with the optional pose dependencies:
-
-```bash
-uv run --group pose-demo python scripts/pose_graph_demo.py --model-path models/pose_landmarker_lite.task
-```
-
-The downloaded `.task` bundle is ignored by git.
-
-## Offline pose+ripple validation
-
-Run a deterministic, offscreen end-to-end validation without live camera input:
-
-```bash
-uv run python scripts/validate_pose_ripple_render.py --frames 16 --synthetic-frequency 220 --synthetic-frequency 330 --pose-graph ring --pose-nodes 5
-```
-
-This writes PNG frames under `outputs/pose_ripple_validation/` and records an animated GIF by default. The offline dummy pose graph also carries a synthetic body mask so the same internal-boundary logic is exercised without live video. Use `--no-synthetic` to confirm the embedded pose medium stays quiescent without an external source, or pass `--video-path outputs/pose_ripple_validation/demo.mp4` when OpenCV is installed.
 
 ---
 
@@ -477,9 +448,8 @@ identity, role, representation, and bounded sampling:
 | Camera | Learned sensory branch | RGB prediction/evidence planes and hidden-channel maps |
 | Audio | Learned sensory branch | Spectral prediction/evidence bars and hidden-channel maps |
 | Synthetic | Direct wave drive | Signed drive-grid plane, before the engine's amplitude scaling |
-| Pose | Coupled medium | Valid mapped pose nodes and adjacency edges |
 
-Synthetic/pose attachments do not acquire invented predictive hidden layers.
+Synthetic attachments do not acquire invented predictive hidden layers.
 Layout links distinguish the sensory pathways from direct drive/medium
 attachments; labeled hidden-to-hidden links identify the optional loop.
 Individual learned connections remain in the 2D weight plots.
@@ -497,8 +467,7 @@ blue for negative and orange for positive. Main-canvas rendering is unchanged.
 
 The scene samples at most ten times per second, even with missing camera
 evidence. Image/hidden previews preserve aspect ratio and are capped at 64
-pixels per side; pose previews show at most 64 valid nodes and their induced
-edges; spectral previews accept at most 64 bands (audio currently uses 16).
+pixels per side; spectral previews accept at most 64 bands (audio currently uses 16).
 Only the latest scene is retained, independently of the 300-entry scalar
 histories. Hiding or minimizing the scene stops preview preparation and clears
 its cached data; reset clears both windows. Scalar telemetry stays enabled
@@ -536,7 +505,7 @@ incompatible PyOpenGL platform can be corrected by restarting with
 
 This project is meant to be more than a tool—it's a medium. Imagine walking into an empty room where every footstep sends waves across a projected canvas. Every voice becomes a living waveform, every interaction ripples outward. The future includes:
 
-* Using video/pose tracking (e.g., OpenPose) to trigger ripples from body motion
+* Learning body motion from the sensor graph's features to trigger ripples
 * Modeling crowd dynamics through ripple fields
 
 > *The machine is just a medium through which waves travel between us.*
@@ -571,7 +540,6 @@ main.py
 
 PRs and feature ideas welcome! Especially contributions around:
 
-* Pose tracking integration
 * Multi-person ripple graph
 * Real-time OSC/MIDI control hooks
 

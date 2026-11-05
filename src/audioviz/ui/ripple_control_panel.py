@@ -155,8 +155,6 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_amplitude_changed: Optional[Callable[[float], None]] = None,
         on_decay_alpha_changed: Optional[Callable[[float], None]] = None,
         on_damping_changed: Optional[Callable[[float], None]] = None,
-        on_boundary_transmission_changed: Optional[Callable[[float], None]] = None,
-        on_boundary_dissipation_changed: Optional[Callable[[float], None]] = None,
         rgb_canvas_enabled: bool = False,
         on_rgb_canvas_changed: Optional[Callable[[bool], None]] = None,
         rgb_canvas_available: bool = True,
@@ -179,8 +177,6 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.on_amplitude_changed = on_amplitude_changed
         self.on_decay_alpha_changed = on_decay_alpha_changed
         self.on_damping_changed = on_damping_changed
-        self.on_boundary_transmission_changed = on_boundary_transmission_changed
-        self.on_boundary_dissipation_changed = on_boundary_dissipation_changed
         self.on_rgb_canvas_changed = on_rgb_canvas_changed
         self.on_auto_color_levels_changed = on_auto_color_levels_changed
         self.on_auto_color_activation_threshold_changed = (
@@ -273,39 +269,6 @@ class RippleControlPanel(QtWidgets.QWidget):
             maximum=max(1000, int(self.engine.amplitude * 100)),
             value=int(self.engine.amplitude * 100),
             on_change=lambda raw: self.update_amplitude(raw / 100.0),
-        )
-
-        self.boundary_transmission_label, self.boundary_transmission_slider = self._add_slider(
-            group_layout,
-            title="Boundary Transmission",
-            tooltip=(
-                "Controls how much wave coupling is allowed across segmentation "
-                "boundary crossings. Lower values are more reflective."
-            ),
-            value_label=(
-                f"Boundary Transmission: {self.engine.body_boundary_transmission:.2f}"
-            ),
-            minimum=0,
-            maximum=100,
-            value=int(round(self.engine.body_boundary_transmission * 100)),
-            on_change=lambda raw: self.update_boundary_transmission(raw / 100.0),
-        )
-
-        self.boundary_dissipation_label, self.boundary_dissipation_slider = self._add_slider(
-            group_layout,
-            title="Masked Interior Dissipation",
-            tooltip=(
-                "Controls how strongly the full masked segmentation interior is "
-                "damped during the state update."
-            ),
-            value_label=(
-                "Masked Interior Dissipation: "
-                f"{self.engine.body_boundary_dissipation:.2f}"
-            ),
-            minimum=0,
-            maximum=100,
-            value=int(round(self.engine.body_boundary_dissipation * 100)),
-            on_change=lambda raw: self.update_boundary_dissipation(raw / 100.0),
         )
 
         self.rgb_canvas_checkbox = QCheckBox("RGB Canvas")
@@ -497,20 +460,6 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.auto_color_floor_label.setText(f"Reference Scale: {val:.2f}")
         if self.on_auto_color_floor_changed is not None:
             self.on_auto_color_floor_changed(val)
-
-    def update_boundary_transmission(self, val: float) -> None:
-        self.engine.set_body_boundary_transmission(val)
-        self.boundary_transmission_label.setText(f"Boundary Transmission: {val:.2f}")
-        if self.on_boundary_transmission_changed is not None:
-            self.on_boundary_transmission_changed(val)
-
-    def update_boundary_dissipation(self, val: float) -> None:
-        self.engine.set_body_boundary_dissipation(val)
-        self.boundary_dissipation_label.setText(
-            f"Masked Interior Dissipation: {val:.2f}"
-        )
-        if self.on_boundary_dissipation_changed is not None:
-            self.on_boundary_dissipation_changed(val)
 
     def _create_source_control_widget(
         self,

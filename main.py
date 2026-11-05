@@ -20,7 +20,6 @@ from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
 from audioviz.sources import (
     AudioSourceConfig,
     CameraFrameSourceConfig,
-    RipplePoseConfig,
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
@@ -126,23 +125,6 @@ RIPPLE_CONFIG = {
                 "linear_offset": 0.0,
             },
         },
-        "pose": {
-            "enabled": False,
-            # "render_mode": "standing-body",
-            "render_mode": "overlay",
-            "model_path": "models/pose_landmarker_lite.task",
-            "camera_index": 0,
-            "debug_view": False,
-            "medium": {
-                "graph_stiffness": 0.25,
-                "field_width_fraction": 1.0,
-                "field_height_fraction": 1.0,
-            },
-            "boundary": {
-                "transmission": 0.54,
-                "dissipation": 0.06,
-            },
-        },
         "camera_frame": {
             "enabled": True,
             # "enabled": True,
@@ -177,9 +159,6 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
     renderer = config["renderer"]
     audio = sources["audio"]
     audio_mapping = audio["mapping"]
-    pose = sources["pose"]
-    pose_medium = pose["medium"]
-    pose_boundary = pose["boundary"]
     camera_frame = sources["camera_frame"]
     prediction_error = config["transforms"]["prediction_error"]
     prediction_error_inference = prediction_error["inference"]
@@ -227,18 +206,6 @@ def build_ripple_visualizer_config(config: Dict) -> Dict:
                 weight_clip=prediction_error_learning["weight_clip"],
                 gradient_clip=prediction_error_learning["gradient_clip"],
             ),
-        ),
-        "pose_config": RipplePoseConfig(
-            enabled=pose["enabled"],
-            render_mode=pose["render_mode"],
-            model_path=pose["model_path"],
-            camera_index=pose["camera_index"],
-            debug_view=pose["debug_view"],
-            graph_stiffness=pose_medium["graph_stiffness"],
-            field_width_fraction=pose_medium["field_width_fraction"],
-            field_height_fraction=pose_medium["field_height_fraction"],
-            body_boundary_transmission=pose_boundary["transmission"],
-            body_boundary_dissipation=pose_boundary["dissipation"],
         ),
         "use_gpu": backend == "gpu",
         "use_shader": backend == "opengl",

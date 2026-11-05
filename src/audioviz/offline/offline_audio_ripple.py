@@ -8,14 +8,13 @@ import numpy as np
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.sources import (
     AudioSourceConfig,
-    RipplePoseConfig,
     RippleSourceOrchestratorConfig,
     SyntheticSourceConfig,
 )
-from audioviz.offline.offline_pose_ripple import (
+from audioviz.offline.render_artifacts import (
+    ALLOWED_VIDEO_SUFFIXES,
     RecordingFieldRenderer,
-    _ALLOWED_VIDEO_SUFFIXES,
-    _write_render_artifacts,
+    write_render_artifacts,
 )
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 
@@ -71,9 +70,9 @@ def run_offline_audio_ripple(
         if video_path is not None
         else resolved_output_dir / DEFAULT_VIDEO_NAME
     )
-    if resolved_video_path.suffix.lower() not in _ALLOWED_VIDEO_SUFFIXES:
+    if resolved_video_path.suffix.lower() not in ALLOWED_VIDEO_SUFFIXES:
         raise ValueError(
-            f"video_path must use one of {sorted(_ALLOWED_VIDEO_SUFFIXES)}"
+            f"video_path must use one of {sorted(ALLOWED_VIDEO_SUFFIXES)}"
         )
 
     window_length = int((window_duration_ms / 1000.0) * sr)
@@ -122,7 +121,6 @@ def run_offline_audio_ripple(
                 linear_offset=audio_visual_linear_offset,
             ),
         ),
-        pose_config=RipplePoseConfig(enabled=False),
     )
     visualizer.timer.stop()
     visualizer.renderer = renderer
@@ -161,9 +159,8 @@ def run_offline_audio_ripple(
     if not any(value > 1e-9 for value in max_abs_by_frame):
         raise RuntimeError("Offline audio ripple validation stayed blank.")
 
-    frame_paths = _write_render_artifacts(
+    frame_paths = write_render_artifacts(
         renderer.fields,
-        rgb_frames=renderer.rgb_frames if renderer.rgb_frames else None,
         output_dir=resolved_output_dir,
         video_path=resolved_video_path,
         fps=fps,

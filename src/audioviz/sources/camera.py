@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 from loguru import logger
 
+from audioviz.sources.virtual_camera import VIRTUAL_BASE, VirtualCapture
 from audioviz.utils.source_preview import SourceSceneMapping
 
 
@@ -81,9 +82,11 @@ class CameraFrameSource:
     def ensure_open(self) -> None:
         if self.capture is not None:
             return
-        cv2 = self.cv2_loader()
         logger.info("Opening camera source: {}", self.camera_index)
-        capture = cv2.VideoCapture(self.camera_index)
+        if isinstance(self.camera_index, int) and self.camera_index >= VIRTUAL_BASE:
+            capture = VirtualCapture(self.camera_index)
+        else:
+            capture = self.cv2_loader().VideoCapture(self.camera_index)
         if not capture.isOpened():
             capture.release()
             self.capture = None

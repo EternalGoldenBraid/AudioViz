@@ -57,15 +57,6 @@ class RippleSourceControlBinding:
                     toggle_key="synthetic",
                 )
             )
-        sections.append(
-            ControlPanelSection(
-                key="pose-source",
-                title="Pose Graph Source",
-                controls=(),
-                toggle_key="pose",
-                empty_message="No pose-specific controls are available yet.",
-            )
-        )
         transform_config = visualizer.prediction_error_transform.config
         if transform_config.enabled or visualizer.audio_source.processor is not None or not visualizer.use_shader:
             pathway_config = visualizer.source_orchestrator.visual_readout.config
@@ -127,12 +118,6 @@ class RippleSourceControlBinding:
                 enabled=visualizer.use_camera_source,
                 available=not visualizer.use_shader,
             ),
-            SourceToggle(
-                key="pose",
-                label="Pose Graph",
-                enabled=visualizer.use_pose_sources,
-                available=not (visualizer.use_gpu or visualizer.use_shader),
-            ),
         )
 
     def update_control(
@@ -171,9 +156,6 @@ class RippleSourceControlBinding:
                     "Camera-frame source currently requires the CPU/GPU ripple backend."
                 )
             visualizer.camera_source.set_enabled(enabled)
-            return
-        if source_key == "pose":
-            visualizer._set_pose_sources_enabled(enabled)
             return
         raise KeyError(f"Unknown source toggle: {source_key}")
 

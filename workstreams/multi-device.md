@@ -21,7 +21,7 @@ Node map: video0 = EO (MJPG/YUYV), video2 = IR (GREY); video1/3 are metadata.
 
 **Open.**
 - Which `/dev/video*` nodes are IR vs EO (one USB device exposes video0-3; metadata nodes are not capture nodes).
-- `sources/pose/frame_source.py` opens its own `VideoCapture`; the device is exclusive, so it must share the source.
+- (Resolved: the pose frame source that opened its own `VideoCapture` has been removed.)
 - Per-tile source binding does not exist; tiles are view-level.
 
 **Future.** Multiple audio inputs/outputs after cameras.
