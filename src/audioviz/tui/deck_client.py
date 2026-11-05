@@ -26,6 +26,7 @@ class DeckClient:
         self._socket.connect(str(path))
         self._reader = self._socket.makefile("rb")
         self.state: dict[str, dict] = {}
+        self.sensors: dict[str, dict] = {}  # sensor id -> {id, kind, enabled}
         self.previews: dict[str, np.ndarray] = {}
         self.wanted: dict[str, tuple[int, int]] = {}
         self.refresh()
@@ -39,6 +40,7 @@ class DeckClient:
             raise RuntimeError(reply["error"])
         if "controls" in reply:
             self.state = {c["name"]: c for c in reply["controls"]}
+            self.sensors = {s["id"]: s for s in reply.get("sensors", [])}
         return reply
 
     def refresh(self) -> None:

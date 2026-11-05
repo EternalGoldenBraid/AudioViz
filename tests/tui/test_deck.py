@@ -125,7 +125,8 @@ class StubDeck:
     def __init__(self):
         self.chosen = ["1: usb mic"]
         self.sent = []
-
+        self.sensors = {"camera 1": {"id": "camera 1", "kind": "camera", "enabled": True},
+                        "camera 2": {"id": "camera 2", "kind": "camera", "enabled": False}}
     @property
     def state(self):
         return {"audio in": {
@@ -219,7 +220,7 @@ def test_the_window_serves_the_tui_views_downsampled_and_the_client_decodes_them
     client._call = server.handle
 
     assert client.preview("canvas", 40, 80) is None  # the first ask only schedules the fetch
-    client.preview("camera", 40, 80)  # the camera view stays with the window: always null here
+    client.preview("camera_2", 40, 80)  # no observation yet: null
     client.preview("no-such-view", 40, 80)
     client.fetch_previews()
 

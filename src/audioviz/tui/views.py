@@ -42,6 +42,15 @@ def camera(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
     return runtime.camera.rgb() if runtime.show_camera else None  # None while the camera is off or has not delivered a frame
 
 
+def sensor_view(sensor_id: str) -> View:
+    """The latest observation of one orchestrator sensor, as the image the graph received (gain included)."""
+    def view(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+        sensor = runtime.orchestrator.sensors.get(sensor_id)
+        observation = None if sensor is None else sensor.observation
+        return None if observation is None else (np.clip(observation, 0.0, 1.0) * 255).astype(np.uint8)
+    return view
+
+
 def canvas(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray:
     """The corrected canvas: signed RGB field, auto-scaled so faint activity stays visible."""
     field = runtime.engine.get_field_numpy()
@@ -158,7 +167,8 @@ VIEWS: dict[str, View] = {
     "waveform": waveform,
     "spectrogram": spectrogram,
     "canvas": canvas,
-    "camera": camera,
+    "camera_1": camera,
+    "camera_2": sensor_view("camera 2"),
     "prediction": prediction,
     "error": prediction_error,
     "visual_prediction": visual_prediction,
