@@ -40,6 +40,9 @@ class DeckClient:
         """Writes the window's current knob values to its deck config file; returns the path."""
         return self._call({"op": "save"})["saved"]
 
+    def select(self, name: str, values: list[str]) -> None:
+        self._call({"op": "select", "name": name, "values": values})
+
     def nudge(self, name: str, steps: int) -> None:
         self._call({"op": "nudge", "name": name, "steps": steps})
 
@@ -60,6 +63,26 @@ class RemoteControl:
 
     def position(self, context=None) -> float:
         return self.client.state[self.name]["position"]
+
+    @property
+    def is_picker(self) -> bool:
+        """A device list: Enter opens a checklist instead of entering the knob."""
+        return "selected" in self.client.state[self.name]
+
+    @property
+    def choices(self) -> list[str]:
+        return self.client.state[self.name]["choices"] or []
+
+    @property
+    def selected(self) -> list[str]:
+        return self.client.state[self.name]["selected"]
+
+    @property
+    def capacity(self) -> int:
+        return self.client.state[self.name]["capacity"]
+
+    def select(self, values: list[str]) -> None:
+        self.client.select(self.name, values)
 
     def format(self, context=None) -> str:
         return self.client.state[self.name]["text"]
