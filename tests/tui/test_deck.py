@@ -125,8 +125,10 @@ class StubDeck:
     def __init__(self):
         self.chosen = ["1: usb mic"]
         self.sent = []
+        self.max_px = 160
         self.sensors = {"camera 1": {"id": "camera 1", "kind": "camera", "enabled": True},
                         "camera 2": {"id": "camera 2", "kind": "camera", "enabled": False}}
+
     @property
     def state(self):
         return {"audio in": {
@@ -208,6 +210,22 @@ def test_window_knobs_show_and_hide_windows_and_a_saved_hidden_window_starts_hid
     assert spectrogram.visible is True
 
 
+def test_the_grid_knob_chooses_the_next_launchs_grid_and_leaves_the_running_one_alone(tmp_path):
+    from audioviz.tui.deck_server import saved_grid
+
+    config = tmp_path / "deck.json"
+    window = SimpleNamespace(engine=FakeEngine(), source_orchestrator=None, resolution=(100, 200))
+    server = DeckServer(window, tmp_path / "a.sock", config)
+    server.controls = {n: c for n, c in server.controls.items() if n == "grid at launch"}
+
+    reply = server.handle({"op": "nudge", "name": "grid at launch", "steps": 1})["controls"]
+    chosen = next(c for c in reply if c["name"] == "grid at launch")["text"]
+    assert chosen != "100x200" and window.resolution == (100, 200)
+    assert saved_grid(config) is None  # nothing is stored until the deck saves
+    server.handle({"op": "save"})
+    assert saved_grid(config) == tuple(int(n) for n in chosen.split("x"))
+
+
 def test_the_window_serves_the_tui_views_downsampled_and_the_client_decodes_them():
     from audioviz.tui.graph_runtime import GraphRuntime
 
@@ -216,7 +234,7 @@ def test_the_window_serves_the_tui_views_downsampled_and_the_client_decodes_them
     server = DeckServer.__new__(DeckServer)
     server.target = runtime  # a GraphRuntime has every attribute the views read from a window
     client = DeckClient.__new__(DeckClient)
-    client.previews, client.wanted = {}, {}
+    client.previews, client.wanted, client.max_px = {}, {}, 160
     client._call = server.handle
 
     assert client.preview("canvas", 40, 80) is None  # the first ask only schedules the fetch

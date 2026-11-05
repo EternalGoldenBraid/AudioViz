@@ -219,7 +219,9 @@ class AudioVizApp(App):
         self.autosave = autosave
         self.settings = settings_controls()
         if attach:  # resolution and sound belong to the local graph, which is idle
-            self.settings = tuple(c for c in self.settings if c.name in ("theme", "tile background"))
+            self.settings = tuple(c for c in self.settings if c.name in ("theme", "tile background", "preview px"))
+        else:
+            self.settings = tuple(c for c in self.settings if c.name != "preview px")
         self.hot_reload = hot_reload
         self._reloader = HotReload()
         self._saved: dict | None = None

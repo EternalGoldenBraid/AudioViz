@@ -14,7 +14,7 @@ import qdarkstyle
 
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.spectrogram_visualizer import SpectrogramVisualizer
-from audioviz.tui.deck_server import DeckServer
+from audioviz.tui.deck_server import DeckServer, saved_grid
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
 from audioviz.sources import (
@@ -406,6 +406,9 @@ def main():
     # Create Ripple Wave Visualizer
     ripples_window_config = APP_CONFIG["windows"]["ripples"]
     if ripples_window_config["enabled"]:
+        saved = saved_grid()
+        if saved is not None:  # the grid chosen in the TUI's "grid at launch" knob
+            RIPPLE_CONFIG["field"]["resolution"] = saved
         ripple_config = build_ripple_visualizer_config(RIPPLE_CONFIG)
         ripple_window = RippleWaveVisualizer(
             processor=processor,

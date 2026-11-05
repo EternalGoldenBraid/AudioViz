@@ -21,9 +21,12 @@ from PyQt5.QtNetwork import QLocalServer
 
 from audioviz.tui import views
 from audioviz.tui.deck_devices import device_controls
+from audioviz.tui.graph_runtime import format_resolution, parse_resolution
 from audioviz.tui.mixer import CONTROLS, Control
+from audioviz.tui.settings import RESOLUTIONS
 
-MAX_PREVIEW_PX = 160  # longest side of a served view; tiles resample to their cells anyway
+MAX_PREVIEW_PX = 160  # default longest side of a served view; the TUI may ask for up to MAX_PREVIEW_LIMIT
+MAX_PREVIEW_LIMIT = 640
 SOCKET = Path(os.environ.get("AUDIOVIZ_DECK_SOCKET") or Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "audioviz-deck.sock")
 DECK_CONFIG = Path(os.environ.get("AUDIOVIZ_DECK_CONFIG") or Path(__file__).resolve().parents[3] / "config" / "deck.json")
 LIVE_CONTROLS = ("evidence gain", "camera gain", "damping", "speed", "inference rate", "canvas rate", "learning", "learning rate")
@@ -34,6 +37,24 @@ def window_control(name: str, widget) -> Control:
     def show(_target, value) -> None:
         widget.show() if value else widget.hide()
     return Control(f"{name} window", 0.0, 1.0, lambda _target: widget.isVisible(), show, toggle=True)
+
+
+GRID_CONTROL = "grid at launch"
+
+
+def grid_control(running: tuple[int, int]) -> Control:
+    """The simulation grid the next launch builds. The running window keeps its grid; `save` stores the choice."""
+    chosen = {"grid": format_resolution(running)}
+    choices = tuple(dict.fromkeys((*RESOLUTIONS, chosen["grid"])))
+    return Control(GRID_CONTROL, 0, 0, lambda _target: chosen["grid"], lambda _target, value: chosen.update(grid=value), choices=choices)
+
+
+def saved_grid(config_path: Path = DECK_CONFIG) -> tuple[int, int] | None:
+    """The grid saved by the deck, read before the window is built."""
+    if not config_path.exists():
+        return None
+    value = json.loads(config_path.read_text()).get(GRID_CONTROL)
+    return parse_resolution(value) if value else None
 
 
 def query_audio_devices() -> list[dict]:
@@ -90,11 +111,11 @@ class _SensorFrames:
         return None if observation is None else (np.clip(observation, 0.0, 1.0) * 255).astype(np.uint8)
 
 
-def render_view(target, name: str, rows: int, cols: int) -> dict | None:
+def render_view(target, name: str, rows: int, cols: int, max_px: int = MAX_PREVIEW_PX) -> dict | None:
     image = views.VIEWS[name](target, rows, cols)
     if image is None:
         return None
-    stride = max(1, -(-max(image.shape[:2]) // MAX_PREVIEW_PX))
+    stride = max(1, -(-max(image.shape[:2]) // min(max_px, MAX_PREVIEW_LIMIT)))
     image = np.ascontiguousarray(image[::stride, ::stride], dtype=np.uint8)
     return {"shape": list(image.shape), "data": base64.b64encode(image.tobytes()).decode()}
 
@@ -118,6 +139,8 @@ class DeckServer:
         self.config_path = config_path
         self.controls = {c.name: c for c in CONTROLS if c.name in LIVE_CONTROLS}
         self.controls["speed"] = replace(self.controls["speed"], low=10.0, high=3000.0, log=True)  # the window runs in m/s
+        if hasattr(window, "resolution"):
+            self.controls[GRID_CONTROL] = grid_control(window.resolution)
         if getattr(window, "processor", None) is not None:
             self.controls.update(device_controls(window, query_audio_devices()))
         for name, widget in (windows or {}).items():
@@ -147,7 +170,8 @@ class DeckServer:
     def handle(self, request: dict) -> dict:
         op = request["op"]
         if op == "views":
-            return {"views": {name: self.view(name, rows, cols) for name, rows, cols in request["views"]}}
+            max_px = int(request.get("max_px", MAX_PREVIEW_PX))
+            return {"views": {name: self.view(name, rows, cols, max_px) for name, rows, cols in request["views"]}}
         saved = None
         if op in ("nudge", "set", "select"):
             control = self.controls[request["name"]]
@@ -173,9 +197,9 @@ class DeckServer:
         orchestrator = self.target.orchestrator
         return list(getattr(orchestrator, "sensors", {}).values())
 
-    def view(self, name: str, rows: int, cols: int) -> dict | None:
+    def view(self, name: str, rows: int, cols: int, max_px: int = MAX_PREVIEW_PX) -> dict | None:
         try:
-            return render_view(self.target, name, int(rows), int(cols))
+            return render_view(self.target, name, int(rows), int(cols), max_px)
         except Exception:  # a node the window does not have yet, or a view that needs the local graph
             return None
 

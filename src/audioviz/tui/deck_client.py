@@ -27,6 +27,7 @@ class DeckClient:
         self._reader = self._socket.makefile("rb")
         self.state: dict[str, dict] = {}
         self.sensors: dict[str, dict] = {}  # sensor id -> {id, kind, enabled}
+        self.max_px = 160  # longest side of the images the window sends
         self.previews: dict[str, np.ndarray] = {}
         self.wanted: dict[str, tuple[int, int]] = {}
         self.refresh()
@@ -56,7 +57,8 @@ class DeckClient:
         wanted, self.wanted = self.wanted, {}
         if not wanted:
             return
-        reply = self._call({"op": "views", "views": [[name, rows, cols] for name, (rows, cols) in wanted.items()]})
+        reply = self._call({"op": "views", "max_px": self.max_px,
+                            "views": [[name, rows, cols] for name, (rows, cols) in wanted.items()]})
         for name, image in reply["views"].items():
             if image is None:
                 self.previews.pop(name, None)
