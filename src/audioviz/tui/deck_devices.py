@@ -138,12 +138,17 @@ def _camera_number(camera_index) -> int | None:
 
 def device_controls(window, devices: list[dict]) -> dict[str, DeviceControl]:
     """Controls for the devices the window has: audio in/out per the processor's channel counts, and the cameras."""
-    processor, orchestrator = window.processor, window.source_orchestrator
-    camera = orchestrator.camera_source
+    orchestrator = window.source_orchestrator
+    controls = audio_controls(window.processor, devices)
+    if camera_choices():  # only decides whether the control exists; its list is refreshed on use
+        controls["camera"] = CameraDevices(camera_choices, orchestrator.camera_source, orchestrator.secondary_camera_source)
+    return controls
+
+
+def audio_controls(processor, devices: list[dict]) -> dict[str, DeviceControl]:
     controls: dict[str, DeviceControl] = {}
     inputs = audio_choices(devices, "input", processor.input_channels)
     outputs = audio_choices(devices, "output", processor.output_channels)
-    cameras = camera_choices()  # only decides whether the control exists; its list is refreshed on use
     if inputs:
         controls["audio in"] = DeviceControl(
             "audio in", inputs, lambda: getattr(getattr(processor, "input_stream", None), "device", None),
@@ -152,6 +157,4 @@ def device_controls(window, devices: list[dict]) -> dict[str, DeviceControl]:
         controls["audio out"] = DeviceControl(
             "audio out", outputs, lambda: getattr(getattr(processor, "stream", None), "device", None),
             processor.set_output_device)
-    if cameras:
-        controls["camera"] = CameraDevices(camera_choices, camera, orchestrator.secondary_camera_source)
     return controls

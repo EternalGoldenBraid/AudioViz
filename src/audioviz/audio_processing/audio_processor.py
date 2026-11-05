@@ -176,6 +176,34 @@ class AudioProcessor:
             old.stop()
             old.close()
 
+    def rescan_devices(self) -> None:
+        """Re-initialises PortAudio so devices plugged in since startup are listed.
+
+        Open streams cannot survive that, so each is closed and reopened on the device of the same name; one that
+        is gone is left closed (the caller sees it as 'off').
+        """
+        names = {}
+        for attribute, kind in (("stream", "output"), ("input_stream", "input")):
+            stream = getattr(self, attribute, None)
+            if stream is not None:
+                names[attribute] = (kind, sd.query_devices(stream.device)["name"])
+                stream.stop()
+                stream.close()
+                setattr(self, attribute, None)
+        sd._terminate()
+        sd._initialize()
+        devices = sd.query_devices()
+        for attribute, (kind, name) in names.items():
+            index = next(
+                (i for i, d in enumerate(devices) if d["name"] == name and d[f"max_{kind}_channels"] > 0), None
+            )
+            if index is None:
+                logger.warning("Audio {} device {!r} is gone after rescan", kind, name)
+                continue
+            stream = self._open_output(index) if kind == "output" else self._open_input(index)
+            stream.start()
+            setattr(self, attribute, stream)
+
     def start(self):
 
         if not hasattr(self, 'stream') and not hasattr(self, 'input_stream'):

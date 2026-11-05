@@ -69,6 +69,10 @@ class DeckClient:
         """Writes the window's current knob values to its deck config file; returns the path."""
         return self._call({"op": "save"})["saved"]
 
+    def rescan(self) -> None:
+        """Asks the window to re-list its devices; audio streams are briefly reopened."""
+        self._call({"op": "rescan"})
+
     def select(self, name: str, values: list[str]) -> None:
         self._call({"op": "select", "name": name, "values": values})
 
