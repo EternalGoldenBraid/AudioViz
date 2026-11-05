@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -29,6 +30,7 @@ from audioviz.tui import keys as keys_module
 from audioviz.tui.hot_reload import HotReload
 from audioviz.tui.keys_overlay import KeysScreen
 from audioviz.tui.mixer import CONTROLS
+from audioviz.tui.record_tile import RecordPrompt, RecordTile
 from audioviz.tui.recorder import RecordedTile, Recorder
 from audioviz.tui.settings import settings_controls
 from audioviz.tui.themes import THEMES
@@ -77,6 +79,10 @@ def default_layout(width: int, height: int, mixer_ids: list[str], settings_ids: 
         columns = {2: [0, 2, 4], 3: [0, 1, 2, 4]}.get(len(row), range(len(row) + 1))  # a short row spans whole columns
         for i, name in enumerate(row):
             layout[name] = Placement(edges[columns[i]], y, edges[columns[i + 1]] - edges[columns[i]], h)
+    log = layout["log"]  # the record tile takes the bottom of the log's column
+    record_height = min(4, log.height // 2)
+    layout["record"] = Placement(log.x, log.y + log.height - record_height, log.width, record_height)
+    log.height -= record_height
     for name in HIDDEN_BY_DEFAULT:
         layout[name] = Placement(**vars(layout["camera_2"]))
     per_column = bottom // KNOB_HEIGHT
@@ -268,6 +274,8 @@ class AudioVizApp(App):
             for name in self.placements:
                 if name == "log":
                     yield LogTile(id="log", wrap=True)
+                elif name == "record":
+                    yield RecordTile(id="record")
                 elif name.startswith("knob-"):
                     _, context, control = next(k for k in self.knobs if k[0] == name)
                     yield KnobTile(context, control, id=name)
@@ -361,6 +369,9 @@ class AudioVizApp(App):
         for tile in self.query(KnobTile):
             if tile.display:
                 tile.refresh_view()
+        for tile in self.query(RecordTile):
+            if tile.display:
+                tile.refresh_view()
         self.record_frame()
 
     def recorded_tiles(self) -> list[RecordedTile]:
@@ -383,6 +394,17 @@ class AudioVizApp(App):
             self.recorder = None
             self.query_one("#log", LogTile).write(f"recording stopped: {error}")
 
+    def recordings_dir(self) -> Path:
+        return self.saves_dir.parent / "recordings"
+
+    def record_toggle_or_prompt(self) -> None:
+        """Stops a running recording; otherwise asks where to write the next one."""
+        if self.recorder is not None:
+            self.toggle_recording()
+            return
+        default = self.recordings_dir() / datetime.now().strftime("tui-%Y%m%d-%H%M%S.mp4")
+        self.push_screen(RecordPrompt(default), lambda path: path and self.toggle_recording(path))
+
     def toggle_recording(self, path: str | None = None) -> None:
         log = self.query_one("#log", LogTile)
         if self.recorder is not None:
@@ -390,8 +412,13 @@ class AudioVizApp(App):
             log.write(f"recorded {recorder.frames} frames to {recorder.stop()}")
             return
         name = path or datetime.now().strftime("tui-%Y%m%d-%H%M%S.mp4")
-        target = Path(name) if Path(name).is_absolute() or path else self.saves_dir.parent / "recordings" / name
+        target = Path(name).expanduser()
+        if not path:
+            target = self.recordings_dir() / target
+        elif target.is_dir() or name.endswith("/"):
+            target = target / datetime.now().strftime("tui-%Y%m%d-%H%M%S.mp4")
         self.recorder = Recorder(target.with_suffix(".mp4"), RECORD_FPS)
+        self.query_one(RecordTile).started = time.monotonic()
         log.write(f"recording the shown tiles to {self.recorder.path}; :record again stops")
 
     def apply_layout(self) -> None:
@@ -689,7 +716,7 @@ class AudioVizApp(App):
         if color is not None:
             Color.parse(color)  # raises on an invalid colour
         self.tile_background = color
-        for tile in self.query("ViewTile, KnobTile, LogTile"):
+        for tile in self.query("ViewTile, KnobTile, LogTile, RecordTile"):
             tile.styles.background = color if color else None
 
     def cycle_render(self) -> None:
