@@ -1,8 +1,8 @@
 # TUI: a terminal-native front end
 
 > **Status:** active · **Branch:** `agent/tui` (local, not pushed) · **Updated:** 2026-11-05
-> **Now:** first slice built and unit-tested: `main.py` serves 8 live knobs on a deck socket; `app --attach` drives them. Not yet tried against the real window.
-> **Next:** try it live (`python main.py` + `app --attach`), then generate knobs from `RIPPLE_CONFIG` sections.
+> **Now:** first slice works live: `app --attach` moved the real window's damping 0.988→0.998. Findings below.
+> **Next:** attach mode polish: scale-free knobs (speed 340 and camera gain pin at max), hide local-only tiles/status when attached, then knobs from `RIPPLE_CONFIG`.
 > **Blocked:** push needs `gh auth login -h github.com`, then `git push -u origin agent/tui`.
 > **Resume:** `copilot --resume efa7117b-d1b5-4bdb-bf79-7d9c8036c52e`
 > **Run:** `uv run --group tui --with-editable . python -m audioviz.tui.app --audio synthetic`
