@@ -1,0 +1,43 @@
+\documentclass[tikz,border=8pt]{standalone}
+\usepackage{xcolor}
+\usetikzlibrary{calc,arrows.meta,backgrounds}
+\definecolor{bg}{HTML}{1B1F27}
+\definecolor{fg}{HTML}{E6EDF3}
+\definecolor{dim}{HTML}{9AA5B1}
+\definecolor{c1}{HTML}{7BC47F}
+\definecolor{c2}{HTML}{E5826F}
+\definecolor{cd}{HTML}{B39DDB}
+\definecolor{feat}{HTML}{F0C060}
+\begin{document}
+\begin{tikzpicture}[show background rectangle, background rectangle/.style={fill=bg}, inner frame sep=10pt, every node/.style={text=fg}]
+\coordinate (C1) at (0,0.5);
+\coordinate (C2) at (10,0.5);
+\coordinate (X) at (5.3,4.3);
+\fill[cd!25!bg] (C1) -- (C2) -- (X) -- cycle;
+\draw[cd, dashed, line width=0.8pt] (C1) -- (C2);
+\draw[dim, dashed] (C1) -- (X); \draw[dim, dashed] (C2) -- (X);
+\node[text=cd] at (5,0.1) {baseline};
+\node[text=cd, font=\small] at (5.3,2.0) {epipolar plane};
+\draw[c1, line width=1pt, fill=c1!20!bg] (0.7,-0.3) -- (2.6,-0.2) -- (2.6,2.2) -- (0.7,2.1) -- cycle;
+\draw[c2, line width=1pt, fill=c2!20!bg] (7.4,-0.2) -- (9.3,-0.3) -- (9.3,2.1) -- (7.4,2.2) -- cycle;
+\node[text=c1] at (1.65,-0.7) {image 1};
+\node[text=c2] at (8.35,-0.7) {image 2};
+\fill[c1] (C1) circle (2pt); \fill[c2] (C2) circle (2pt);
+\fill[feat] (X) circle (2.6pt); \node[text=feat, above] at (X) {$X$};
+\coordinate (x1) at ($(C1)!0.3!(X)$);
+\coordinate (x2) at ($(C2)!0.3!(X)$);
+\coordinate (e1) at (1.7,0.5);
+\coordinate (e2) at (8.3,0.5);
+\fill[feat] (x1) circle (1.8pt); \fill[feat] (x2) circle (1.8pt);
+\node[text=feat, font=\small, left] at (x1) {$x_1$};
+\node[text=feat, font=\small, right] at (x2) {$x_2$};
+\fill[cd] (e1) circle (2pt); \fill[cd] (e2) circle (2pt);
+\node[text=cd, font=\small, below right] at (e1) {$e$};
+\node[text=cd, font=\small, below left] at (e2) {$e'$};
+\draw[cd, line width=1.4pt] ($(e1)!-0.2!(x1)$) -- ($(e1)!2.1!(x1)$);
+\draw[cd, line width=1.4pt] ($(e2)!-0.2!(x2)$) -- ($(e2)!2.1!(x2)$);
+\node[text=cd, font=\small, anchor=west, align=left] at (9.4,1.0) {line $l'=Fx_1$:\\[-1pt] $x_2$ must lie on it};
+\node[anchor=west] at (0,5.6) {Epipolar geometry: $x_1$ constrains $x_2$ to a line through the epipole, for any depth of $X$};
+\node[anchor=west, text=dim] at (0,-1.4) {$x_2^{\top}Fx_1=0$, \quad $F=K_2^{-\top}EK_1^{-1}$, \quad $E=[t]_\times R$ \quad ($E$: calibrated, 5 dof; $F$: 7 dof)};
+\end{tikzpicture}
+\end{document}

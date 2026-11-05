@@ -42,10 +42,31 @@ Later, the correspondences can be compared against several transforms. They form
 
 ![Transforms ordered by generality](./transforms.svg)
 
-- **Homography $H$**: point to point. Exact for a plane or a pure rotation. Residual structure that grows with scene depth means $\rho\neq 0$.
-- **Plane + parallax**: $x_2\sim Hx_1+\rho(x_1)\,e'$. The residual after $H$ points along the epipole $e'$ and carries per-pixel depth.
-- **Fundamental $F$ / essential $E$**: point to line. Holds for any rigid scene without needing depth; $E$ adds known intrinsics.
-- **Dense flow $u(x)$**: no geometry assumed. Covers non-rigid motion and anything the others miss.
+### Homography $H$
+
+Point to point. Exact for a plane or a pure rotation. Residual structure that grows with scene depth means $\rho\neq 0$.
+
+![Homography induced by a plane](./fig-homography.svg)
+
+### Plane + parallax
+
+$x_2\sim Hx_1+\rho(x_1)\,e'$. The residual after $H$ points along the epipole $e'$ and carries per-pixel depth.
+
+![Parallax of a point off the plane](./fig-parallax.svg)
+
+### Fundamental $F$ and essential $E$
+
+Point to line. Holds for any rigid scene without needing depth; $E$ adds known intrinsics.
+
+![Epipolar geometry](./fig-epipolar.svg)
+
+### Dense flow $u(x)$
+
+No geometry assumed. Covers non-rigid motion and anything the others miss.
+
+![Dense flow with an independent mover](./fig-flow.svg)
+
+### Side by side
 
 ![What each transform predicts in image 2](./predictions.svg)
 

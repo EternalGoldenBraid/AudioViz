@@ -1,0 +1,36 @@
+\documentclass[tikz,border=8pt]{standalone}
+\usepackage{xcolor}
+\usetikzlibrary{calc,arrows.meta,backgrounds}
+\definecolor{bg}{HTML}{1B1F27}
+\definecolor{fg}{HTML}{E6EDF3}
+\definecolor{dim}{HTML}{9AA5B1}
+\definecolor{c1}{HTML}{7BC47F}
+\definecolor{c2}{HTML}{E5826F}
+\definecolor{cb}{HTML}{6EA8FE}
+\definecolor{feat}{HTML}{F0C060}
+\begin{document}
+\begin{tikzpicture}[show background rectangle, background rectangle/.style={fill=bg}, inner frame sep=10pt, every node/.style={text=fg}]
+\coordinate (C1) at (0,0.5);
+\coordinate (C2) at (10,0.5);
+\coordinate (X1) at (4.6,3.0);
+\coordinate (X2) at (6.4,3.6);
+\coordinate (X3) at (5.4,3.9);
+\draw[cb, line width=1pt, fill=cb!18!bg] (2.6,2.4) -- (7.4,2.4) -- (8.6,4.4) -- (3.8,4.4) -- cycle;
+\node[text=cb] at (6.0,4.85) {plane $\Pi:\ n^{\top}X=d$};
+\foreach \f in {X1,X2,X3}{\draw[dim, dashed] (C1) -- (\f); \draw[dim, dashed] (C2) -- (\f);}
+\draw[c1, line width=1pt, fill=c1!20!bg] (0.8,0.2) -- (2.4,0.3) -- (2.4,1.9) -- (0.8,1.8) -- cycle;
+\draw[c2, line width=1pt, fill=c2!20!bg] (7.6,0.3) -- (9.2,0.2) -- (9.2,1.8) -- (7.6,1.9) -- cycle;
+\node[text=c1] at (1.6,-0.3) {image 1};
+\node[text=c2] at (8.4,-0.3) {image 2};
+\fill[c1] (C1) circle (2pt); \fill[c2] (C2) circle (2pt);
+\foreach \f in {X1,X2,X3}{
+  \fill[feat] ($(C1)!0.3!(\f)$) circle (1.6pt);
+  \fill[feat] ($(C2)!0.3!(\f)$) circle (1.6pt);
+  \fill[feat] (\f) circle (2.4pt);
+}
+\draw[-{Stealth[length=2.2mm]}, line width=1.2pt, feat, bend left=35] ($(C1)!0.3!(X2)$) to ($(C2)!0.3!(X2)$);
+\node[text=feat] at (5,1.2) {$x_2=Hx_1$};
+\node[anchor=west] at (0,5.6) {Homography: every feature lies on one plane $\Pi$, so image 1 maps to image 2 point to point};
+\node[anchor=west, text=dim] at (0,-1.2) {$H=K_2\!\left(R-\frac{t\,n^{\top}}{d}\right)\!K_1^{-1}$ \quad pure rotation ($t=0$): $H=K_2RK_1^{-1}$ for any scene};
+\end{tikzpicture}
+\end{document}
