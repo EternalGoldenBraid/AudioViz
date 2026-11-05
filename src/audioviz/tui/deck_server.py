@@ -10,6 +10,7 @@ Requests run on the Qt event loop thread, the thread that steps the engine.
 import json
 import os
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 from PyQt5.QtNetwork import QLocalServer
@@ -72,11 +73,14 @@ class DeckServer:
         if not self.server.listen(str(path)):
             raise OSError(f"deck socket {path}: {self.server.errorString()}")
         self.server.newConnection.connect(self._accept)
+        self.connections = []  # Python must keep the accepted sockets' wrappers alive while they serve
         self.load()
 
     def _accept(self) -> None:
         connection = self.server.nextPendingConnection()
-        connection.readyRead.connect(lambda: self._serve(connection))
+        self.connections.append(connection)
+        connection.readyRead.connect(partial(self._serve, connection))
+        connection.disconnected.connect(partial(self.connections.remove, connection))
 
     def _serve(self, connection) -> None:
         while connection.canReadLine():
