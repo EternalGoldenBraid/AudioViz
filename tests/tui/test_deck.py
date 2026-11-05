@@ -178,6 +178,35 @@ def test_enter_on_a_device_knob_opens_a_checklist_that_replaces_the_selection(tm
     asyncio.run(run())
 
 
+def test_window_knobs_show_and_hide_windows_and_a_saved_hidden_window_starts_hidden(tmp_path):
+    class Widget:
+        visible = True
+
+        def isVisible(self):
+            return self.visible
+
+        def show(self):
+            self.visible = True
+
+        def hide(self):
+            self.visible = False
+
+    config = tmp_path / "deck.json"
+    first, spectrogram = SimpleNamespace(engine=FakeEngine(), source_orchestrator=None), Widget()
+    server = DeckServer(first, tmp_path / "a.sock", config, windows={"spectrogram": spectrogram})
+    server.controls = {n: c for n, c in server.controls.items() if n == "spectrogram window"}
+
+    reply = server.handle({"op": "nudge", "name": "spectrogram window", "steps": -1})["controls"][0]
+    assert (spectrogram.visible, reply["text"], reply["toggle"]) == (False, "off", True)  # hidden, not closed
+    server.handle({"op": "save"})
+
+    second, reopened = SimpleNamespace(engine=FakeEngine(), source_orchestrator=None), Widget()
+    DeckServer(second, tmp_path / "b.sock", config, windows={"spectrogram": reopened})
+    assert reopened.visible is False
+    server.handle({"op": "nudge", "name": "spectrogram window", "steps": 1})
+    assert spectrogram.visible is True
+
+
 def test_the_window_serves_the_tui_views_downsampled_and_the_client_decodes_them():
     from audioviz.tui.graph_runtime import GraphRuntime
 

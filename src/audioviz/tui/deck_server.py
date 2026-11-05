@@ -29,6 +29,13 @@ DECK_CONFIG = Path(os.environ.get("AUDIOVIZ_DECK_CONFIG") or Path(__file__).reso
 LIVE_CONTROLS = ("evidence gain", "camera gain", "damping", "speed", "inference rate", "canvas rate", "learning", "learning rate")
 
 
+def window_control(name: str, widget) -> Control:
+    """Shows or hides one of the app's Qt windows; hidden windows keep running."""
+    def show(_target, value) -> None:
+        widget.show() if value else widget.hide()
+    return Control(f"{name} window", 0.0, 1.0, lambda _target: widget.isVisible(), show, toggle=True)
+
+
 def query_audio_devices() -> list[dict]:
     try:
         import sounddevice as sd
@@ -91,13 +98,15 @@ def describe_control(control, target) -> dict:
 
 
 class DeckServer:
-    def __init__(self, window, path: Path = SOCKET, config_path: Path = DECK_CONFIG) -> None:
+    def __init__(self, window, path: Path = SOCKET, config_path: Path = DECK_CONFIG, windows: dict | None = None) -> None:
         self.target = WindowTarget(window)
         self.config_path = config_path
         self.controls = {c.name: c for c in CONTROLS if c.name in LIVE_CONTROLS}
         self.controls["speed"] = replace(self.controls["speed"], low=10.0, high=3000.0, log=True)  # the window runs in m/s
         if getattr(window, "processor", None) is not None:
             self.controls.update(device_controls(window, query_audio_devices()))
+        for name, widget in (windows or {}).items():
+            self.controls[f"{name} window"] = window_control(name, widget)
         self.server = QLocalServer()
         QLocalServer.removeServer(str(path))
         if not self.server.listen(str(path)):
