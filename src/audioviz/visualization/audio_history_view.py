@@ -7,6 +7,17 @@ from audioviz.audio_processing.history import AudioHistory, history_grid
 
 COCHLEA_DB_RANGE = (-80.0, 0.0)
 COCHLEA_COLORMAP = "magma"
+SPECTRUM_DB_RANGE = (-80.0, 0.0)
+SPECTRUM_COLORMAP = "viridis"
+
+
+def spectrum_db(history: AudioHistory, columns: int) -> np.ndarray:
+    values = history_grid(
+        history.spectrum, sample_end=history.sample_end,
+        sample_span=len(history.waveform), columns=columns,
+    )
+    factor = 10 if history.mel_power else 20
+    return factor * np.log10(np.maximum(values, 1e-10))
 
 
 def cochlea_db(history: AudioHistory, columns: int) -> np.ndarray | None:

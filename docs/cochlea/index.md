@@ -348,6 +348,13 @@ have coincident boundary frames. Display resampling selects the later frame at
 that time; it does not stretch extra columns into fictitious elapsed time.
 Older missing data and incomplete oscillator hops remain blank.
 
+The diagnostic spectrogram uses $20\log_{10}$ for STFT magnitudes and
+$10\log_{10}$ for mel powers, both referenced to 1 in their stored units.
+The default display scale is fixed at $[-80,0]$ dB; it does not normalize to
+the loudest visible frame. These are uncalibrated analysis units, not sound
+pressure or waveform dBFS. Frequency labels use actual FFT bins or mel-filter
+centres, and the mel axis is explicitly marked as mel-spaced.
+
 ## Reproduce and inspect
 
 ```bash

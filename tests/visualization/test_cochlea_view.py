@@ -12,7 +12,10 @@ from PyQt5 import QtWidgets
 from audioviz.tui.deck_server import WindowTarget, render_view
 from audioviz.tui.graph_runtime import GraphRuntime
 from audioviz.tui.views import VIEWS
-from audioviz.visualization.audio_history_view import cochlea_db, level_rgb, COCHLEA_COLORMAP, COCHLEA_DB_RANGE
+from audioviz.visualization.audio_history_view import (
+    cochlea_db, level_rgb, COCHLEA_COLORMAP, COCHLEA_DB_RANGE,
+    spectrum_db, SPECTRUM_COLORMAP, SPECTRUM_DB_RANGE,
+)
 from audioviz.visualization.spectrogram_visualizer import SpectrogramVisualizer
 
 
@@ -48,6 +51,13 @@ def test_qt_and_attached_thumbnail_project_the_same_process_without_advancing_it
                 VIEWS["cochlea"](target, 16, columns),
                 level_rgb(view.cochlea_image.image[::-1], COCHLEA_DB_RANGE, COCHLEA_COLORMAP),
             )
+            spectrum = view.spectrogram_image_item.image
+            np.testing.assert_array_equal(spectrum, spectrum_db(history, spectrum.shape[1]))
+            np.testing.assert_array_equal(
+                VIEWS["spectrogram"](target, 16, spectrum.shape[1]),
+                level_rgb(spectrum[::-1], SPECTRUM_DB_RANGE, SPECTRUM_COLORMAP),
+            )
+            assert view.spectrogram_plot_item.getAxis("left").labelText == "Hz (mel)"
             assert render_view(target, "cochlea", 16, 80)["shape"] == [16, 80, 3]
             view.hide()
         np.testing.assert_array_equal(bank.state, state)
