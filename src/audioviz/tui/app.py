@@ -497,7 +497,7 @@ class AudioVizApp(App):
         def apply() -> None:
             try:
                 knob.control.select(values)
-                self.call_from_thread(log.write, f"{knob.control.name}: {', '.join(values)}")
+                self.call_from_thread(log.write, f"{knob.control.name}: {', '.join(values) or 'off'}")
             except Exception as error:  # a busy or missing device leaves the current one running
                 self.call_from_thread(log.write, f"{knob.control.name}: {error}")
             self.call_from_thread(knob.refresh_view)

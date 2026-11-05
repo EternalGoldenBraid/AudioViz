@@ -53,3 +53,14 @@ def test_one_camera_frees_the_second_and_a_swap_does_not_collide():
     assert control.selected() == ["2: IR"]
     assert secondary.excitation() is None
     assert primary.camera_index == 2
+
+
+def test_selecting_no_camera_closes_both_and_choosing_one_again_reopens_it():
+    primary, secondary = _sources()
+    control = CameraDevices(CHOICES, primary, secondary)
+    control.select(None, ["0: EO", "2: IR"])
+    control.select(None, [])
+    assert control.selected() == [] and _Cv2.open == set()  # devices are freed, not just ignored
+    assert primary.excitation() is None and secondary.excitation() is None
+    control.select(None, ["2: IR"])
+    assert control.selected() == ["2: IR"] and _Cv2.open == {2}

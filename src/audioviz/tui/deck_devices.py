@@ -78,24 +78,24 @@ class DeviceControl:
 
 class CameraDevices(DeviceControl):
     """Two cameras at once: the first selection feeds the canvas, the second runs beside it in its own scene tile.
-    Selecting one camera frees the second device."""
+    Selecting one camera frees the second device; selecting none closes both (eyes closed)."""
 
     def __init__(self, choices: tuple[str, ...], primary, secondary) -> None:
         super().__init__("camera", choices, lambda: _camera_number(primary.camera_index), primary.set_camera_index, capacity=2)
         self.primary, self.secondary = primary, secondary
 
     def selected(self, context=None) -> list[str]:
-        chosen = [_current(self.choices, _camera_number(self.primary.camera_index))]
-        if self.secondary.capture is not None:
-            chosen.append(_current(self.choices, _camera_number(self.secondary.camera_index)))
+        chosen = [_current(self.choices, _camera_number(source.camera_index)) for source in (self.primary, self.secondary) if source.enabled]
         return [c for c in chosen if c != "off"]
 
     def select(self, context, values: list[str]) -> None:
         values = list(dict.fromkeys(v for v in values if v in self.choices))[-self.capacity:]
-        if not values:
-            raise ValueError(f"{self.name}: closing a device is not supported yet; choose another")
         self.secondary.set_enabled_closing(False)  # frees the device a new primary may take
+        if not values:
+            self.primary.set_enabled_closing(False)
+            return
         self.primary.set_camera_index(_index(values[0]))
+        self.primary.set_enabled_closing(True)  # reopens after the eyes were closed
         if len(values) > 1:
             self.secondary.camera_index = _index(values[1])
             self.secondary.set_enabled_closing(True)
