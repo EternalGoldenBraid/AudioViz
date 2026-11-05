@@ -1,5 +1,12 @@
 # Weight-space programming
 
+> **Status:** idea (first encounter only) · **Branch:** `agent/tui` · **Updated:** 2026-11-05
+> **Now:** nothing running; note written from the blog post.
+> **Next:** dump the readout weights with a layout spec, ask a frontier model what the hidden units respond to, compare with measured responses.
+> **Blocked:** needs a weights export and a choice of readout and model.
+> **Resume:** `copilot --resume efa7117b-d1b5-4bdb-bf79-7d9c8036c52e` (main TUI session; no own session yet)
+> **Run:** none yet
+
 Source: https://rikiyat.github.io/blog/weight-space-programming/
 
 A frontier LLM reads, writes and edits a network's weights as text, without gradients. It names what a small net was trained for, writes game-playing nets from scratch, and fixes a failure by editing 0.016% of a language model's weights. The useful variant has the LLM interleave edits with a few forward passes. Idea for us: let an LLM interact with the computational graph.

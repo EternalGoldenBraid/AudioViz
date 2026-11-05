@@ -1,5 +1,12 @@
 # Live test agent: a small local agent that drives the TUI and reports
 
+> **Status:** active · **Branch:** `agent/tui` · **Updated:** 2026-11-05
+> **Now:** step 1 (scripted runner) done; step 2 (Ollama tool-calling agent) written, unverified.
+> **Next:** run `python -m audioviz.tui.agent`, check its verdict matches the scripted runner, compare `qwen3:4b` and `granite4`.
+> **Blocked:** none (start `ollama serve` first).
+> **Resume:** session `a31abe7e-332a-46ed-b841-eedde6bc468f` (`copilot --resume a31abe7e-332a-46ed-b841-eedde6bc468f`)
+> **Run:** `uv run --group tui --with-editable . python -m audioviz.tui.checks`
+
 **Essence.** A lightweight local model (Ollama) that runs live checks against the running
 AudioViz TUI through its control socket and reports pass/fail with evidence. It frees the
 main agent from hand-polling keys and screenshots. It checks known behaviour; it does not
