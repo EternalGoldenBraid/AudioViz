@@ -7,8 +7,10 @@ import shutil
 import subprocess
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -27,6 +29,7 @@ from audioviz.tui import keys as keys_module
 from audioviz.tui.hot_reload import HotReload
 from audioviz.tui.keys_overlay import KeysScreen
 from audioviz.tui.mixer import CONTROLS
+from audioviz.tui.recorder import RecordedTile, Recorder
 from audioviz.tui.settings import settings_controls
 from audioviz.tui.themes import THEMES
 from audioviz.tui.tile_list import TileList
@@ -35,6 +38,7 @@ from audioviz.tui import views as views_module
 MAX_LAYERS = 8
 BRAILLE_MIN_CELLS = 1200  # tiles at least this large render at braille density
 AUTOSAVE_SECONDS = 5
+RECORD_FPS = 15  # one frame per tile refresh
 SEQUENCE_SECONDS = 1.0  # how long the first key of a multi-key binding waits for the next
 CACHE_PATH = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "audioviz" / "state.json"
 SAVES_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "audioviz" / "saves"
@@ -102,6 +106,7 @@ class ViewTile(Static, can_focus=True):
         self.runtime = runtime
         self.deck = deck  # when attached, the images come from the running window
         self.render_mode: str | None = None  # None: choose by tile size
+        self.last_image: np.ndarray | None = None  # what the tile shows; the recorder reads it
         self.set_view(view)
 
     def mode_for(self, cells: int) -> str:
@@ -132,6 +137,7 @@ class ViewTile(Static, can_focus=True):
             image = self.deck.preview(self.view, *pixels)
         else:
             image = views_module.VIEWS[self.view](self.runtime, *pixels)
+        self.last_image = image
         if image is None:
             self.update("Select audio model: cochlea; waiting for audio" if self.view == "cochlea" else f"{self.view}: waiting for data")
             return
@@ -250,6 +256,7 @@ class AudioVizApp(App):
         self.hide_history: list[list[str]] = []  # what each hide took away, so `u` can bring it back
         self.pending_keys: list[str] = []  # the first keys of a multi-key binding such as `d d`
         self.stack = list(self.placements)  # bottom -> top
+        self.recorder: Recorder | None = None
         self._return_focus = None
         self.zoomed: str | None = None
         self.immersive = False
@@ -354,6 +361,38 @@ class AudioVizApp(App):
         for tile in self.query(KnobTile):
             if tile.display:
                 tile.refresh_view()
+        self.record_frame()
+
+    def recorded_tiles(self) -> list[RecordedTile]:
+        """The shown tiles that have an image, bottom to top as stacked, so the video matches the screen."""
+        tiles = []
+        for name in self.stack:
+            widget = self.query_one(f"#{name}")
+            image = getattr(widget, "last_image", None)
+            if image is not None and widget.display and self.visible(name):
+                placement = self.placements[name]
+                tiles.append(RecordedTile(placement.x, placement.y, placement.width, placement.height, image))
+        return tiles
+
+    def record_frame(self) -> None:
+        if self.recorder is None:
+            return
+        try:
+            self.recorder.capture(self.recorded_tiles())
+        except Exception as error:
+            self.recorder = None
+            self.query_one("#log", LogTile).write(f"recording stopped: {error}")
+
+    def toggle_recording(self, path: str | None = None) -> None:
+        log = self.query_one("#log", LogTile)
+        if self.recorder is not None:
+            recorder, self.recorder = self.recorder, None
+            log.write(f"recorded {recorder.frames} frames to {recorder.stop()}")
+            return
+        name = path or datetime.now().strftime("tui-%Y%m%d-%H%M%S.mp4")
+        target = Path(name) if Path(name).is_absolute() or path else self.saves_dir.parent / "recordings" / name
+        self.recorder = Recorder(target.with_suffix(".mp4"), RECORD_FPS)
+        log.write(f"recording the shown tiles to {self.recorder.path}; :record again stops")
 
     def apply_layout(self) -> None:
         stage = self.query_one("#stage").size
@@ -849,13 +888,15 @@ class AudioVizApp(App):
                 log.write(":w [name] save state+screenshot  :e [name] load   ? key bindings  :keys [write|reload]")
                 log.write("out off|prediction|error|input|evidence  volume <v>  audio tone <hz>")
                 log.write("resolution <n|RxC>  render half|quad|braille|auto  zoom")
-                log.write("screenshot [name]  q   save  rescan (attached: re-list audio devices)  (attached: window knobs -> config/deck.json, loaded by main.py)")
+                log.write("screenshot [name]  record [file]  q   save  rescan (attached: re-list audio devices)  (attached: window knobs -> config/deck.json, loaded by main.py)")
             elif name == "keys":
                 self.run_keys_command(args)
             elif name == "save":
                 if not self.attached:
                     raise ValueError("save writes the main.py window's knobs; start with --attach")
                 log.write(f"saved {self.deck.save()}")
+            elif name in ("record", "rec"):
+                self.toggle_recording(args[0] if args else None)
             elif name == "rescan":
                 if not self.attached:
                     raise ValueError("rescan re-lists the window's devices; start attached")

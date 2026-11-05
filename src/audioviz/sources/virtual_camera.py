@@ -6,7 +6,9 @@ selection as /dev/video* numbers.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+from functools import partial
 
 import numpy as np
 
@@ -34,8 +36,28 @@ def _gradient(tick: int) -> np.ndarray:
     return np.broadcast_to(ramp[None, :, None], (*FRAME_SHAPE, 3)).copy()
 
 
+FOCAL_PX = 140.0
+OBJECT_RADIUS_M = 0.12
+OBJECT_DEPTH_M = 1.0
+
+
+def _object_seen_from(camera_x_m: float, tick: int) -> np.ndarray:
+    """One sphere swinging left and right in front of a pinhole camera at camera_x_m; all cameras share the clock."""
+    x_m = 0.35 * np.sin(2 * np.pi * time.monotonic() / 6.0)
+    height, width = FRAME_SHAPE
+    u = FOCAL_PX * (x_m - camera_x_m) / OBJECT_DEPTH_M + width / 2
+    radius = FOCAL_PX * OBJECT_RADIUS_M / OBJECT_DEPTH_M
+    rows, cols = np.mgrid[:height, :width]
+    inside = (cols - u) ** 2 + (rows - height / 2) ** 2 <= radius**2
+    frame = np.zeros((height, width, 3), dtype=np.uint8)
+    frame[inside] = 255
+    return frame
+
+
 SCENES: dict[str, Callable[[int], np.ndarray]] = {
     "bar": _bar, "dark": _dark, "bright": _bright, "gradient": _gradient,
+    "object from left": partial(_object_seen_from, -0.3),
+    "object from right": partial(_object_seen_from, 0.3),
 }
 
 

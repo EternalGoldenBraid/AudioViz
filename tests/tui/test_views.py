@@ -457,3 +457,21 @@ def test_tile_list_stays_inside_a_short_terminal_so_it_can_scroll():
             assert options.scroll_y > 0
 
     asyncio.run(run())
+
+
+def test_record_writes_the_shown_tiles_and_stops_on_the_second_command(tmp_path):
+    import cv2
+
+    async def scenario(app, pilot):
+        await pilot.pause(0.5)
+        before = len(app.recorded_tiles())
+        app.hide_tiles(["spectrogram"])
+        target = tmp_path / "clip.mp4"
+        app.run_command("record", [str(target)])
+        await pilot.pause(0.8)
+        assert 0 < len(app.recorded_tiles()) == before - 1
+        app.run_command("record", [])
+        assert target.exists()
+        video = cv2.VideoCapture(str(target))
+        assert video.get(cv2.CAP_PROP_FRAME_COUNT) >= 3
+    _headless(tmp_path, scenario)
