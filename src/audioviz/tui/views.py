@@ -98,10 +98,10 @@ def flows(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
     Each branch has two bars: sensory error (observation - own prediction) above, and its push
     on the shared canvas below. Length is intensity, shared by all branches so they compare;
     orange means the signed mean is positive (above prediction), blue negative.
-    A branch without evidence this step has no row."""
+    A branch with no frame this step shows zero length; the tile stays up with any number of sensors."""
     branch_flows = runtime.orchestrator.branch_flows
     if not branch_flows:
-        return None
+        return np.tile(BACKGROUND, (rows, cols, 1))
     scale = {
         name: max(max(getattr(f, name) for f in branch_flows.values()), 1e-9)
         for name in ("error_intensity", "push_intensity")

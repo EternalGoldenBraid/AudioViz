@@ -119,3 +119,19 @@ def test_virtual_cameras_drive_both_branches_through_the_real_capture_path():
     flows = orchestrator.branch_flows
     assert set(flows) == {"camera 1", "camera 2"}
     assert flows["camera 2"].push_direction > 0 > flows["camera 1"].push_direction
+
+
+def test_flows_exist_for_a_single_camera_and_the_view_never_goes_blank():
+    from audioviz.tui.views import flows
+
+    orchestrator = _orchestrator()
+    orchestrator.set_diagnostics_enabled(True)
+    orchestrator.camera_source.excitation = lambda: np.ones((12, 16, 3), dtype=np.float32)
+    runtime = type("Runtime", (), {"orchestrator": orchestrator})()
+    assert flows(runtime, 12, 20).shape == (12, 20, 3)  # before any inference
+
+    _step(orchestrator)
+
+    assert set(orchestrator.branch_flows) == {"camera 1"}
+    assert orchestrator.branch_flows["camera 1"].error_intensity > 0
+    assert flows(runtime, 12, 20).any()
