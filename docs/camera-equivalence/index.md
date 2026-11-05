@@ -67,24 +67,66 @@ const moved = computed(() => pts.map(([px, py, h]) => ({
 })))
 </script>
 
-<div class="plx">
+<div class="plx" role="figure" aria-label="Interactive plane and parallax">
   <p><strong>Drag the baseline slider.</strong> Hollow dots show H's prediction; filled dots show the observed positions. The four points on the plane stay aligned.</p>
-  <svg viewBox="0 0 360 270" width="100%" style="max-width:520px;background:#1B1F27;border-radius:6px">
-    <rect :x="X(0)" :y="Y(3.8)" :width="5*60" :height="3.8*60" fill="#3a2d2f" stroke="#E5826F" stroke-width="2" />
+  <svg viewBox="-90 -15 540 285" class="plx-scene" aria-label="Plane-aligned predictions and observed points">
+    <rect :x="X(0)" :y="Y(3.8)" :width="5*60" :height="3.8*60" fill="#392e32" stroke="#E5826F" stroke-width="1.5" />
     <g v-for="(p,i) in moved" :key="i">
       <line v-if="p.h>0" :x1="X(ex)" :y1="Y(ey)" :x2="X(p.px)" :y2="Y(p.py)" stroke="#B39DDB" stroke-dasharray="4 3" stroke-width="0.8" />
       <line v-if="p.h>0" :x1="X(p.px)" :y1="Y(p.py)" :x2="X(p.mx)" :y2="Y(p.my)" stroke="#F0C060" stroke-width="1.5" />
-      <circle :cx="X(p.px)" :cy="Y(p.py)" r="4" fill="#1B1F27" stroke="#F0C060" stroke-width="1.5" />
-      <circle v-if="p.h>0" :cx="X(p.mx)" :cy="Y(p.my)" r="4" fill="#F0C060" />
+      <circle :cx="X(p.px)" :cy="Y(p.py)" r="2.8" fill="#1B1F27" stroke="#6EA8FE" stroke-width="1" />
+      <circle v-if="p.h>0" :cx="X(p.mx)" :cy="Y(p.my)" r="2.8" fill="#F0C060" />
     </g>
-    <text :x="X(ex)-5" :y="Y(ey)+4" fill="#B39DDB" font-size="14">x</text>
-    <text :x="X(ex)+6" :y="Y(ey)+16" fill="#B39DDB" font-size="11">e'</text>
+    <path :d="`M ${X(ex)-3} ${Y(ey)-3} l 6 6 m -6 0 l 6 -6`" stroke="#B39DDB" stroke-width="1" />
+    <text :x="X(ex)+6" :y="Y(ey)+16" fill="#B39DDB" font-size="13" font-style="italic">e&#8242;</text>
   </svg>
-  <div style="display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;max-width:520px;align-items:center">
-    <span>baseline t</span><input type="range" min="0" max="0.5" step="0.01" v-model.number="t" /><span>{{ t.toFixed(2) }}</span>
-    <span>epipole x</span><input type="range" min="-3" max="8" step="0.1" v-model.number="ex" /><span>{{ ex.toFixed(1) }}</span>
-    <span>epipole y</span><input type="range" min="-3" max="7" step="0.1" v-model.number="ey" /><span>{{ ey.toFixed(1) }}</span>
+  <div class="plx-controls">
+    <label for="plx-baseline">baseline <em>t</em></label><input id="plx-baseline" type="range" min="0" max="0.5" step="0.01" v-model.number="t" /><output for="plx-baseline">{{ t.toFixed(2) }}</output>
+    <label for="plx-epipole-x">epipole <em>x</em></label><input id="plx-epipole-x" type="range" min="-3" max="8" step="0.1" v-model.number="ex" /><output for="plx-epipole-x">{{ ex.toFixed(1) }}</output>
+    <label for="plx-epipole-y">epipole <em>y</em></label><input id="plx-epipole-y" type="range" min="-3" max="7" step="0.1" v-model.number="ey" /><output for="plx-epipole-y">{{ ey.toFixed(1) }}</output>
   </div>
+
+  <style scoped>
+  .plx {
+    margin: 16px 0;
+    padding: 18px;
+    background: #1B1F27;
+    color: #E6EDF3;
+    font-family: "Latin Modern Roman", "CMU Serif", "Computer Modern", serif;
+  }
+  .plx p {
+    margin: 0 0 16px;
+    line-height: 1.5;
+  }
+  .plx p:last-child {
+    margin-bottom: 0;
+    color: #9AA5B1;
+    font-size: 0.9em;
+  }
+  .plx-scene {
+    display: block;
+    width: 100%;
+    margin-bottom: 16px;
+    font-family: inherit;
+  }
+  .plx-controls {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) 3ch;
+    gap: 8px 16px;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .plx-controls input {
+    width: 100%;
+    min-width: 0;
+    accent-color: #F0C060;
+  }
+  .plx-controls output {
+    color: #F0C060;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  </style>
   <p v-if="t === 0"><strong>No translation:</strong> prediction and observation coincide at every depth. H is exact for pure rotation, but depth cannot be recovered.</p>
   <p v-else><strong>{{ t < 0.25 ? 'Small baseline:' : 'Larger baseline:' }}</strong> off-plane points {{ t < 0.25 ? 'separate slightly from' : 'move farther from' }} H's predictions. Their residuals lie along lines through the epipole e'. H still aligns the plane.</p>
   <p>Move the epipole to change those lines. This is a schematic model: the baseline scales the residual, not a calibrated distance in metres.</p>
