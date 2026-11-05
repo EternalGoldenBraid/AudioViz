@@ -6,15 +6,17 @@ so knob tiles work the same against a local runtime or a remote window.
 
 import json
 import socket
+import threading
 from pathlib import Path
 
 from audioviz.tui.deck_server import SOCKET
 
-TIMEOUT_S = 0.3
+TIMEOUT_S = 3.0  # the window answers between engine steps, which take a few hundred ms on large grids
 
 
 class DeckClient:
     def __init__(self, path: Path = SOCKET) -> None:
+        self._lock = threading.Lock()
         self._socket = socket.socket(socket.AF_UNIX)
         self._socket.settimeout(TIMEOUT_S)
         self._socket.connect(str(path))
@@ -23,8 +25,9 @@ class DeckClient:
         self.refresh()
 
     def _call(self, request: dict) -> None:
-        self._socket.sendall(json.dumps(request).encode() + b"\n")
-        reply = json.loads(self._reader.readline())
+        with self._lock:  # one request in flight; the poller thread and key handlers share the stream
+            self._socket.sendall(json.dumps(request).encode() + b"\n")
+            reply = json.loads(self._reader.readline())
         if "error" in reply:
             raise RuntimeError(reply["error"])
         self.state = {c["name"]: c for c in reply["controls"]}

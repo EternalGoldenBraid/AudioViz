@@ -304,10 +304,13 @@ class AudioVizApp(App):
         self.runtime.stop()
 
     def refresh_deck(self) -> None:
-        try:
-            self.deck.refresh()
-        except (OSError, RuntimeError) as error:  # the window closed or stalled; knobs keep their last values
-            self.query_one("#log", LogTile).write(f"deck: {error}")
+        def poll() -> None:
+            try:
+                self.deck.refresh()
+            except (OSError, RuntimeError) as error:  # the window closed or stalled; knobs keep their last values
+                self.call_from_thread(self.query_one("#log", LogTile).write, f"deck: {error}")
+
+        self.run_worker(poll, thread=True, exclusive=True, group="deck")
 
     def refresh_tiles(self) -> None:
         self.fit_if_resized()
