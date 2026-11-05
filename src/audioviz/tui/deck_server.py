@@ -13,11 +13,21 @@ from pathlib import Path
 
 from PyQt5.QtNetwork import QLocalServer
 
+from audioviz.tui.deck_devices import device_controls
 from audioviz.tui.mixer import CONTROLS, Control
 
 SOCKET = Path(os.environ.get("AUDIOVIZ_DECK_SOCKET") or Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "audioviz-deck.sock")
 DECK_CONFIG = Path(os.environ.get("AUDIOVIZ_DECK_CONFIG") or Path(__file__).resolve().parents[3] / "config" / "deck.json")
 LIVE_CONTROLS = ("evidence gain", "camera gain", "damping", "speed", "inference rate", "canvas rate", "learning", "learning rate")
+
+
+def query_audio_devices() -> list[dict]:
+    try:
+        import sounddevice as sd
+
+        return list(sd.query_devices())
+    except Exception:  # no audio backend: the audio knobs are simply absent
+        return []
 
 
 class WindowTarget:
@@ -51,6 +61,8 @@ class DeckServer:
         self.config_path = config_path
         self.controls = {c.name: c for c in CONTROLS if c.name in LIVE_CONTROLS}
         self.controls["speed"] = replace(self.controls["speed"], low=10.0, high=3000.0, log=True)  # the window runs in m/s
+        if getattr(window, "processor", None) is not None:
+            self.controls.update(device_controls(window, query_audio_devices()))
         self.server = QLocalServer()
         QLocalServer.removeServer(str(path))
         if not self.server.listen(str(path)):
@@ -95,9 +107,17 @@ class DeckServer:
         return str(self.config_path)
 
     def load(self) -> None:
-        """Applies the saved values; entries the window no longer offers are skipped."""
+        """Applies the saved values; entries the window no longer offers, or whose device fails to open, are skipped."""
         if not self.config_path.exists():
             return
         for name, value in json.loads(self.config_path.read_text()).items():
-            if name in self.controls:
-                self.controls[name].set(self.target, value)
+            control = self.controls.get(name)
+            if control is None:
+                continue
+            if control.choices and value not in control.choices:
+                value = next((c for c in control.choices if c.split(": ", 1)[-1] == str(value).split(": ", 1)[-1]), None)
+            try:
+                if value is not None:
+                    control.set(self.target, value)
+            except Exception as error:  # an unplugged device must not stop the window starting
+                print(f"deck config: {name}={value!r} skipped: {error}")
