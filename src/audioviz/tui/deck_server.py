@@ -72,7 +72,22 @@ class WindowTarget:
     def audio_readout(self):
         return self.window.source_orchestrator.audio_readout
 
-    show_camera = False  # the camera view stays with the window
+    show_camera = True
+
+    @property
+    def camera(self):
+        return _SensorFrames(self.orchestrator.sensors["camera 1"])
+
+
+class _SensorFrames:
+    """The runtime's camera interface, backed by the window's camera 1 observation."""
+
+    def __init__(self, sensor) -> None:
+        self.sensor = sensor
+
+    def rgb(self) -> np.ndarray | None:
+        observation = self.sensor.observation
+        return None if observation is None else (np.clip(observation, 0.0, 1.0) * 255).astype(np.uint8)
 
 
 def render_view(target, name: str, rows: int, cols: int) -> dict | None:
@@ -146,10 +161,17 @@ class DeckServer:
             saved = self.save()
         elif op != "controls":
             raise ValueError(f"unknown op {op!r}")
-        reply = {"controls": [describe_control(c, self.target) for c in self.controls.values()]}
+        reply = {
+            "controls": [describe_control(c, self.target) for c in self.controls.values()],
+            "sensors": [{"id": s.sensor_id, "kind": s.kind, "enabled": s.enabled} for s in self.sensors()],
+        }
         if saved:
             reply["saved"] = saved
         return reply
+
+    def sensors(self) -> list:
+        orchestrator = self.target.orchestrator
+        return list(getattr(orchestrator, "sensors", {}).values())
 
     def view(self, name: str, rows: int, cols: int) -> dict | None:
         try:

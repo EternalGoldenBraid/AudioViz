@@ -13,7 +13,7 @@ def runtime():
     return runtime
 
 
-@pytest.mark.parametrize("name", sorted(set(VIEWS) - {"camera"}))
+@pytest.mark.parametrize("name", sorted(set(VIEWS) - {"camera_1", "camera_2"}))
 def test_every_view_renders_an_rgb_image(runtime, name):
     image = VIEWS[name](runtime, 20, 40)
     assert image is not None
@@ -22,14 +22,21 @@ def test_every_view_renders_an_rgb_image(runtime, name):
 
 
 def test_camera_view_shows_the_latest_frame_as_rgb(runtime):
-    assert VIEWS["camera"](runtime, 20, 40) is None  # no device in this runtime
+    assert VIEWS["camera_1"](runtime, 20, 40) is None  # no device in this runtime
     runtime.show_camera = True
     runtime.camera._frame = np.zeros((4, 6, 3), np.uint8)
     runtime.camera._frame[..., 0] = 200  # blue channel in BGR
     try:
-        assert VIEWS["camera"](runtime, 20, 40)[0, 0].tolist() == [0, 0, 200]
+        assert VIEWS["camera_1"](runtime, 20, 40)[0, 0].tolist() == [0, 0, 200]
     finally:
         runtime.camera._frame = None
+
+
+def test_a_sensor_view_shows_that_sensors_observation(runtime):
+    camera_2 = runtime.orchestrator.sensors["camera 2"]
+    assert VIEWS["camera_2"](runtime, 20, 40) is None
+    camera_2.observation = np.full((3, 4, 3), 0.5, np.float32)
+    assert VIEWS["camera_2"](runtime, 20, 40)[0, 0].tolist() == [127, 127, 127]
 
 
 def test_bar_views_fill_the_requested_pixel_grid(runtime):
@@ -110,6 +117,7 @@ def test_spatial_focus_picks_nearest_neighbour_in_each_direction():
     app = AudioVizApp.__new__(AudioVizApp)
     from audioviz.tui.app import Placement
     app.groups, app.pages, app.hidden = [], {}, set()
+    app.sensors_enabled = lambda: {}
     app.placements = {
         "a": Placement(0, 0, 10, 5), "b": Placement(10, 0, 10, 5),
         "c": Placement(0, 5, 10, 5), "far": Placement(30, 0, 10, 5),
@@ -380,4 +388,17 @@ def test_dd_hides_a_tile_u_restores_it_and_the_tile_list_hides_whole_groups(tmp_
         app.hidden.clear()
         app.restore(saved)
         assert app.hidden == {"canvas", "spectrogram"}
+    _headless(tmp_path, scenario)
+
+
+def test_a_sensor_tile_is_shown_only_while_its_sensor_is_enabled(tmp_path):
+    async def scenario(app, pilot):
+        sensor = app.runtime.orchestrator.sensors["camera 2"]
+        assert not app.query_one("#camera_2").display  # camera 2 is off, so its tile is not shown
+
+        sensor.capture = type("NoFrames", (), {"read": lambda self: (False, None)})()  # open, delivering nothing
+        sensor.enabled = True  # the graph now uses it; the tile appears without any key press
+        app.apply_layout()
+        assert app.query_one("#camera_2").display
+        assert app.hidden == set()  # showing is the sensor's doing, not the user's hide list
     _headless(tmp_path, scenario)

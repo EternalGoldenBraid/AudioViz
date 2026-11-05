@@ -66,10 +66,10 @@ def default_layout(width: int, height: int, mixer_ids: list[str], settings_ids: 
     rest = height - bottom
     first, second = round(rest * 0.36), round(rest * 0.32)
     layout = {}
-    for row, y, h in ((("canvas", "camera", "visual_prediction", "visual_error"), 0, first),
+    for row, y, h in ((("canvas", "camera_1", "visual_prediction", "visual_error"), 0, first),
                       (("spectrogram", "waveform", "prediction", "error"), first, second),
-                      (("hidden", "log"), first + second, rest - first - second)):
-        columns = [0, 2, 4] if len(row) == 2 else range(len(row) + 1)  # a short row spans two columns each
+                      (("hidden", "camera_2", "log"), first + second, rest - first - second)):
+        columns = {2: [0, 2, 4], 3: [0, 1, 2, 4]}.get(len(row), range(len(row) + 1))  # a short row spans whole columns
         for i, name in enumerate(row):
             layout[name] = Placement(edges[columns[i]], y, edges[columns[i + 1]] - edges[columns[i]], h)
     per_column = bottom // KNOB_HEIGHT
@@ -322,8 +322,11 @@ class AudioVizApp(App):
     def refresh_deck(self) -> None:
         def poll() -> None:
             try:
+                before = self.sensors_enabled()
                 self.deck.refresh()
                 self.deck.fetch_previews()
+                if self.sensors_enabled() != before:  # a sensor was switched on or off: its tile appears or goes
+                    self.call_from_thread(self.apply_layout)
             except (OSError, RuntimeError) as error:  # the window closed or stalled; knobs keep their last values
                 self.call_from_thread(self.query_one("#log", LogTile).write, f"deck: {error}")
 
@@ -360,8 +363,16 @@ class AudioVizApp(App):
         page = self.pages.get(group[0])
         return (group, page) if page and len(group) > page["size"] else None
 
+    def sensors_enabled(self) -> dict[str, bool]:
+        """Which sensors the graph is using; a tile named after a sensor shows only while it is enabled."""
+        if self.attached:
+            return {s["id"]: s["enabled"] for s in self.deck.sensors.values()}
+        orchestrator = self.runtime.orchestrator
+        return {i: self.runtime.show_camera if s is orchestrator.camera_source else s.enabled
+                for i, s in orchestrator.sensors.items()}
+
     def visible(self, name: str) -> bool:
-        if name in self.hidden:
+        if name in self.hidden or not self.sensors_enabled().get(name.replace("_", " "), True):
             return False
         paged = self.page_of(name)
         if paged is None:
