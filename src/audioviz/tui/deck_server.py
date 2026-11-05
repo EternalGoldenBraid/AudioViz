@@ -215,6 +215,8 @@ class DeckServer:
 
     def view(self, name: str, rows: int, cols: int, max_px: int = MAX_PREVIEW_PX) -> dict | None:
         try:
+            if name == "flows":  # the window collects flows only when something shows them
+                self.target.orchestrator.set_diagnostics_enabled(True)
             return render_view(self.target, name, int(rows), int(cols), max_px)
         except Exception:  # a node the window does not have yet, or a view that needs the local graph
             return None
