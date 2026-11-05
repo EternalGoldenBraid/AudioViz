@@ -354,12 +354,27 @@ class PredictiveCodingHiddenCoupling:
         return camera._capture_prediction(), audio._capture_prediction()
 
 
+@dataclass(frozen=True)
+class BranchFlow:
+    """Per-branch evidence and canvas push, averaged over the inference steps.
+
+    Sensory error is observation minus the branch's own prediction; push is the
+    branch's contribution to the shared-canvas correction. Both are mean
+    absolute (intensity) and mean signed (direction) values."""
+
+    error_intensity: float
+    error_direction: float
+    push_intensity: float
+    push_direction: float
+
+
 def infer_joint(
     prior: np.ndarray,
     branches: tuple[tuple[PredictiveCodingRGBReadout, np.ndarray | None], ...],
     *,
     coupling: PredictiveCodingHiddenCoupling | None = None,
     stream_states: Mapping[PredictiveCodingRGBReadout, bool] | None = None,
+    flows: dict | None = None,
 ) -> np.ndarray:
     """Infer active sensory branches synchronously, with weights fixed until settling."""
     if not branches:
@@ -386,6 +401,7 @@ def infer_joint(
         observations.append((branch, branch._coerce_observation(observed) if observed is not None else None))
     collect = any(branch.diagnostics_enabled for branch, _ in observations)
     trajectory: list[float] = []
+    flow_sums = {branch: np.zeros(4) for branch, _ in observations} if flows is not None else None
     for _ in range(steps):
         canvas_activity = np.tanh(canvas)
         correction = np.zeros_like(canvas)
@@ -402,9 +418,15 @@ def infer_joint(
                 np.zeros_like(branch.visual_error) if observed is None
                 else observed - branch._predict_observation(hidden_activity)
             )
-            correction += branch.config.canvas_rate * (
+            push = branch.config.canvas_rate * (
                 (1.0 - canvas_activity**2) * (hidden_error @ branch.canvas_weights)
             )
+            correction += push
+            if flow_sums is not None:
+                flow_sums[branch] += (
+                    float(np.abs(sensory_error).mean()), float(sensory_error.mean()),
+                    float(np.abs(push).mean()), float(push.mean()),
+                )
             feedback = sensory_error @ branch.visual_weights
             if branch in states:
                 _, state_error, state_direction = branch._stream_state_terms(states[branch], hidden_activity)
@@ -463,4 +485,8 @@ def infer_joint(
         )
     correction = canvas - first._coerce(prior, name="canvas prior")
     first._require_finite(correction)
+    if flows is not None:
+        flows.clear()
+        for branch, total in flow_sums.items():
+            flows[branch] = BranchFlow(*(total / steps))
     return correction.astype(np.float32)

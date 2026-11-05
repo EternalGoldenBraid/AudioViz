@@ -135,6 +135,7 @@ class RippleSourceOrchestrator:
         }
         # Every further camera is equivalent evidence on the shared canvas, with its own learned readout: no
         # geometry between cameras is assumed; hidden units that several cameras' pixels excite are the correspondence.
+        self.branch_flows: dict = {}
         self.sensor_readouts = {
             "camera 2": PredictiveCodingRGBReadout(canvas_shape=self.canvas_shape, config=config.visual_pathway),
         }
@@ -275,12 +276,17 @@ class RippleSourceOrchestrator:
                 stream_states[self.audio_readout] = self.audio_source.enabled
             # The hidden coupling is defined for exactly the visual and audio branches.
             coupled = self.visual_readout.config.cross_modal_enabled and not extras
+            by_readout: dict = {}
             correction = infer_joint(
                 self.engine.get_prior_numpy(),
                 (*branches, *extras),
                 coupling=self.hidden_coupling if coupled else None,
                 stream_states=stream_states,
+                flows=by_readout if self.visual_readout.diagnostics_enabled else None,
             )
+            names = {self.visual_readout: "camera 1", self.audio_readout: "audio"}
+            names.update({readout: sensor_id for sensor_id, readout in self.sensor_readouts.items()})
+            self.branch_flows = {names[readout]: flow for readout, flow in by_readout.items()}
         self.engine.apply_observation_correction(correction)
         bank = getattr(self.audio_source.processor, "cochlea", None)
         if bank is not None and audio is not None and self.audio_prediction is not None and self.audio_source.observation_gain > 0:
@@ -324,6 +330,7 @@ class RippleSourceOrchestrator:
             readout.set_spatial_preview_enabled(False)
             readout.reset()
         self.sensor_predictions.clear()
+        self.branch_flows = {}
         if self.audio_readout is not None:
             self.audio_readout.set_spatial_preview_enabled(False)
             self.audio_readout.reset()

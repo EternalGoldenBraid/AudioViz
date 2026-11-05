@@ -4,8 +4,11 @@ Choices are labelled "<index>: <name>"; a saved choice is matched by name so it 
 """
 
 import glob
+import os
 import re
 from pathlib import Path
+
+from audioviz.sources.virtual_camera import virtual_choices
 
 
 def label(index: int, name: str) -> str:
@@ -27,7 +30,8 @@ def camera_choices() -> tuple[str, ...]:
             continue
         name = (sysfs / "name").read_text().strip() if (sysfs / "name").exists() else path
         choices.append((number, label(number, name)))
-    return tuple(text for _, text in sorted(choices))
+    virtual = virtual_choices() if os.environ.get("AUDIOVIZ_VIRTUAL_CAMERAS") else ()
+    return tuple(text for _, text in sorted(choices)) + virtual
 
 
 def _index(choice: str) -> int:
