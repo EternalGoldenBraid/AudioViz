@@ -1,7 +1,8 @@
 """Serves a running Qt visualizer's parameters to the TUI deck over a local socket.
 
 JSON lines. Requests: {"op": "controls"} | {"op": "nudge", "name": n, "steps": k}
-                      | {"op": "set", "name": n, "value": v}
+                      | {"op": "set", "name": n, "value": v} | {"op": "select", "name": n, "values": [v, ...]}
+                      | {"op": "save"}
 Every reply is {"controls": [...]} describing the current state of each control, or {"error": ...}.
 Requests run on the Qt event loop thread, the thread that steps the engine.
 """
@@ -45,14 +46,17 @@ class WindowTarget:
         return self.window.source_orchestrator
 
 
-def describe_control(control: Control, target) -> dict:
-    return {
+def describe_control(control, target) -> dict:
+    description = {
         "name": control.name,
         "position": control.position(target),
         "text": control.format(target),
         "choices": list(control.choices) if control.choices else None,
         "toggle": control.toggle,
     }
+    if hasattr(control, "selected"):  # a device list: the checked entries and how many may be checked
+        description.update(selected=control.selected(target), capacity=control.capacity)
+    return description
 
 
 class DeckServer:
@@ -85,10 +89,12 @@ class DeckServer:
     def handle(self, request: dict) -> dict:
         op = request["op"]
         saved = None
-        if op in ("nudge", "set"):
+        if op in ("nudge", "set", "select"):
             control = self.controls[request["name"]]
             if op == "nudge":
                 control.nudge(self.target, int(request["steps"]))
+            elif op == "select":
+                control.select(self.target, list(request["values"]))
             else:
                 control.set(self.target, request["value"])
         elif op == "save":

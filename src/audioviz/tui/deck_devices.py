@@ -6,7 +6,6 @@ Choices are labelled "<index>: <name>"; a saved choice is matched by name so it 
 import glob
 import re
 from pathlib import Path
-from audioviz.tui.mixer import Control
 
 
 def label(index: int, name: str) -> str:
@@ -40,18 +39,41 @@ def _current(choices: tuple[str, ...], index) -> str:
     return next((c for c in choices if _index(c) == index), "off")
 
 
-def _choice_control(name: str, choices: tuple[str, ...], current, apply) -> Control:
-    """A choice knob that keeps the selected entry when the device fails to open, so h/l can step past it."""
-    selected: list[str] = []
+class DeviceControl:
+    """Picks devices from a list. `select` takes the whole selection; a control with capacity 1 keeps the last entry,
+    so choosing a second device replaces the first. Nothing opens until `select` is called."""
 
-    def get(_) -> str:
-        return selected[0] if selected else _current(choices, current())
+    toggle = False
 
-    def set_(_, value: str) -> None:
-        selected[:] = [value]
-        apply(_index(value))
+    def __init__(self, name: str, choices: tuple[str, ...], current, apply, capacity: int = 1) -> None:
+        self.name, self.choices, self.capacity = name, choices, capacity
+        self._current, self._apply = current, apply
 
-    return Control(name, 0, 0, get, set_, choices=choices)
+    def selected(self, context=None) -> list[str]:
+        label_ = _current(self.choices, self._current())
+        return [] if label_ == "off" else [label_]
+
+    def select(self, context, values: list[str]) -> None:
+        values = [v for v in values if v in self.choices][-self.capacity:]
+        if not values:
+            raise ValueError(f"{self.name}: closing a device is not supported yet; choose another")
+        for value in values:
+            self._apply(_index(value))
+
+    def get(self, context=None) -> str:
+        return ", ".join(self.selected(context)) or "off"
+
+    def set(self, context, value: str) -> None:
+        self.select(context, [value])
+
+    def format(self, context=None) -> str:
+        return self.get(context)
+
+    def position(self, context=None) -> float:
+        return 0.0
+
+    def nudge(self, context, steps: int) -> None:
+        raise ValueError("press Enter to choose a device")
 
 
 def _camera_number(camera_index) -> int | None:
@@ -60,21 +82,21 @@ def _camera_number(camera_index) -> int | None:
     return int(digits) if digits else None
 
 
-def device_controls(window, devices: list[dict]) -> dict[str, Control]:
+def device_controls(window, devices: list[dict]) -> dict[str, DeviceControl]:
     """Controls for the devices the window has: audio in/out per the processor's channel counts, and the camera."""
     processor, camera = window.processor, window.source_orchestrator.camera_source
-    controls: dict[str, Control] = {}
+    controls: dict[str, DeviceControl] = {}
     inputs = audio_choices(devices, "input", processor.input_channels)
     outputs = audio_choices(devices, "output", processor.output_channels)
     cameras = camera_choices()
     if inputs:
-        controls["audio in"] = _choice_control(
+        controls["audio in"] = DeviceControl(
             "audio in", inputs, lambda: getattr(getattr(processor, "input_stream", None), "device", None),
             processor.set_input_device)
     if outputs:
-        controls["audio out"] = _choice_control(
+        controls["audio out"] = DeviceControl(
             "audio out", outputs, lambda: getattr(getattr(processor, "stream", None), "device", None),
             processor.set_output_device)
     if cameras:
-        controls["camera"] = _choice_control("camera", cameras, lambda: _camera_number(camera.camera_index), camera.set_camera_index)
+        controls["camera"] = DeviceControl("camera", cameras, lambda: _camera_number(camera.camera_index), camera.set_camera_index)
     return controls

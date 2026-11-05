@@ -74,7 +74,7 @@ class FakeProcessor:
         if index == 2:
             raise RuntimeError("busy")
         self.opened.append(index)
-
+        self.input_stream = SimpleNamespace(device=index)
     def set_output_device(self, index):
         pass
 
@@ -87,7 +87,7 @@ DEVICES = [
 ]
 
 
-def test_device_knob_steps_past_a_device_that_fails_and_saved_names_survive_reindexing(tmp_path, monkeypatch):
+def test_choosing_a_device_replaces_the_previous_one_and_a_failed_open_changes_nothing(tmp_path, monkeypatch):
     from audioviz.tui import deck_devices, deck_server
 
     monkeypatch.setattr(deck_server, "query_audio_devices", lambda: DEVICES)
@@ -99,19 +99,21 @@ def test_device_knob_steps_past_a_device_that_fails_and_saved_names_survive_rein
     config = tmp_path / "deck.json"
     server = DeckServer(window, tmp_path / "a.sock", config)
     knob = server.controls["audio in"]
+    server.controls = {"audio in": knob}  # the fake window has no orchestrator for the mixer knobs
     assert knob.choices == ("1: usb mic", "2: busy mic", "3: pro mic")
-    assert knob.get(server.target) == "off"  # no stream open yet, so nothing for a save to reopen
+    assert knob.selected() == []  # no stream open yet, so nothing for a save to reopen
 
-    knob.set(server.target, "1: usb mic")
-    for _ in range(2):  # the failing step still moves the selection, so the next step is reachable
-        try:
-            knob.nudge(server.target, 1)
-        except RuntimeError:
-            pass
-    assert knob.get(server.target) == "3: pro mic"
-    assert processor.opened == [1, 3]
+    # Two devices checked at once: capacity is 1, so only the later one opens.
+    server.handle({"op": "select", "name": "audio in", "values": ["1: usb mic", "3: pro mic"]})
+    assert (processor.opened, knob.selected()) == ([3], ["3: pro mic"])
+
+    with pytest.raises(RuntimeError):  # the fake refuses device 2
+        server.handle({"op": "select", "name": "audio in", "values": ["2: busy mic"]})
+    assert knob.selected() == ["3: pro mic"]
 
     # The saved name is found again after the devices were renumbered.
     config.write_text('{"audio in": "7: pro mic"}')
     server.load()
-    assert processor.opened == [1, 3, 3]
+    assert processor.opened == [3, 3]
+    described = {c["name"]: c for c in server.handle({"op": "controls"})["controls"]}
+    assert (described["audio in"]["selected"], described["audio in"]["capacity"]) == (["3: pro mic"], 1)
