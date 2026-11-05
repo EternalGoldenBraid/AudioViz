@@ -76,6 +76,31 @@ class DeviceControl:
         raise ValueError("press Enter to choose a device")
 
 
+class CameraDevices(DeviceControl):
+    """Two cameras at once: the first selection feeds the canvas, the second runs beside it in its own scene tile.
+    Selecting one camera frees the second device."""
+
+    def __init__(self, choices: tuple[str, ...], primary, secondary) -> None:
+        super().__init__("camera", choices, lambda: _camera_number(primary.camera_index), primary.set_camera_index, capacity=2)
+        self.primary, self.secondary = primary, secondary
+
+    def selected(self, context=None) -> list[str]:
+        chosen = [_current(self.choices, _camera_number(self.primary.camera_index))]
+        if self.secondary.capture is not None:
+            chosen.append(_current(self.choices, _camera_number(self.secondary.camera_index)))
+        return [c for c in chosen if c != "off"]
+
+    def select(self, context, values: list[str]) -> None:
+        values = list(dict.fromkeys(v for v in values if v in self.choices))[-self.capacity:]
+        if not values:
+            raise ValueError(f"{self.name}: closing a device is not supported yet; choose another")
+        self.secondary.set_enabled_closing(False)  # frees the device a new primary may take
+        self.primary.set_camera_index(_index(values[0]))
+        if len(values) > 1:
+            self.secondary.camera_index = _index(values[1])
+            self.secondary.set_enabled_closing(True)
+
+
 def _camera_number(camera_index) -> int | None:
     """The config may name the camera by index or by device path."""
     digits = re.sub(r"\D", "", str(camera_index))
@@ -83,8 +108,9 @@ def _camera_number(camera_index) -> int | None:
 
 
 def device_controls(window, devices: list[dict]) -> dict[str, DeviceControl]:
-    """Controls for the devices the window has: audio in/out per the processor's channel counts, and the camera."""
-    processor, camera = window.processor, window.source_orchestrator.camera_source
+    """Controls for the devices the window has: audio in/out per the processor's channel counts, and the cameras."""
+    processor, orchestrator = window.processor, window.source_orchestrator
+    camera = orchestrator.camera_source
     controls: dict[str, DeviceControl] = {}
     inputs = audio_choices(devices, "input", processor.input_channels)
     outputs = audio_choices(devices, "output", processor.output_channels)
@@ -98,5 +124,5 @@ def device_controls(window, devices: list[dict]) -> dict[str, DeviceControl]:
             "audio out", outputs, lambda: getattr(getattr(processor, "stream", None), "device", None),
             processor.set_output_device)
     if cameras:
-        controls["camera"] = DeviceControl("camera", cameras, lambda: _camera_number(camera.camera_index), camera.set_camera_index)
+        controls["camera"] = CameraDevices(cameras, camera, orchestrator.secondary_camera_source)
     return controls
