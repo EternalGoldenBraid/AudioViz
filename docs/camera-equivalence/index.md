@@ -6,6 +6,8 @@ Observers (cameras) sit at unknown poses $T_k$ in a world frame $W$ and observe 
 
 $$x_{kj} = \pi_k\!\left(T_k^{-1} X_j\right)$$
 
+$x_{kj}$ is feature $j$'s image position in camera $k$; $\pi_k$ projects a point from that camera's coordinates into its image.
+
 ![Observers in a world frame observing 3D features](./model.svg)
 
 The two cameras are the same kind of observer. They differ only in $T_k$ and $\pi_k$.
@@ -15,6 +17,8 @@ The two cameras are the same kind of observer. They differ only in $T_k$ and $\p
 One shared hidden canvas $h$. Each camera $k$ has its own learned readout:
 
 $$\hat{x}_k = g_k(h), \qquad e_k = x_k - \hat{x}_k$$
+
+$x_k$ is camera $k$'s observed image, $\hat{x}_k$ its prediction, and $e_k$ their difference. The learned map $g_k$ produces an image from canvas state $h$.
 
 The canvas is corrected by the errors of every enabled camera at once. Cameras differ only through $g_k$ (pose and intrinsics are absorbed into it). No geometry is assumed.
 
@@ -27,6 +31,8 @@ The canvas is corrected by the errors of every enabled camera at once. Cameras d
 ## Phase 2: visualize correspondences
 
 No transform is fitted for now. Once both cameras project onto the canvas, the correspondence should show itself there. Phase 2 only makes it visible:
+
+Here $h$ is the shared canvas state, $g_k$ camera $k$'s learned readout, and $e_k$ its image prediction error. A shared unit $i$ has a receptive-field centre $c_i^{(k)}$ in each camera's image.
 
 1. Show each camera's prediction $g_k(h)$ and error $e_k$ next to the canvas.
 2. Show the underlying mappings: for a selected hidden unit $i$, its receptive field in each camera (from $g_k$).
@@ -42,11 +48,15 @@ Later, the correspondences can be compared against several transforms. They form
 
 ![Transforms ordered by generality](./transforms.svg)
 
+**Symbols:** $H$ is a plane's image mapping; $E,F$ constrain matches to epipolar lines; $\rho$ is scalar parallax along epipole $e'$; $u(x)$ is a displacement at image position $x$.
+
 ### Homography $H$
 
-Point to point. Exact for a plane or a pure rotation. Residual structure that grows with scene depth means $\rho\neq 0$.
+The homography $H$ maps image position $x_1$ to its match $x_2$. It is exact for a plane or a pure rotation.
 
 ![Homography induced by a plane](./fig-homography.svg)
+
+**Symbols:** $C_1,C_2$ are cameras; $X$ is a feature on plane $\Pi$. $K_1,K_2$ are camera intrinsics, $R,t$ the relative rotation and translation, and $n,d$ the plane's normal and offset.
 
 ### Plane + parallax
 
@@ -92,6 +102,7 @@ const scene = computed(() => {
 </script>
 
 <div class="plx" role="figure" aria-label="Interactive plane and parallax">
+  <p><em>C₁, C₂</em>: cameras. <em>X</em>: a scene feature; <em>x₁, x₂</em>: its image positions. <em>Π</em>: the reference plane. <em>Xπ</em>: where C₁'s ray through X meets Π.</p>
   <p>Plane + parallax: <em>Hx₁</em> predicts the blue point; the feature actually projects to <em>x₂</em>, in gold.</p>
   <div class="plx-viewport">
   <svg viewBox="0 0 840 370" class="plx-scene" role="img" aria-label="Two cameras, a reference plane and the parallax of a feature above it">
@@ -187,21 +198,25 @@ const scene = computed(() => {
   <p>The purple epipole e′ is C₁ projected into image 2. Both matches lie on its line. Cameras keep a fixed orientation; slider distances use arbitrary scene units.</p>
 </div>
 
-$x_2\sim Hx_1+\rho(x_1)\,e'$: one scalar per point places its match on the epipolar line. Without calibration, this constrains projective structure, not depth in metres.
+$x_1,x_2$ are the feature's positions in the two images; $H$ is the reference plane's mapping. In $x_2\sim Hx_1+\rho(x_1)\,e'$, $\rho$ is a scalar parallax coefficient and $e'$ the epipole. Without calibration, this constrains projective structure, not depth in metres.
 
 ### Fundamental $F$ and essential $E$
 
-Point to line. Holds for any rigid scene without needing depth; $E$ adds known intrinsics.
+The fundamental matrix $F$ maps image position $x_1$ to an epipolar line $l'$ containing its match $x_2$. The essential matrix $E$ expresses this constraint in calibrated camera coordinates.
 
 ![Epipolar geometry](./fig-epipolar.svg)
 
+**Symbols:** $C_1,C_2$ are cameras observing feature $X$. $e,e'$ are the cameras' projections into each other's images. $K_1,K_2$ are intrinsics; $R,t$ are relative rotation and translation; $[t]_\times$ represents the cross product with $t$.
+
 ### Dense flow $u(x)$
 
-No geometry assumed. Covers non-rigid motion and anything the others miss.
+The flow $u(x)$ gives a 2D displacement at image position $x$. Matching positions satisfy $x_2=x_1+u(x_1)$, with no rigid-scene or planar constraint.
 
 ![Dense flow with an independent mover](./fig-flow.svg)
 
 ### Side by side
+
+$H$ predicts a matching point, $F$ a line through epipole $e'$, and $u(x)$ a displacement at each image position $x$.
 
 ![What each transform predicts in image 2](./predictions.svg)
 
