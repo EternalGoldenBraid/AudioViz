@@ -475,3 +475,23 @@ def test_record_writes_the_shown_tiles_and_stops_on_the_second_command(tmp_path)
         video = cv2.VideoCapture(str(target))
         assert video.get(cv2.CAP_PROP_FRAME_COUNT) >= 3
     _headless(tmp_path, scenario)
+
+
+def test_slash_filters_the_key_list_and_escape_steps_back(tmp_path):
+    from textual.widgets import Static
+
+    async def scenario(app, pilot):
+        def rows():
+            return "\n".join(str(w.render()) for w in app.screen.query("Grid > Static"))
+        await pilot.press("question_mark")
+        everything = rows()
+        await pilot.press("slash", "z", "o", "o", "m")
+        await pilot.pause()
+        assert app.screen.query_one("#search").value == "zoom" and 0 < len(rows()) < len(everything)
+        assert "zoom" in rows().lower()
+        await pilot.press("escape")  # drops the filter, stays in the list
+        await pilot.pause()
+        assert type(app.screen).__name__ == "KeysScreen" and rows() == everything
+        await pilot.press("escape")
+        assert type(app.screen).__name__ != "KeysScreen"
+    _headless(tmp_path, scenario)
