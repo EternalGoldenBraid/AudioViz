@@ -50,30 +50,7 @@ Point to point. Exact for a plane or a pure rotation. Residual structure that gr
 
 ### Plane + parallax
 
-**Parallax** is the apparent shift of a point between two views caused by the camera moving. Near points shift a lot, far points barely at all: the shift is proportional to translation and inversely proportional to depth.
-
-Pick a dominant plane (floor, wall) and fit $H$ to it. Points on the plane land exactly where $H$ predicts. Every other point lands off by a residual:
-
-$x_2\sim Hx_1+\rho(x_1)\,e'$
-
-- The residual always points along the line through the epipole $e'$, so the unknown per pixel is one number $\rho$ (height over depth), not a 2D flow vector.
-- $\rho$ is zero on the plane and grows with height off the plane and with baseline.
-- $e'$ gives the direction of translation. $\rho$ gives relative depth.
-
-What it enables that $H$ alone misses:
-
-- $H$ treats the whole scene as one plane, so it has no opinion about anything off it. Parallax turns that failure into a depth measurement.
-- Dense structure from two views without calibration: depth is read from how far each point is off $H$.
-- Separating the plane from clutter: points with $\rho\approx 0$ are on the plane, the rest are not.
-
-The two limits, shown below left to right ($t$ is the translation between the cameras):
-
-- $t=0$ (pure rotation): the residual is zero for every point, so $H$ is exact for any scene. Depth is unobservable.
-- $t$ large: $H$ explains only the plane. The residual carries the scene's structure, and the more translation, the stronger the depth signal.
-
-![Residual after H as the baseline grows](./fig-parallax-baseline.svg)
-
-Try it: drag the sliders. Hollow dots are where $H$ predicts, filled dots are where the points land. Heights are measured above the plane; the three dots at height 0 never move.
+**Parallax** is the depth-dependent shift caused by camera translation. A plane's homography $H$ aligns that plane; the remaining shift of off-plane points carries information about relative depth.
 
 <script setup>
 import { ref, computed } from 'vue'
@@ -91,6 +68,7 @@ const moved = computed(() => pts.map(([px, py, h]) => ({
 </script>
 
 <div class="plx">
+  <p><strong>Drag the baseline slider.</strong> Hollow dots show H's prediction; filled dots show the observed positions. The four points on the plane stay aligned.</p>
   <svg viewBox="0 0 360 270" width="100%" style="max-width:520px;background:#1B1F27;border-radius:6px">
     <rect :x="X(0)" :y="Y(3.8)" :width="5*60" :height="3.8*60" fill="#3a2d2f" stroke="#E5826F" stroke-width="2" />
     <g v-for="(p,i) in moved" :key="i">
@@ -107,7 +85,12 @@ const moved = computed(() => pts.map(([px, py, h]) => ({
     <span>epipole x</span><input type="range" min="-3" max="8" step="0.1" v-model.number="ex" /><span>{{ ex.toFixed(1) }}</span>
     <span>epipole y</span><input type="range" min="-3" max="7" step="0.1" v-model.number="ey" /><span>{{ ey.toFixed(1) }}</span>
   </div>
+  <p v-if="t === 0"><strong>No translation:</strong> prediction and observation coincide at every depth. H is exact for pure rotation, but depth cannot be recovered.</p>
+  <p v-else><strong>{{ t < 0.25 ? 'Small baseline:' : 'Larger baseline:' }}</strong> off-plane points {{ t < 0.25 ? 'separate slightly from' : 'move farther from' }} H's predictions. Their residuals lie along lines through the epipole e'. H still aligns the plane.</p>
+  <p>Move the epipole to change those lines. This is a schematic model: the baseline scales the residual, not a calibrated distance in metres.</p>
 </div>
+
+$x_2\sim Hx_1+\rho(x_1)\,e'$: one scalar per point places its match on the epipolar line. Without calibration, this constrains projective structure, not depth in metres.
 
 ![Parallax of a point off the plane](./fig-parallax.svg)
 
