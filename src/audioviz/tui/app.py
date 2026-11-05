@@ -18,6 +18,7 @@ from textual.widgets import Input, RichLog, Static
 
 from audioviz.tui import control
 from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE
+from audioviz.tui.deck_client import DeckClient
 from audioviz.tui.graph_runtime import GraphRuntime, format_resolution
 from audioviz.tui.devices import DevicePicker, list_devices
 from audioviz.tui.halfblock import RENDER_MODES, render_cells
@@ -188,12 +189,19 @@ class AudioVizApp(App):
     OPACITY_STEP = 0.1
 
     def __init__(self, audio: str = "default", camera: bool = True, state_dir: Path | None = None,
-                 autosave: bool = True, hot_reload: bool = True) -> None:
+                 autosave: bool = True, hot_reload: bool = True, attach: bool = False) -> None:
         super().__init__()
         self.audio = audio
         self.mode = "NORMAL"
-        self.runtime = GraphRuntime(camera=camera)
-        self.cache_path = state_dir / "state.json" if state_dir else CACHE_PATH
+        self.attached = attach  # the mixer knobs drive a running main.py window; the local graph stays idle
+        self.runtime = GraphRuntime(camera=camera and not attach)
+        if attach:
+            self.deck = DeckClient()
+            self.mixer_controls, self.mixer_context = self.deck.controls(), self.deck
+        else:
+            self.mixer_controls, self.mixer_context = CONTROLS, self.runtime
+        name = "state-attached.json" if attach else "state.json"
+        self.cache_path = state_dir / name if state_dir else CACHE_PATH.with_name(name)
         self.saves_dir = state_dir / "saves" if state_dir else SAVES_DIR
         self.keys_path = state_dir / "keys.toml" if state_dir else keys_module.CONFIG_PATH
         self.load_keys()
@@ -202,9 +210,9 @@ class AudioVizApp(App):
         self.hot_reload = hot_reload
         self._reloader = HotReload()
         self._saved: dict | None = None
-        self.knobs = [(knob_id(c.name), self.runtime, c) for c in CONTROLS]
+        self.knobs = [(knob_id(c.name), self.mixer_context, c) for c in self.mixer_controls]
         self.knobs += [(knob_id(c.name), self, c) for c in self.settings]
-        self.mixer_ids = [k for k, ctx, _ in self.knobs if ctx is self.runtime]
+        self.mixer_ids = [k for k, ctx, _ in self.knobs if ctx is self.mixer_context]
         self.settings_ids = [k for k, ctx, _ in self.knobs if ctx is self]
         self.layout_size: tuple[int, int] | None = None  # the stage size the placements were laid out for; set on mount
         self.placements = default_layout(120, 36, self.mixer_ids, self.settings_ids)  # resized to the real stage on mount
@@ -242,14 +250,18 @@ class AudioVizApp(App):
         self.layout_size = self.stage_size()
         self.load_state(self.cache_path, quiet=True)
         self.refit()
-        self.runtime.start()
+        if self.attached:
+            self.set_interval(0.25, self.refresh_deck)
+        else:
+            self.runtime.start()
         self.set_interval(1 / 15, self.refresh_tiles)
         if self.hot_reload:
             self.set_interval(0.5, self.reload_code)
         if self.autosave:
             self.set_interval(AUTOSAVE_SECONDS, self.autosave_state)
         self.query_one("#canvas").focus()
-        self.select_audio(self.audio)
+        if not self.attached:
+            self.select_audio(self.audio)
         self.run_worker(self._serve_control(), exclusive=False)
 
     async def _serve_control(self) -> None:
@@ -280,7 +292,7 @@ class AudioVizApp(App):
             "stack": self.stack,
             "size": list(self.layout_size),
             "placements": {k: vars(v) for k, v in self.placements.items()},
-            "mixer": {c.name: c.format(self.runtime) for c in CONTROLS},
+            "mixer": {c.name: c.format(self.mixer_context) for c in self.mixer_controls},
             "settings": {c.name: c.format(self) for c in self.settings},
         }
 
@@ -290,6 +302,12 @@ class AudioVizApp(App):
         if self.autosave:
             self.autosave_state()
         self.runtime.stop()
+
+    def refresh_deck(self) -> None:
+        try:
+            self.deck.refresh()
+        except (OSError, RuntimeError) as error:  # the window closed or stalled; knobs keep their last values
+            self.query_one("#log", LogTile).write(f"deck: {error}")
 
     def refresh_tiles(self) -> None:
         self.fit_if_resized()
@@ -779,7 +797,7 @@ class AudioVizApp(App):
             "tile_background": self.tile_background,
             "views": {t.id: t.view for t in self.query(ViewTile)},
             "render": {t.id: t.render_mode for t in self.query(ViewTile)},
-            "mixer": {c.name: c.get(self.runtime) for c in CONTROLS},
+            "mixer": {c.name: c.get(self.mixer_context) for c in self.mixer_controls},
             "settings": {c.name: c.get(self) for c in self.settings if c.name != "sound out"},
         }
 
@@ -804,7 +822,7 @@ class AudioVizApp(App):
                 tile.set_view(data["views"][tile.id])
             self.set_render(tile, data.get("render", {}).get(tile.id))
         for controls, context, saved in ((self.settings, self, data.get("settings", {})),
-                                         (CONTROLS, self.runtime, data.get("mixer", {}))):
+                                         (self.mixer_controls, self.mixer_context, data.get("mixer", {}))):
             for control in controls:  # settings first: a resolution change rebuilds the graph
                 if control.name in saved:
                     control.set(context, saved[control.name])
@@ -893,8 +911,9 @@ def main() -> None:
         "--audio", default="default", help="default | synthetic | <input device index>"
     )
     parser.add_argument("--no-camera", action="store_true", help="do not open the camera")
+    parser.add_argument("--attach", action="store_true", help="control a running main.py window instead of a local graph")
     args = parser.parse_args()
-    AudioVizApp(audio=args.audio, camera=not args.no_camera).run()
+    AudioVizApp(audio=args.audio, camera=not args.no_camera, attach=args.attach).run()
 
 
 if __name__ == "__main__":
