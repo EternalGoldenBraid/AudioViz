@@ -51,29 +51,35 @@ def main() -> None:
             stream.setframerate(sample_rate)
             stream.writeframes((np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes())
 
-    plt.style.use("default")
-    plt.rcParams.update({"font.size": 11, "axes.spines.top": False, "axes.spines.right": False})
+    plt.style.use("dark_background")
+    plt.rcParams.update({
+        "font.size": 11, "axes.spines.top": False, "axes.spines.right": False,
+        "figure.facecolor": "#111827", "axes.facecolor": "#111827",
+        "text.color": "#e5edf8", "axes.labelcolor": "#e5edf8",
+        "xtick.color": "#a8b7cc", "ytick.color": "#a8b7cc",
+        "axes.edgecolor": "#718198", "legend.edgecolor": "#718198",
+    })
     figure, axes = plt.subplots(3, 1, figsize=(11, 9))
     figure.subplots_adjust(top=0.88, bottom=0.15, hspace=0.65, left=0.09, right=0.97)
-    figure.suptitle("A waveform prediction", fontsize=21, fontweight="bold", y=0.975, color="#172b4d")
+    figure.suptitle("A waveform prediction", fontsize=21, fontweight="bold", y=0.975, color="#e5edf8")
     figure.text(0.5, 0.93, "Raw samples constrain the sum of persistent oscillator states.",
-                ha="center", fontsize=12, color="#52647c")
+                ha="center", fontsize=12, color="#a8b7cc")
     start, stop = sample_rate, sample_rate + int(0.025 * sample_rate)
     view = slice(start, stop)
     milliseconds = (time[view] - time[start]) * 1000
-    axes[0].plot(milliseconds, raw[view], color="#176b87", linewidth=2.3, label="Raw input")
-    axes[0].plot(milliseconds, block.prediction[view], color="#bc6500", linewidth=1.8,
+    axes[0].plot(milliseconds, raw[view], color="#7dd3fc", linewidth=2.3, label="Raw input")
+    axes[0].plot(milliseconds, block.prediction[view], color="#fbbf63", linewidth=1.8,
                  linestyle="--", label="Prediction made before each sample")
     axes[0].set(title="1  Listen to input or prediction", ylabel="Audio amplitude", ylim=(-0.45, 0.45))
     axes[0].legend(loc="upper left", bbox_to_anchor=(0, 1.02), fontsize=9, ncol=2)
-    axes[1].plot(milliseconds, block.error[view], color="#a83c44", linewidth=1.5)
-    axes[1].axhline(0, color="#697586", linewidth=0.6)
+    axes[1].plot(milliseconds, block.error[view], color="#f097a4", linewidth=1.5)
+    axes[1].axhline(0, color="#91a1b8", linewidth=0.6)
     axes[1].set(title="2  Listen to the signed difference", xlabel="Time in this segment (ms)",
                 ylabel="Audio amplitude", ylim=(-0.45, 0.45))
     axes[1].text(0.99, 0.9, "Same vertical scale as the input", ha="right",
-                 transform=axes[1].transAxes, color="#536174", fontsize=10)
+                 transform=axes[1].transAxes, color="#a8b7cc", fontsize=10)
     amplitude = np.linalg.norm(bank.state, axis=1)
-    axes[2].bar(np.arange(bank.config.nodes), amplitude, color="#497596", width=0.65)
+    axes[2].bar(np.arange(bank.config.nodes), amplitude, color="#7dafdf", width=0.65)
     axes[2].set_xticks(np.arange(bank.config.nodes)[::2],
                       [f"{f:.0f}" for f in bank.frequencies[::2]])
     axes[2].set(title="3  Persistent oscillator states", xlabel="Node natural frequency (Hz, log-spaced)",
@@ -85,9 +91,9 @@ def main() -> None:
         0.02, 0.018,
         f"Fixed 16-node bank | Q = 16 | two tuned tones: {frequencies[0]:.0f} + {frequencies[1]:.0f} Hz\n"
         f"After 1 s settling: error power is {100 * ratio:.1f}% of input power. No graph feedback in this example.",
-        fontsize=10, color="#42536a",
+        fontsize=10, color="#a8b7cc",
     )
-    figure.savefig(args.output_dir / "sample-prediction.png", dpi=160, facecolor="white")
+    figure.savefig(args.output_dir / "sample-prediction.png", dpi=160, facecolor=figure.get_facecolor())
     plt.close(figure)
     print(json.dumps(metrics, indent=2))
     if elapsed >= len(raw) / sample_rate:
