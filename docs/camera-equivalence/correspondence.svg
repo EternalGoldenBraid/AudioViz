@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" font-family="sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9aa5b1"/></marker>
+  </defs>
+  <rect width="760" height="330" fill="#1b1f27"/>
+  <text x="30" y="32" fill="#e6edf3" font-size="16">Shared hidden units give point correspondences</text>
+
+  <rect x="30" y="60" width="200" height="190" fill="#222a22" stroke="#7bc47f" stroke-width="2"/>
+  <text x="130" y="275" text-anchor="middle" fill="#7bc47f">camera 1 pixels</text>
+  <rect x="280" y="60" width="200" height="190" fill="#2b3a55" stroke="#6ea8fe" stroke-width="2"/>
+  <text x="380" y="275" text-anchor="middle" fill="#6ea8fe">canvas hidden units</text>
+  <rect x="530" y="60" width="200" height="190" fill="#2a2222" stroke="#e5826f" stroke-width="2"/>
+  <text x="630" y="275" text-anchor="middle" fill="#e5826f">camera 2 pixels</text>
+
+  <circle cx="90" cy="110" r="8" fill="#f0c060"/><circle cx="350" cy="130" r="8" fill="#f0c060"/><circle cx="590" cy="150" r="8" fill="#f0c060"/>
+  <circle cx="170" cy="200" r="8" fill="#b39ddb"/><circle cx="420" cy="190" r="8" fill="#b39ddb"/><circle cx="560" cy="95" r="8" fill="#b39ddb"/>
+  <path d="M98 112 L342 130 M358 130 L582 150" stroke="#f0c060" stroke-width="1.5" fill="none"/>
+  <path d="M178 200 L412 190 M428 190 L553 98" stroke="#b39ddb" stroke-width="1.5" fill="none"/>
+
+  <path d="M130 295 L630 295" stroke="#9aa5b1" stroke-width="2" fill="none" marker-end="url(#a)"/>
+  <text x="380" y="318" text-anchor="middle" fill="#e6edf3">fit H: c2 = H c1, residual tests whether a homography suffices</text>
+</svg>

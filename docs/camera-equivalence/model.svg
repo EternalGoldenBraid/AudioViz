@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 440" font-family="sans-serif" font-size="14">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#9aa5b1"/></marker>
+  </defs>
+  <rect width="760" height="440" fill="#1b1f27"/>
+  <text x="24" y="30" fill="#e6edf3" font-size="16">Observers in a world frame W, observing the same 3D features</text>
+
+  <g stroke-width="2.5" fill="none" marker-end="url(#a)">
+    <path d="M380 390 L470 405" stroke="#e5826f"/>
+    <path d="M380 390 L380 320" stroke="#7bc47f"/>
+    <path d="M380 390 L335 425" stroke="#6ea8fe"/>
+  </g>
+  <text x="474" y="414" fill="#e5826f">X</text><text x="386" y="322" fill="#7bc47f">Y</text><text x="318" y="430" fill="#6ea8fe">Z</text>
+  <text x="396" y="392" fill="#e6edf3">W</text>
+
+  <g stroke="#9aa5b1" stroke-width="1.2" stroke-dasharray="4 3" fill="none">
+    <path d="M70 250 L350 190"/><path d="M70 250 L410 170"/><path d="M70 250 L385 235"/>
+    <path d="M700 230 L350 190"/><path d="M700 230 L410 170"/><path d="M700 230 L385 235"/>
+  </g>
+
+  <g fill="#f0c060">
+    <circle cx="350" cy="190" r="7"/><circle cx="410" cy="170" r="7"/><circle cx="385" cy="235" r="7"/>
+  </g>
+  <text x="318" y="178" fill="#f0c060">X1</text><text x="420" y="162" fill="#f0c060">X2</text><text x="396" y="252" fill="#f0c060">X3</text>
+
+  <g stroke-width="2" fill="none" marker-end="url(#a)">
+    <path d="M70 250 L120 262" stroke="#e5826f"/><path d="M70 250 L70 205" stroke="#7bc47f"/><path d="M70 250 L98 215" stroke="#6ea8fe"/>
+  </g>
+  <text x="30" y="276" fill="#7bc47f">C1 (T1)</text>
+  <polygon points="170,150 230,160 230,235 170,225" fill="#2d3b2d" fill-opacity="0.8" stroke="#7bc47f" stroke-width="2"/>
+  <text x="150" y="130" fill="#7bc47f">image 1</text>
+  <g fill="#f0c060"><circle cx="199" cy="206" r="4"/><circle cx="208" cy="190" r="4"/><circle cx="204" cy="217" r="4"/></g>
+
+  <g stroke-width="2" fill="none" marker-end="url(#a)">
+    <path d="M700 230 L650 242" stroke="#e5826f"/><path d="M700 230 L700 185" stroke="#7bc47f"/><path d="M700 230 L672 195" stroke="#6ea8fe"/>
+  </g>
+  <text x="656" y="262" fill="#e5826f">C2 (T2)</text>
+  <polygon points="530,130 590,120 590,200 530,210" fill="#3b2d2d" fill-opacity="0.8" stroke="#e5826f" stroke-width="2"/>
+  <text x="520" y="108" fill="#e5826f">image 2</text>
+  <g fill="#f0c060"><circle cx="550" cy="178" r="4"/><circle cx="563" cy="152" r="4"/><circle cx="560" cy="190" r="4"/></g>
+
+  <text x="24" y="352" fill="#e6edf3">x_kj = pi_k( T_k^-1 X_j )</text>
+  <text x="24" y="374" fill="#9aa5b1">T_k: pose of camera k in W (unknown)</text>
+  <text x="24" y="394" fill="#9aa5b1">pi_k: intrinsics (unknown)</text>
+  <text x="24" y="414" fill="#9aa5b1">X_j: features, seen by both</text>
+</svg>
