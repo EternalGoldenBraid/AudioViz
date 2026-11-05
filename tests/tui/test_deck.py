@@ -153,6 +153,27 @@ class StubDeck:
         self.sent.append(values)
         self.chosen = values
 
+    def rescan(self):
+        self.rescans = getattr(self, "rescans", 0) + 1
+
+
+def test_rescan_command_asks_the_window_to_relist_devices(tmp_path, monkeypatch):
+    import asyncio
+
+    from audioviz.tui import app as app_module
+
+    deck = StubDeck()
+    monkeypatch.setattr(app_module, "DeckClient", lambda: deck)
+
+    async def run():
+        app = app_module.AudioVizApp(audio="synthetic", camera=False, state_dir=tmp_path, autosave=False, attach=True)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.run_command("rescan", [])
+            await pilot.pause(0.5)
+            assert deck.rescans == 1
+
+    asyncio.run(run())
+
 
 def test_enter_on_a_device_knob_opens_a_checklist_that_replaces_the_selection(tmp_path, monkeypatch):
     import asyncio

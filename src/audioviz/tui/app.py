@@ -841,13 +841,26 @@ class AudioVizApp(App):
                 log.write(":w [name] save state+screenshot  :e [name] load   ? key bindings  :keys [write|reload]")
                 log.write("out off|prediction|error|input|evidence  volume <v>  audio tone <hz>")
                 log.write("resolution <n|RxC>  render half|quad|braille|auto  zoom")
-                log.write("screenshot [name]  q   save  (attached: window knobs -> config/deck.json, loaded by main.py)")
+                log.write("screenshot [name]  q   save  rescan (attached: re-list audio devices)  (attached: window knobs -> config/deck.json, loaded by main.py)")
             elif name == "keys":
                 self.run_keys_command(args)
             elif name == "save":
                 if not self.attached:
                     raise ValueError("save writes the main.py window's knobs; start with --attach")
                 log.write(f"saved {self.deck.save()}")
+            elif name == "rescan":
+                if not self.attached:
+                    raise ValueError("rescan re-lists the window's devices; start attached")
+                log.write("rescanning devices (audio drops for a moment)")
+
+                def rescan() -> None:
+                    try:
+                        self.deck.rescan()
+                        self.call_from_thread(log.write, "devices rescanned")
+                    except Exception as error:
+                        self.call_from_thread(log.write, f"rescan: {error}")
+
+                self.run_worker(rescan, thread=True, group="deck-select")
             elif name == "damping":
                 self.runtime.engine.set_damping(float(args[0]))
             elif name == "speed":
