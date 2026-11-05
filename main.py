@@ -418,6 +418,7 @@ def main():
         deck = DeckServer(ripple_window, windows=windows)  # keeps the deck socket alive for the window's lifetime
         if visualizer is not None and not ripple_window.use_shader:
             visualizer.set_canvas_provider(ripple_window.engine.get_field_preview)
+            visualizer.set_audio_model_controller(ripple_window.source_orchestrator)
     
     # Start audio
     processor_success = processor.start()

@@ -13,7 +13,7 @@ def runtime():
     return runtime
 
 
-@pytest.mark.parametrize("name", sorted(set(VIEWS) - {"camera_1", "camera_2"}))
+@pytest.mark.parametrize("name", sorted(set(VIEWS) - {"camera_1", "camera_2", "cochlea"}))
 def test_every_view_renders_an_rgb_image(runtime, name):
     image = VIEWS[name](runtime, 20, 40)
     assert image is not None
@@ -48,6 +48,28 @@ def test_views_report_no_data_before_first_block():
     runtime = GraphRuntime(camera=False)
     assert VIEWS["spectrogram"](runtime, 20, 40) is None
     assert VIEWS["prediction"](runtime, 20, 40) is None
+
+
+def test_old_saved_layout_keeps_the_new_cochlea_tile(tmp_path, monkeypatch):
+    import asyncio
+    from dataclasses import asdict
+    from audioviz.tui.app import AudioVizApp
+
+    class PreviewApp(AudioVizApp):
+        async def _serve_control(self):
+            pass
+
+    app = PreviewApp(audio="synthetic", camera=False, state_dir=tmp_path, autosave=False, hot_reload=False)
+    monkeypatch.setattr(app.runtime, "start", lambda: None)
+    async def restore():
+        async with app.run_test(size=(120, 42)):
+            current = dict(app.placements)
+            old = {name: asdict(value) for name, value in current.items() if name != "cochlea"}
+            app.restore({"placements": old, "stack": list(old)})
+            assert app.placements == current
+            assert "cochlea" in app.stack
+
+    asyncio.run(restore())
 
 
 def test_synthetic_feed_advances_the_processor(runtime):

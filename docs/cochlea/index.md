@@ -317,6 +317,13 @@ It demonstrates causal tracking, not general audio reconstruction quality.
 
 ## Shared audio history
 
+The Qt audio window includes an **oscillator-index / time** row. Its model
+selector and the attached TUI's mixer address the same orchestrator. The
+terminal's **cochlea** tile is a lower-resolution projection of that history,
+with low indices at the bottom and time moving right. Both use a fixed
+$[-80,0]$ dB state-amplitude scale (reference amplitude 1), so fading remains
+visible. Literal spinning phase indicators are not included.
+
 `AudioProcessor.get_audio_history()` returns read-only copies on the process's
 audio sample clock. Renderers do not infer, integrate, or feed back into the
 model. The waveform, diagnostic spectrum and oscillator history share the same

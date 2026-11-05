@@ -10,6 +10,9 @@ import numpy as np
 
 from audioviz.tui.graph_runtime import GraphRuntime
 from audioviz.tui.halfblock import field_to_rgb, heat_to_rgb, waveform_to_rgb
+from audioviz.visualization.audio_history_view import (
+    COCHLEA_COLORMAP, COCHLEA_DB_RANGE, cochlea_db, level_rgb,
+)
 
 View = Callable[[GraphRuntime, int, int], "np.ndarray | None"]
 
@@ -19,6 +22,16 @@ BACKGROUND = np.array([12, 12, 16], dtype=np.uint8)
 OBSERVED = np.array([40, 90, 120], dtype=np.uint8)
 PREDICTED = np.array([250, 150, 30], dtype=np.uint8)
 COCHLEA_PREVIEW_SAMPLES = 128
+
+
+def cochlea(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+    history = runtime.processor.get_audio_history()
+    if history is None:
+        return None
+    levels = cochlea_db(history, cols)
+    if levels is None or history.cochlea.samples.size == 0:
+        return None
+    return level_rgb(levels[::-1], COCHLEA_DB_RANGE, COCHLEA_COLORMAP)
 
 
 def waveform(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
@@ -164,6 +177,7 @@ def hidden(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
 
 
 VIEWS: dict[str, View] = {
+    "cochlea": cochlea,
     "waveform": waveform,
     "spectrogram": spectrogram,
     "canvas": canvas,

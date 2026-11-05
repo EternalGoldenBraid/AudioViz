@@ -1,7 +1,7 @@
 import time
 from collections.abc import Callable
 
-from PyQt5 import QtWidgets
+from PyQt5 import QtCore, QtWidgets
 from loguru import logger
 import pyqtgraph as pg
 # pg.setConfigOptions(useOpenGL=True) 
@@ -13,6 +13,8 @@ from matplotlib.colors import Normalize
 
 from .visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
+from audioviz.sources.orchestrator import AUDIO_MODELS, RippleSourceOrchestrator
+from .audio_history_view import COCHLEA_COLORMAP, COCHLEA_DB_RANGE, cochlea_db
 
 class SpectrogramVisualizer(VisualizerBase):
     def __init__(self,
@@ -32,6 +34,7 @@ class SpectrogramVisualizer(VisualizerBase):
         self._landscape_failed = False
         self._last_frame = -1
         self._last_3d_update = -float("inf")
+        self.audio_model_owner: RippleSourceOrchestrator | None = None
 
         self.spectrogram_plot_item: pg.PlotItem
         self.spectrogram_view: pg.ImageView
@@ -59,6 +62,12 @@ class SpectrogramVisualizer(VisualizerBase):
         reset.clicked.connect(self._reset_landscape)
         controls.addWidget(reset)
         controls.addStretch()
+        controls.addWidget(QtWidgets.QLabel("Audio model"))
+        self.audio_model_selector = QtWidgets.QComboBox()
+        self.audio_model_selector.addItems(AUDIO_MODELS)
+        self.audio_model_selector.setEnabled(False)
+        self.audio_model_selector.setToolTip("Selects the running graph's audio representation.")
+        controls.addWidget(self.audio_model_selector)
         layout.addLayout(controls)
         self.landscape_help = QtWidgets.QLabel(
             "Drag to orbit; wheel to zoom; Ctrl-drag to pan. "
@@ -94,6 +103,20 @@ class SpectrogramVisualizer(VisualizerBase):
         spectrogram_widget = pg.GraphicsLayoutWidget()
         self.spectrogram_widget = spectrogram_widget
         spectrogram_widget.addItem(self.spectrogram_plot_item)
+        spectrogram_widget.nextRow()
+        self.cochlea_plot = spectrogram_widget.addPlot(title="Cochlea | enable the cochlea audio model")
+        self.cochlea_plot.setLabel("left", "Oscillator index")
+        self.cochlea_plot.setLabel("bottom", "Time relative to latest audio", units="s")
+        self.cochlea_image = pg.ImageItem(axisOrder="row-major")
+        self.cochlea_plot.addItem(self.cochlea_image)
+        from matplotlib import colormaps
+        lut = colormaps[COCHLEA_COLORMAP](np.linspace(0, 1, 256), bytes=True)
+        self.cochlea_colorbar = pg.ColorBarItem(
+            values=COCHLEA_DB_RANGE, colorMap=pg.ColorMap(np.linspace(0, 1, 256), lut),
+            label="dB re 1", interactive=False,
+        )
+        self.cochlea_colorbar.setImageItem(self.cochlea_image)
+        spectrogram_widget.addItem(self.cochlea_colorbar, row=1, col=1)
     
         layout.addWidget(spectrogram_widget)
     
@@ -107,6 +130,36 @@ class SpectrogramVisualizer(VisualizerBase):
 
     def set_canvas_provider(self, provider: Callable[[], np.ndarray]) -> None:
         self.canvas_provider = provider
+
+    def set_audio_model_controller(self, owner: RippleSourceOrchestrator) -> None:
+        self.audio_model_owner = owner
+        self.audio_model_selector.setCurrentText(owner.audio_model)
+        self.audio_model_selector.setEnabled(not owner.engine.use_shader)
+        self.audio_model_selector.activated[str].connect(owner.set_audio_model)
+
+    def _update_cochlea(self) -> None:
+        if self.audio_model_owner is not None:
+            self.audio_model_selector.setCurrentText(self.audio_model_owner.audio_model)
+        if getattr(self.processor, "cochlea", None) is None:
+            self.cochlea_image.clear()
+            self.cochlea_plot.setTitle("Cochlea | enable the cochlea audio model")
+            return
+        history = self.processor.get_audio_history()
+        if history is None or not history.cochlea.samples.size:
+            self.cochlea_image.clear()
+            self.cochlea_plot.setTitle("Cochlea | waiting for audio")
+            return
+        columns = max(1, int(self.cochlea_plot.width()))
+        levels = cochlea_db(history, columns)
+        count = levels.shape[0]
+        self.cochlea_image.setImage(levels, autoLevels=False)
+        self.cochlea_image.setRect(QtCore.QRectF(-history.duration, 0.5, history.duration, count))
+        self.cochlea_plot.setXRange(-history.duration, 0, padding=0)
+        self.cochlea_plot.getAxis("bottom").setTicks([[(float(t), f"{t:g}") for t in np.linspace(-history.duration, 0, 5)]])
+        self.cochlea_plot.setYRange(0.5, count + 0.5, padding=0)
+        indices = np.unique(np.linspace(1, count, min(5, count)).astype(int))
+        self.cochlea_plot.getAxis("left").setTicks([[(int(i), str(i)) for i in indices]])
+        self.cochlea_plot.setTitle("Cochlea | RMS oscillator state, low index at bottom")
 
     def _toggle_landscape(self, enabled: bool) -> None:
         if enabled and self.landscape is None:
@@ -151,6 +204,7 @@ class SpectrogramVisualizer(VisualizerBase):
         if landscape_active:
             self.landscape.set_canvas(self.canvas_provider() if self.canvas_provider is not None else None)
             self._last_3d_update = now
+        self._update_cochlea()
         snapshot = self.processor.get_latest_snapshot()
         if snapshot is None:
             if landscape_active:
