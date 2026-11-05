@@ -100,6 +100,7 @@ def test_device_knob_steps_past_a_device_that_fails_and_saved_names_survive_rein
     server = DeckServer(window, tmp_path / "a.sock", config)
     knob = server.controls["audio in"]
     assert knob.choices == ("1: usb mic", "2: busy mic", "3: pro mic")
+    assert knob.get(server.target) == "off"  # no stream open yet, so nothing for a save to reopen
 
     knob.set(server.target, "1: usb mic")
     for _ in range(2):  # the failing step still moves the selection, so the next step is reachable

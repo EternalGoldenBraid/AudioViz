@@ -5,7 +5,7 @@ Choices are labelled "<index>: <name>"; a saved choice is matched by name so it 
 
 import glob
 import re
-
+from pathlib import Path
 from audioviz.tui.mixer import Control
 
 
@@ -19,8 +19,16 @@ def audio_choices(devices: list[dict], kind: str, channels: int) -> tuple[str, .
 
 
 def camera_choices() -> tuple[str, ...]:
-    paths = sorted(glob.glob("/dev/video*"), key=lambda p: int(re.sub(r"\D", "", p) or 0))
-    return tuple(label(int(re.sub(r"\D", "", p)), p) for p in paths)
+    """Capture nodes only: a camera also exposes metadata nodes (sysfs `index` > 0) that deliver no frames."""
+    choices = []
+    for path in glob.glob("/dev/video*"):
+        number = int(re.sub(r"\D", "", path) or 0)
+        sysfs = Path(f"/sys/class/video4linux/video{number}")
+        if (sysfs / "index").exists() and (sysfs / "index").read_text().strip() != "0":
+            continue
+        name = (sysfs / "name").read_text().strip() if (sysfs / "name").exists() else path
+        choices.append((number, label(number, name)))
+    return tuple(text for _, text in sorted(choices))
 
 
 def _index(choice: str) -> int:
@@ -28,7 +36,8 @@ def _index(choice: str) -> int:
 
 
 def _current(choices: tuple[str, ...], index) -> str:
-    return next((c for c in choices if _index(c) == index), choices[0])
+    """The choice for the open device; "off" while no stream is open, which a saved config never reopens."""
+    return next((c for c in choices if _index(c) == index), "off")
 
 
 def _choice_control(name: str, choices: tuple[str, ...], current, apply) -> Control:
@@ -43,6 +52,12 @@ def _choice_control(name: str, choices: tuple[str, ...], current, apply) -> Cont
         apply(_index(value))
 
     return Control(name, 0, 0, get, set_, choices=choices)
+
+
+def _camera_number(camera_index) -> int | None:
+    """The config may name the camera by index or by device path."""
+    digits = re.sub(r"\D", "", str(camera_index))
+    return int(digits) if digits else None
 
 
 def device_controls(window, devices: list[dict]) -> dict[str, Control]:
@@ -61,5 +76,5 @@ def device_controls(window, devices: list[dict]) -> dict[str, Control]:
             "audio out", outputs, lambda: getattr(getattr(processor, "stream", None), "device", None),
             processor.set_output_device)
     if cameras:
-        controls["camera"] = _choice_control("camera", cameras, lambda: camera.camera_index, camera.set_camera_index)
+        controls["camera"] = _choice_control("camera", cameras, lambda: _camera_number(camera.camera_index), camera.set_camera_index)
     return controls
