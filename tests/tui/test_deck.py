@@ -117,3 +117,56 @@ def test_choosing_a_device_replaces_the_previous_one_and_a_failed_open_changes_n
     assert processor.opened == [3, 3]
     described = {c["name"]: c for c in server.handle({"op": "controls"})["controls"]}
     assert (described["audio in"]["selected"], described["audio in"]["capacity"]) == (["3: pro mic"], 1)
+
+
+class StubDeck:
+    """Stands in for DeckClient: one device list whose selection the test can read back."""
+
+    def __init__(self):
+        self.chosen = ["1: usb mic"]
+        self.sent = []
+
+    @property
+    def state(self):
+        return {"audio in": {
+            "name": "audio in", "position": 0.0, "text": ", ".join(self.chosen), "toggle": False,
+            "choices": ["1: usb mic", "3: pro mic"], "selected": list(self.chosen), "capacity": 1}}
+
+    def controls(self):
+        from audioviz.tui.deck_client import RemoteControl
+
+        return [RemoteControl("audio in", self)]
+
+    def refresh(self):
+        pass
+
+    def select(self, name, values):
+        self.sent.append(values)
+        self.chosen = values
+
+
+def test_enter_on_a_device_knob_opens_a_checklist_that_replaces_the_selection(tmp_path, monkeypatch):
+    import asyncio
+
+    from audioviz.tui import app as app_module
+    from audioviz.tui.device_checklist import DeviceChecklist
+
+    deck = StubDeck()
+    monkeypatch.setattr(app_module, "DeckClient", lambda: deck)
+
+    async def run():
+        app = app_module.AudioVizApp(audio="synthetic", camera=False, state_dir=tmp_path, autosave=False, attach=True)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one("#knob-audio-in").focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, DeviceChecklist)
+
+            await pilot.press("j", "space")  # check the second device; capacity 1 unchecks the first
+            assert app.screen.checked == ["3: pro mic"]
+            await pilot.press("enter")
+            await pilot.pause(0.3)
+            assert not isinstance(app.screen, DeviceChecklist)
+            assert deck.sent == [["3: pro mic"]]
+
+    asyncio.run(run())

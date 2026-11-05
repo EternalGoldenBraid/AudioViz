@@ -19,6 +19,7 @@ from textual.widgets import Input, RichLog, Static
 from audioviz.tui import control
 from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE
 from audioviz.tui.deck_client import DeckClient
+from audioviz.tui.device_checklist import DeviceChecklist
 from audioviz.tui.graph_runtime import GraphRuntime, format_resolution
 from audioviz.tui.devices import DevicePicker, list_devices
 from audioviz.tui.halfblock import RENDER_MODES, render_cells
@@ -149,6 +150,9 @@ class KnobTile(Static, can_focus=True):
         if width < 6:
             return
         value = self.control.format(self.context)
+        if getattr(self.control, "is_picker", False):  # a device list: no bar, the choice is the content
+            self.update(Text.assemble(("◉ ", "bold green" if value != "off" else "grey50"), value.partition(": ")[2] or value))
+            return
         bar = max(width - len(value) - 1 - (5 if self.editing else 0), 2)
         filled = round(self.control.position(self.context) * bar)
         text = Text()
@@ -392,8 +396,31 @@ class AudioVizApp(App):
         if self.group_focus:
             self.group_focus = []
             self.mark_group_focus()
+        elif isinstance(self.focused, KnobTile) and getattr(self.focused.control, "is_picker", False):
+            self.open_checklist(self.focused)
         elif isinstance(self.focused, KnobTile):
             self.set_editing(True)
+
+    def open_checklist(self, knob: "KnobTile") -> None:
+        control = knob.control
+        screen = DeviceChecklist(control.name, control.choices, control.selected, control.capacity)
+        # Pushed after the opening Enter has been fully handled, so the modal's own Enter binding never sees it.
+        self.call_later(self.push_screen, screen, lambda values: self.apply_checklist(knob, values))
+
+    def apply_checklist(self, knob: "KnobTile", values: list[str] | None) -> None:
+        if values is None or values == knob.control.selected:
+            return
+        log = self.query_one("#log", LogTile)
+
+        def apply() -> None:
+            try:
+                knob.control.select(values)
+                self.call_from_thread(log.write, f"{knob.control.name}: {', '.join(values)}")
+            except Exception as error:  # a busy or missing device leaves the current one running
+                self.call_from_thread(log.write, f"{knob.control.name}: {error}")
+            self.call_from_thread(knob.refresh_view)
+
+        self.run_worker(apply, thread=True, group="deck-select")
 
     def set_editing(self, on: bool) -> None:
         knob = self.focused
