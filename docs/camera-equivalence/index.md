@@ -24,14 +24,15 @@ The canvas is corrected by the errors of every enabled camera at once. Cameras d
 - Cover camera 1 and camera 2 still corrects the canvas.
 - No coupling between branches; no homography.
 
-## Phase 2: correspondence
+## Phase 2: visualize correspondences
 
-Hidden units excited by pixels of both cameras are the correspondence.
+No transform is fitted for now. Once both cameras project onto the canvas, the correspondence should show itself there. Phase 2 only makes it visible:
 
-1. For each hidden unit $i$, compute its receptive-field centroid $c_i^{(k)}$ in camera $k$ from $g_k$.
-2. Keep units with strong, compact fields in both cameras.
-3. Fit $H$ so that $c_i^{(2)} \simeq H\,c_i^{(1)}$ (DLT with RANSAC).
-4. The residual is the diagnostic: low means a homography suffices.
+1. Show each camera's prediction $g_k(h)$ and error $e_k$ next to the canvas.
+2. Show the underlying mappings: for a selected hidden unit $i$, its receptive field in each camera (from $g_k$).
+3. Show which canvas regions both cameras excite.
+
+Fitting $H$ (DLT with RANSAC on receptive-field centroids $c_i^{(k)}$) is deferred until the visualization shows whether a homography is a sensible description.
 
 ![Hidden units as correspondences between the two cameras](./correspondence.svg)
 
@@ -40,4 +41,4 @@ Hidden units excited by pixels of both cameras are the correspondence.
 - A homography is exact only for planar or distant scenes. What is the next transform (epipolar / fundamental matrix, depth-dependent warp, learned flow)?
 - EO and IR are not a matched pair. Do shared units emerge at all without cross-modal supervision?
 - Should the checkerboard calibration be an independent baseline?
-- Where does the diagnostic show up in the TUI: tile, overlay or log?
+- Where does the visualization show up in the TUI: tile, overlay or log?
