@@ -711,9 +711,13 @@ class AudioVizApp(App):
                 log.write(":w [name] save state+screenshot  :e [name] load   ? key bindings  :keys [write|reload]")
                 log.write("out off|prediction|evidence  volume <v>  audio tone <hz>")
                 log.write("resolution <n|RxC>  render half|quad|braille|auto  zoom")
-                log.write("screenshot [name]  q")
+                log.write("screenshot [name]  q   save  (attached: window knobs -> config/deck.json, loaded by main.py)")
             elif name == "keys":
                 self.run_keys_command(args)
+            elif name == "save":
+                if not self.attached:
+                    raise ValueError("save writes the main.py window's knobs; start with --attach")
+                log.write(f"saved {self.deck.save()}")
             elif name == "damping":
                 self.runtime.engine.set_damping(float(args[0]))
             elif name == "speed":

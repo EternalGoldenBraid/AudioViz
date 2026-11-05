@@ -47,3 +47,18 @@ def test_client_knobs_turn_the_window_engine_over_the_socket(tmp_path):
     assert seen["names"] == ["damping", "speed"]
     assert window.engine.speed > 1.0
     assert seen["after"] != seen["before"]
+
+
+def test_saved_knobs_are_applied_to_the_next_window(tmp_path):
+    config = tmp_path / "deck.json"
+    first = SimpleNamespace(engine=FakeEngine(), source_orchestrator=None)
+    server = DeckServer(first, tmp_path / "a.sock", config)
+    server.controls = {"damping": server.controls["damping"]}
+    server.controls["damping"].set(server.target, 0.95)
+
+    reply = server.handle({"op": "save"})
+
+    assert reply["saved"] == str(config)
+    second = SimpleNamespace(engine=FakeEngine(), source_orchestrator=None)
+    DeckServer(second, tmp_path / "b.sock", config)  # applies the saved file on startup
+    assert second.engine.damping == 0.95

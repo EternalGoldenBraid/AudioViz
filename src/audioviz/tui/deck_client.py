@@ -24,16 +24,21 @@ class DeckClient:
         self.state: dict[str, dict] = {}
         self.refresh()
 
-    def _call(self, request: dict) -> None:
+    def _call(self, request: dict) -> dict:
         with self._lock:  # one request in flight; the poller thread and key handlers share the stream
             self._socket.sendall(json.dumps(request).encode() + b"\n")
             reply = json.loads(self._reader.readline())
         if "error" in reply:
             raise RuntimeError(reply["error"])
         self.state = {c["name"]: c for c in reply["controls"]}
+        return reply
 
     def refresh(self) -> None:
         self._call({"op": "controls"})
+
+    def save(self) -> str:
+        """Writes the window's current knob values to its deck config file; returns the path."""
+        return self._call({"op": "save"})["saved"]
 
     def nudge(self, name: str, steps: int) -> None:
         self._call({"op": "nudge", "name": name, "steps": steps})
