@@ -875,7 +875,7 @@ class AudioVizApp(App):
             "devices": self.open_devices,
             "hide": self.hide, "unhide": self.unhide, "tiles": self.open_tiles,
             "turn_down": lambda: knob.adjust(-1), "turn_up": lambda: knob.adjust(1),
-            "command": self._open_command, "help": self.show_keys, "quit": self.exit,
+            "command": self._open_command, "help": self.show_keys,
         }
         actions[action]()
         return True

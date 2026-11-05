@@ -559,16 +559,16 @@ def test_path_suggester_completes_folders_and_recordings(tmp_path):
     assert suggest(f"{tmp_path}/") in {f"{tmp_path}/run1.mp4", f"{tmp_path}/runs/"}
 
 
-def test_shift_arrows_resize_and_zoom_is_just_a_big_resize_that_restores(tmp_path):
+def test_alt_hjkl_resize_and_zoom_is_just_a_big_resize_that_restores(tmp_path):
     async def scenario(app, pilot):
         tile = app.query_one("#canvas")
         tile.focus()
         before = vars(app.placements["canvas"]).copy()
         depth = app.stack.index("canvas")
-        await pilot.press("shift+right", "shift+down")
+        await pilot.press("alt+l", "alt+k")
         grown = app.placements["canvas"]
         assert (grown.width, grown.height) == (before["width"] + 2, before["height"] + 1)
-        await pilot.press("shift+left", "shift+up")
+        await pilot.press("alt+h", "alt+j")
         assert vars(app.placements["canvas"]) == before
         app.resize_tile(-500, -500)
         assert (app.placements["canvas"].width, app.placements["canvas"].height) == (6, 3)
