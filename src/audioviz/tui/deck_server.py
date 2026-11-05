@@ -8,6 +8,7 @@ Requests run on the Qt event loop thread, the thread that steps the engine.
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from PyQt5.QtNetwork import QLocalServer
@@ -47,6 +48,7 @@ class DeckServer:
     def __init__(self, window, path: Path = SOCKET) -> None:
         self.target = WindowTarget(window)
         self.controls = {c.name: c for c in CONTROLS if c.name in LIVE_CONTROLS}
+        self.controls["speed"] = replace(self.controls["speed"], low=10.0, high=3000.0, log=True)  # the window runs in m/s
         self.server = QLocalServer()
         QLocalServer.removeServer(str(path))
         if not self.server.listen(str(path)):

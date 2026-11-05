@@ -207,6 +207,8 @@ class AudioVizApp(App):
         self.load_keys()
         self.autosave = autosave
         self.settings = settings_controls()
+        if attach:  # resolution and sound belong to the local graph, which is idle
+            self.settings = tuple(c for c in self.settings if c.name in ("theme", "tile background"))
         self.hot_reload = hot_reload
         self._reloader = HotReload()
         self._saved: dict | None = None
@@ -875,10 +877,10 @@ class AudioVizApp(App):
         zoom = f"   zoom: {self.zoomed}" if self.zoomed else ""
         if mode == "EDIT":
             mode = f"EDIT {self.focused.control.name}   h/l slide, Enter/Esc leave"
-        self.query_one("#mode", Static).update(
-            f"{mode}   audio: {self.runtime.feed.source}   grid: {format_resolution(self.runtime.resolution)}"
-            f" ({self.runtime.step_ms:.0f} ms){zoom}"
-        )
+        graph = "attached to main.py" if self.attached else (
+            f"audio: {self.runtime.feed.source}   grid: {format_resolution(self.runtime.resolution)}"
+            f" ({self.runtime.step_ms:.0f} ms)")
+        self.query_one("#mode", Static).update(f"{mode}   {graph}{zoom}")
 
     def select_audio(self, choice: str) -> None:
         """Switch audio source; a device that fails to open leaves the previous source running."""
