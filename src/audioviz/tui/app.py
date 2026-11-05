@@ -39,6 +39,7 @@ from audioviz.tui.tile_list import TileList
 from audioviz.tui import views as views_module
 
 MAX_LAYERS = 8
+MIN_TILE = (6, 3)  # smallest tile in cells: width, height
 BRAILLE_MIN_CELLS = 1200  # tiles at least this large render at braille density
 AUTOSAVE_SECONDS = 5
 RECORD_FPS = 15  # one frame per tile refresh
@@ -266,6 +267,7 @@ class AudioVizApp(App):
         self.recorder: Recorder | None = None
         self._return_focus = None
         self.zoomed: str | None = None
+        self.before_zoom: tuple[Placement, int] | None = None  # the zoomed tile's placement and stack depth
         self.immersive = False
         self._tmux_zoomed = False
         self.tile_background: str | None = None  # overrides the theme surface
@@ -433,12 +435,14 @@ class AudioVizApp(App):
             placement = self.placements[name]
             widget = self.query_one(f"#{name}")
             styles = widget.styles
-            zoomed = self.zoomed == name
-            widget.display = self.zoomed in (None, name) and self.visible(name)
-            styles.offset = (0, 0) if zoomed else (placement.x, placement.y)
-            styles.width = stage.width if zoomed else placement.width
-            styles.height = stage.height if zoomed else placement.height
-            styles.opacity = 1.0 if zoomed else placement.opacity
+            if self.zoomed == name:  # zoom is only a resize: the tile takes the whole stage, whatever it is
+                placement.x = placement.y = 0
+                placement.width, placement.height = stage.width, stage.height
+            widget.display = self.visible(name)
+            styles.offset = (placement.x, placement.y)
+            styles.width = placement.width
+            styles.height = placement.height
+            styles.opacity = placement.opacity
             styles.layer = f"z{depth}"
             widget.border_subtitle = self.page_label(name) or (widget.view_caption if isinstance(widget, ViewTile) else "")
         self.set_mode(self.mode)
@@ -656,9 +660,30 @@ class AudioVizApp(App):
             self._tmux_zoomed = self.immersive
 
     def toggle_zoom(self) -> None:
-        self.zoomed = None if self.zoomed else self._focused_name()
+        if self.zoomed:
+            name, (placement, depth) = self.zoomed, self.before_zoom
+            self.zoomed = None
+            self.placements[name] = placement
+            self.stack.remove(name)
+            self.stack.insert(min(depth, len(self.stack)), name)
+        else:
+            name = self.zoomed = self._focused_name()
+            placement = self.placements[name]
+            self.before_zoom = (replace(placement), self.stack.index(name))
+            placement.opacity = 1.0
+            self.stack.remove(name)
+            self.stack.append(name)
         self.apply_layout()
-        self.query_one(f"#{self._focused_name()}").focus()
+        self.query_one(f"#{name}").focus()
+
+    def resize_tile(self, dw: int, dh: int) -> None:
+        """Grows or shrinks the tile, or every tile of its group, keeping the top-left corner."""
+        if self.zoomed:
+            return
+        for name in self.members(self._focused_name()):
+            placement = self.placements[name]
+            placement.width, placement.height = max(MIN_TILE[0], placement.width + dw), max(MIN_TILE[1], placement.height + dh)
+        self.apply_layout()
 
     def _focused_name(self) -> str:
         focused = self.focused
@@ -779,7 +804,7 @@ class AudioVizApp(App):
         self.query_one(f"#{target}").focus()
 
     def _move_focus(self, step: int) -> None:
-        names = [name for name in self.placements if self.zoomed in (None, name) and self.visible(name)]
+        names = [name for name in self.placements if self.visible(name)]
         current = names.index(self._focused_name())
         self.query_one(f"#{names[(current + step) % len(names)]}").focus()
 
@@ -835,6 +860,8 @@ class AudioVizApp(App):
             "slide_down": lambda: knob.adjust(-1), "slide_up": lambda: knob.adjust(1),
             "move_left": lambda: self.move_tile(-dx, 0), "move_right": lambda: self.move_tile(dx, 0),
             "move_up": lambda: self.move_tile(0, -dy), "move_down": lambda: self.move_tile(0, dy),
+            "grow_wider": lambda: self.resize_tile(dx, 0), "grow_narrower": lambda: self.resize_tile(-dx, 0),
+            "grow_taller": lambda: self.resize_tile(0, dy), "grow_shorter": lambda: self.resize_tile(0, -dy),
             "lift": lambda: self.lift_tile(1), "lower": lambda: self.lift_tile(-1),
             "opacity_up": lambda: self.nudge_opacity(self.OPACITY_STEP),
             "opacity_down": lambda: self.nudge_opacity(-self.OPACITY_STEP),
@@ -1023,7 +1050,7 @@ class AudioVizApp(App):
     def snapshot(self) -> dict:
         """Everything a restart needs to look and sound the same; sound output stays off for safety."""
         return {
-            "placements": {k: vars(v) for k, v in self.placements.items()},
+            "placements": {k: vars(self.before_zoom[0] if k == self.zoomed else v) for k, v in self.placements.items()},
             "stack": self.stack,
             "groups": self.groups,
             "pages": self.pages,

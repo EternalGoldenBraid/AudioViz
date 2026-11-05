@@ -38,6 +38,10 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("arrange", "move_down", ("J",), "move down"),
     Binding("arrange", "move_up", ("K",), "move up"),
     Binding("arrange", "move_right", ("L",), "move right"),
+    Binding("arrange", "grow_wider", ("shift+right",), "make the tile or group wider"),
+    Binding("arrange", "grow_narrower", ("shift+left",), "make it narrower"),
+    Binding("arrange", "grow_taller", ("shift+down",), "make it taller"),
+    Binding("arrange", "grow_shorter", ("shift+up",), "make it shorter"),
     Binding("arrange", "lift", ("right_square_bracket",), "raise one layer"),
     Binding("arrange", "lower", ("left_square_bracket",), "lower one layer"),
     Binding("arrange", "opacity_up", ("full_stop",), "more opaque"),
@@ -52,7 +56,7 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("group", "select_right", ("l",), "add the tile to the right", "visual"),
     Binding("group", "commit_group", ("g", "enter"), "group the selection", "visual"),
     Binding("group", "cancel_group", ("escape",), "cancel the selection", "visual"),
-    Binding("view", "zoom", ("z",), "zoom the tile"),
+    Binding("view", "zoom", ("z",), "zoom: resize the tile to the whole stage, again to restore"),
     Binding("view", "immersive", ("F",), "fullscreen"),
     Binding("view", "render", ("r",), "cycle the render mode"),
     Binding("view", "hide", ("d d",), "hide the tile, or the whole group when it is focused"),
@@ -73,6 +77,7 @@ SYMBOLS = {
     "right_square_bracket": "]", "left_square_bracket": "[", "full_stop": ".", "comma": ",", "colon": ":",
     "minus": "-", "plus": "+", "equals_sign": "=", "question_mark": "?", "escape": "Esc", "enter": "Enter",
     "tab": "Tab", "shift+tab": "S-Tab", "left": "←", "right": "→", "ctrl+q": "C-q",
+    "shift+left": "S-←", "shift+right": "S-→", "shift+up": "S-↑", "shift+down": "S-↓",
 }
 NAMES = {symbol: name for name, symbol in SYMBOLS.items()}
 
