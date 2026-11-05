@@ -73,6 +73,42 @@ The two limits, shown below left to right ($t$ is the translation between the ca
 
 ![Residual after H as the baseline grows](./fig-parallax-baseline.svg)
 
+Try it: drag the sliders. Hollow dots are where $H$ predicts, filled dots are where the points land. Heights are measured above the plane; the three dots at height 0 never move.
+
+<script setup>
+import { ref, computed } from 'vue'
+const t = ref(0.15)
+const ex = ref(2.6)
+const ey = ref(1.9)
+const pts = [[0.8,0.8,0],[1.0,3.0,0],[4.1,3.1,0],[4.2,0.7,0],[1.4,2.4,1],[3.8,2.2,1.6],[3.4,0.9,2.4]]
+const X = x => 40 + x * 60
+const Y = y => 250 - y * 60
+const moved = computed(() => pts.map(([px, py, h]) => ({
+  px, py, h,
+  mx: px + t.value * h * (px - ex.value),
+  my: py + t.value * h * (py - ey.value),
+})))
+</script>
+
+<div class="plx">
+  <svg viewBox="0 0 360 270" width="100%" style="max-width:520px;background:#1B1F27;border-radius:6px">
+    <rect :x="X(0)" :y="Y(3.8)" :width="5*60" :height="3.8*60" fill="#3a2d2f" stroke="#E5826F" stroke-width="2" />
+    <g v-for="(p,i) in moved" :key="i">
+      <line v-if="p.h>0" :x1="X(ex)" :y1="Y(ey)" :x2="X(p.px)" :y2="Y(p.py)" stroke="#B39DDB" stroke-dasharray="4 3" stroke-width="0.8" />
+      <line v-if="p.h>0" :x1="X(p.px)" :y1="Y(p.py)" :x2="X(p.mx)" :y2="Y(p.my)" stroke="#F0C060" stroke-width="1.5" />
+      <circle :cx="X(p.px)" :cy="Y(p.py)" r="4" fill="#1B1F27" stroke="#F0C060" stroke-width="1.5" />
+      <circle v-if="p.h>0" :cx="X(p.mx)" :cy="Y(p.my)" r="4" fill="#F0C060" />
+    </g>
+    <text :x="X(ex)-5" :y="Y(ey)+4" fill="#B39DDB" font-size="14">x</text>
+    <text :x="X(ex)+6" :y="Y(ey)+16" fill="#B39DDB" font-size="11">e'</text>
+  </svg>
+  <div style="display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;max-width:520px;align-items:center">
+    <span>baseline t</span><input type="range" min="0" max="0.5" step="0.01" v-model.number="t" /><span>{{ t.toFixed(2) }}</span>
+    <span>epipole x</span><input type="range" min="-3" max="8" step="0.1" v-model.number="ex" /><span>{{ ex.toFixed(1) }}</span>
+    <span>epipole y</span><input type="range" min="-3" max="7" step="0.1" v-model.number="ey" /><span>{{ ey.toFixed(1) }}</span>
+  </div>
+</div>
+
 ![Parallax of a point off the plane](./fig-parallax.svg)
 
 ### Fundamental $F$ and essential $E$
