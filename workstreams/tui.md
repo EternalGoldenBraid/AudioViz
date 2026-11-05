@@ -1,5 +1,12 @@
 # TUI: a terminal-native front end
 
+> **Status:** active · **Branch:** `agent/tui` (local, not pushed) · **Updated:** 2026-11-05
+> **Now:** TUI becomes a deck: `main.py` renders, the TUI controls it (see Direction).
+> **Next:** registry of ~5 live parameters, served by `main.py` on a Unix socket; TUI knobs drive the real window.
+> **Blocked:** push needs `gh auth login -h github.com`, then `git push -u origin agent/tui`.
+> **Resume:** `copilot --resume efa7117b-d1b5-4bdb-bf79-7d9c8036c52e`
+> **Run:** `uv run --group tui --with-editable . python -m audioviz.tui.app --audio synthetic`
+
 **Essence.** AudioViz as a Vim-modal terminal app. Tiles are subgraph views of the
 predictive-coding graph (waveform, spectrogram, prediction, error, canvas, hidden),
 plus a mixer and a log. Tiles float on layers with opacity, can be lifted, moved and
