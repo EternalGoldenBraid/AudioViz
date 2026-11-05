@@ -68,6 +68,15 @@ Accessible from GUI sliders:
 * **Show Inference / Learning Plots**: Opens the energy / 2D weight plot catalogue
 * **Show Multimodal 3D Scene**: Opens an independent, rotatable view of the shared canvas and every source
 
+### Terminal recordings
+
+In the TUI, `:record [path]` starts an MP4 recording of the visible image tiles;
+`:record` again stops it. The **record** tile also starts and stops recording
+with Enter, and its path prompt completes folders with Tab. Recordings include
+tile names and stacking order, but not audio, knobs, or the log. The first
+frame fixes the video dimensions. Exiting the TUI finalizes an active recording.
+In the `?` key list, `/` filters bindings and Esc clears the filter.
+
 ## Predictive canvas
 
 An opt-in **cochlea** model in the standalone TUI predicts raw audio with a

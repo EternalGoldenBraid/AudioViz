@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
+import cv2
 import numpy as np
 from rich.text import Text
 from textual import events
@@ -341,6 +342,9 @@ class AudioVizApp(App):
         }
 
     def on_unmount(self) -> None:
+        if self.recorder is not None:
+            recorder, self.recorder = self.recorder, None
+            recorder.stop()
         if getattr(self, "owns_socket", False):
             control.SOCKET.unlink(missing_ok=True)
         if self.autosave:
@@ -390,8 +394,10 @@ class AudioVizApp(App):
             return
         try:
             self.recorder.capture(self.recorded_tiles())
-        except Exception as error:
+        except (OSError, RuntimeError, ValueError, cv2.error) as error:
+            recorder = self.recorder
             self.recorder = None
+            recorder.stop()
             self.query_one("#log", LogTile).write(f"recording stopped: {error}")
 
     def recordings_dir(self) -> Path:

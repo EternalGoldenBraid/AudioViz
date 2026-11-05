@@ -477,6 +477,36 @@ def test_record_writes_the_shown_tiles_and_stops_on_the_second_command(tmp_path)
     _headless(tmp_path, scenario)
 
 
+@pytest.mark.parametrize("fail_capture", [False, True])
+def test_recording_is_finalized_on_exit_or_capture_failure(tmp_path, monkeypatch, fail_capture):
+    import cv2
+
+    target = tmp_path / "finalized.mp4"
+    recordings = []
+
+    async def scenario(app, pilot):
+        app.run_command("record", [str(target)])
+        await pilot.pause(0.5)
+        recorder = app.recorder
+        assert recorder.frames > 0
+        recordings.append(recorder)
+        if fail_capture:
+            def fail(tiles):
+                raise RuntimeError("capture failed")
+
+            monkeypatch.setattr(recorder, "capture", fail)
+            app.record_frame()
+            assert app.recorder is None
+
+    _headless(tmp_path, scenario)
+    assert recordings[0].writer is None
+    video = cv2.VideoCapture(str(target))
+    try:
+        assert video.isOpened() and video.read()[0]
+    finally:
+        video.release()
+
+
 def test_slash_filters_the_key_list_and_escape_steps_back(tmp_path):
     from textual.widgets import Static
 

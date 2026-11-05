@@ -74,6 +74,7 @@ class Recorder:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*"mp4v"), self.fps, (self.size[1], self.size[0]))
             if not self.writer.isOpened():
+                self.writer.release()
                 self.writer = None
                 raise RuntimeError(f"cannot write video to {self.path}")
         else:
@@ -84,4 +85,5 @@ class Recorder:
     def stop(self) -> Path:
         if self.writer is not None:
             self.writer.release()
+            self.writer = None
         return self.path
