@@ -117,22 +117,35 @@ class RippleSourceOrchestrator:
             enabled=bool(config.camera_frame.enabled),
             capture=camera_capture,
         )
-        # Observation-only second camera (e.g. IR beside EO); it feeds its own scene tile, not the canvas.
-        self.secondary_camera_source = CameraFrameSource(
-            resolution=resolution,
-            camera_index=config.camera_frame.camera_index,
-            gain=config.camera_frame.gain,
-            enabled=False,
-            scene_mapping=SourceSceneMapping("camera_secondary", "Camera 2", "rgb", "sensory"),
-        )
-        self.secondary_observation: np.ndarray | None = None
+        # Every enabled sensor is observed once per step and keeps its latest observation;
+        # the visual readout consumes camera 1's, other sensors feed their own scene tiles.
+        self.sensors = {
+            self.camera_source.sensor_id: self.camera_source,
+            "camera 2": CameraFrameSource(
+                resolution=resolution,
+                camera_index=config.camera_frame.camera_index,
+                gain=config.camera_frame.gain,
+                enabled=False,
+                scene_mapping=SourceSceneMapping("camera_secondary", "Camera 2", "rgb", "sensory"),
+                sensor_id="camera 2",
+            ),
+        }
         self.prediction_error_transform = PredictionErrorTransform(
             config=config.prediction_error,
             resolution=self.canvas_shape,
         )
 
-    def observe_secondary_camera(self) -> None:
-        self.secondary_observation = self.secondary_camera_source.excitation()
+    @property
+    def secondary_camera_source(self) -> CameraFrameSource:
+        return self.sensors["camera 2"]
+
+    @property
+    def secondary_observation(self) -> np.ndarray | None:
+        return self.secondary_camera_source.observation
+
+    def observe_sensors(self) -> None:
+        for sensor in self.sensors.values():
+            sensor.observe()
 
     def set_base_amplitude(self, amplitude: float) -> None:
         self.base_amplitude = float(amplitude)
@@ -180,7 +193,7 @@ class RippleSourceOrchestrator:
 
     def resolve_visual_observation_correction(self) -> np.ndarray:
         observation = (
-            self.camera_source.excitation()
+            self.camera_source.observation
             if self.prediction_error_transform.applies_to("camera_frame") else None
         )
         self.visual_observation = observation
@@ -194,13 +207,13 @@ class RippleSourceOrchestrator:
         if self.engine.use_shader:
             raise NotImplementedError("Sensory inference requires an array-backed canvas.")
         self.visual_observation = None
-        self.observe_secondary_camera()
+        self.observe_sensors()
         audio = self.audio_source.observation()
         if self.audio_readout is None:
             correction = self.resolve_visual_observation_correction()
         else:
             image = (
-                self.camera_source.excitation()
+                self.camera_source.observation
                 if self.prediction_error_transform.applies_to("camera_frame") else None
             )
             self.visual_observation = image
@@ -242,7 +255,8 @@ class RippleSourceOrchestrator:
             self.audio_readout.reset()
         self.audio_prediction = None
         self.visual_observation = None
-        self.secondary_observation = None
+        for sensor in self.sensors.values():
+            sensor.observation = None
 
     def _to_canvas_grid(self, grid: np.ndarray) -> np.ndarray:
         values = np.asarray(grid, dtype=np.float32)

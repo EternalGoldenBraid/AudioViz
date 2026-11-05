@@ -24,6 +24,7 @@ def load_cv2():
 
 class CameraFrameSource:
     scene_mapping = SourceSceneMapping("camera", "Camera", "rgb", "sensory")
+    kind = "camera"
 
     def __init__(
         self,
@@ -35,9 +36,12 @@ class CameraFrameSource:
         capture=None,
         cv2_loader: Callable = load_cv2,
         scene_mapping: SourceSceneMapping | None = None,
+        sensor_id: str = "camera 1",
     ) -> None:
         if scene_mapping is not None:
             self.scene_mapping = scene_mapping
+        self.sensor_id = sensor_id
+        self.observation: np.ndarray | None = None  # latest frame, refreshed by observe()
         self.resolution = tuple(int(value) for value in resolution)
         self.camera_index = camera_index
         self.gain = float(gain)
@@ -85,6 +89,9 @@ class CameraFrameSource:
             self.capture = None
             raise RuntimeError(f"Failed to open camera source index {self.camera_index}")
         self.capture = capture
+
+    def observe(self) -> None:
+        self.observation = self.excitation()
 
     def excitation(self) -> np.ndarray | None:
         if not self.enabled:
