@@ -69,6 +69,25 @@ def sensor_view(sensor_id: str) -> View:
     return view
 
 
+def sensor_prediction_view(sensor_id: str) -> View:
+    """What one camera's own readout expects to see, signed RGB like the canvas prediction."""
+    def view(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+        predicted = runtime.orchestrator.sensor_predictions.get(sensor_id)
+        return None if predicted is None else _signed_rgb(predicted)
+    return view
+
+
+def sensor_error_view(sensor_id: str) -> View:
+    """One camera's observation minus its own prediction; None while it has no frame or no prediction."""
+    def view(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+        predicted = runtime.orchestrator.sensor_predictions.get(sensor_id)
+        sensor = runtime.orchestrator.sensors.get(sensor_id)
+        if predicted is None or sensor is None or sensor.observation is None:
+            return None
+        return _signed_rgb(np.asarray(sensor.observation) - predicted)
+    return view
+
+
 def canvas(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray:
     """The corrected canvas: signed RGB field, auto-scaled so faint activity stays visible."""
     field = runtime.engine.get_field_numpy()
@@ -188,6 +207,8 @@ VIEWS: dict[str, View] = {
     "canvas": canvas,
     "camera_1": camera,
     "camera_2": sensor_view("camera 2"),
+    "camera_2_prediction": sensor_prediction_view("camera 2"),
+    "camera_2_error": sensor_error_view("camera 2"),
     "prediction": prediction,
     "error": prediction_error,
     "visual_prediction": visual_prediction,
