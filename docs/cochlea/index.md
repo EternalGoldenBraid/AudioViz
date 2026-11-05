@@ -355,6 +355,11 @@ the loudest visible frame. These are uncalibrated analysis units, not sound
 pressure or waveform dBFS. Frequency labels use actual FFT bins or mel-filter
 centres, and the mel axis is explicitly marked as mel-spaced.
 
+The 2D waveform shares the full history interval with both heatmaps. Qt and
+terminal views use a fixed $[-1,1]$ amplitude range and per-column min/max
+envelopes, preserving transients as resolution decreases. The 3D landscape
+retains its separate short waveform-source duration.
+
 ## Reproduce and inspect
 
 ```bash

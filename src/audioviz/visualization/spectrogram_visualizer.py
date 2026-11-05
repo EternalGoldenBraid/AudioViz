@@ -14,7 +14,7 @@ from matplotlib.colors import Normalize
 from .visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.sources.orchestrator import AUDIO_MODELS, RippleSourceOrchestrator
-from .audio_history_view import COCHLEA_COLORMAP, COCHLEA_DB_RANGE, cochlea_db, spectrum_db
+from .audio_history_view import COCHLEA_COLORMAP, COCHLEA_DB_RANGE, cochlea_db, spectrum_db, waveform_envelope
 
 class SpectrogramVisualizer(VisualizerBase):
     def __init__(self,
@@ -39,7 +39,7 @@ class SpectrogramVisualizer(VisualizerBase):
         self.spectrogram_plot_item: pg.PlotItem
         self.spectrogram_view: pg.ImageView
         self.spectrogram_y_labels = processor.freq_bins
-        self.waveform_plot: pg.PlotWidget
+        self.waveform_plot: pg.PlotItem
         self.waveform_curve: pg.PlotDataItem
         
         self.waveform_y_range: tuple = (-1, 1)
@@ -132,12 +132,21 @@ class SpectrogramVisualizer(VisualizerBase):
         layout.addWidget(spectrogram_widget)
     
         # Waveform plot
-        self.waveform_plot = pg.PlotWidget(title="Waveform")
-        self.waveform_plot.setLabel("bottom", "Samples")
+        self.waveform_plot = spectrogram_widget.addPlot(row=2, col=0, title="Raw waveform | fixed amplitude, peak-preserving envelope")
+        self.waveform_plot.setLabel("bottom", "Time relative to latest audio", units="s")
         self.waveform_plot.setLabel("left", "Amplitude")
-        self.waveform_plot.setYRange(-1, 1)
-        self.waveform_curve = self.waveform_plot.plot(pen="y")
-        layout.addWidget(self.waveform_plot)
+        self.waveform_plot.setYRange(-1, 1, padding=0)
+        self.waveform_plot.getAxis("left").setWidth(85)
+        self.waveform_plot.getAxis("bottom").setStyle(hideOverlappingLabels=False)
+        self.waveform_plot.setXLink(self.spectrogram_plot_item)
+        self.waveform_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen("#44546a")))
+        self.waveform_curve = self.waveform_plot.plot(pen="#5adc8c")
+        self.waveform_low = self.waveform_plot.plot(pen="#5adc8c")
+        self.waveform_plot.addItem(pg.FillBetweenItem(
+            self.waveform_low, self.waveform_curve, brush=pg.mkBrush(90, 220, 140, 110),
+        ))
+        for row, stretch in enumerate((3, 3, 2)):
+            spectrogram_widget.ci.layout.setRowStretchFactor(row, stretch)
 
     def set_canvas_provider(self, provider: Callable[[], np.ndarray]) -> None:
         self.canvas_provider = provider
@@ -259,14 +268,11 @@ class SpectrogramVisualizer(VisualizerBase):
             return
         self._update_spectrum()
         
-        time_start_waveform = time.time()
-        # Process waveform
-        mean_waveform = np.mean(audio, axis=1)
-        
-        n_samples = int(self.waveform_plot_duration * self.processor.sr)
-        if len(mean_waveform) > n_samples:
-            mean_waveform = mean_waveform[-n_samples:]
-        
-        self.waveform_curve.setData(mean_waveform)
-        time_end_waveform = time.time()
-        # print(f"Waveform processing time: {time_end_waveform - time_start_waveform:.4f} seconds")
+        history = self.processor.get_audio_history()
+        times, low, high = waveform_envelope(history, max(1, int(self.waveform_plot.width())))
+        self.waveform_curve.setData(times, high)
+        self.waveform_low.setData(times, low)
+        self.waveform_plot.setYRange(-1, 1, padding=0)
+        self.waveform_plot.getAxis("bottom").setTicks([
+            [(float(t), f"{t:g}") for t in np.linspace(-history.duration, 0, 5)]
+        ])

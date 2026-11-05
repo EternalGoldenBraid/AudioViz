@@ -109,7 +109,10 @@ class ViewTile(Static, can_focus=True):
     def set_view(self, view: str) -> None:
         self.view = view
         self.border_title = view
-        self.border_subtitle = "index / time > | -80..0 dB" if view == "cochlea" else ""
+        self.border_subtitle = {
+            "cochlea": "index / time > | -80..0 dB",
+            "waveform": "fixed +/-1 | time >",
+        }.get(view, "")
 
     def refresh_view(self) -> None:
         size = self.content_size

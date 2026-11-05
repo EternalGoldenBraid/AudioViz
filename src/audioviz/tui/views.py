@@ -13,6 +13,7 @@ from audioviz.tui.halfblock import field_to_rgb, waveform_to_rgb
 from audioviz.visualization.audio_history_view import (
     COCHLEA_COLORMAP, COCHLEA_DB_RANGE, cochlea_db, level_rgb,
     SPECTRUM_COLORMAP, SPECTRUM_DB_RANGE, spectrum_db,
+    waveform_envelope,
 )
 
 View = Callable[[GraphRuntime, int, int], "np.ndarray | None"]
@@ -35,11 +36,17 @@ def cochlea(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
 
 
 def waveform(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
-    snapshot = runtime.processor.get_latest_snapshot()
-    if snapshot is None:
+    history = runtime.processor.get_audio_history()
+    if history is None:
         return None
-    samples = snapshot[0][-8192:, 0]
-    return waveform_to_rgb(samples / max(float(np.abs(samples).max()), WAVEFORM_PEAK_FLOOR), rows, cols)
+    _, low, high = waveform_envelope(history, cols)
+    bottom = (1 - np.clip(low, -1, 1)) / 2 * (rows - 1)
+    top = (1 - np.clip(high, -1, 1)) / 2 * (rows - 1)
+    height = np.arange(rows)[:, None]
+    image = np.tile(BACKGROUND, (rows, len(low), 1))
+    image[rows // 2] = (50, 60, 70)
+    image[(height >= np.floor(top)) & (height <= np.floor(bottom))] = (90, 220, 140)
+    return image
 
 
 def spectrogram(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
