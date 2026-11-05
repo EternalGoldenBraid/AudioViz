@@ -140,6 +140,12 @@ class StubDeck:
     def refresh(self):
         pass
 
+    def preview(self, name, rows, cols):
+        return None
+
+    def fetch_previews(self):
+        pass
+
     def select(self, name, values):
         self.sent.append(values)
         self.chosen = values
@@ -170,3 +176,25 @@ def test_enter_on_a_device_knob_opens_a_checklist_that_replaces_the_selection(tm
             assert deck.sent == [["3: pro mic"]]
 
     asyncio.run(run())
+
+
+def test_the_window_serves_the_tui_views_downsampled_and_the_client_decodes_them():
+    from audioviz.tui.graph_runtime import GraphRuntime
+
+    runtime = GraphRuntime(camera=False)
+    runtime.rebuild("300x400")  # larger than the preview cap, so the server strides
+    server = DeckServer.__new__(DeckServer)
+    server.target = runtime  # a GraphRuntime has every attribute the views read from a window
+    client = DeckClient.__new__(DeckClient)
+    client.previews, client.wanted = {}, {}
+    client._call = server.handle
+
+    assert client.preview("canvas", 40, 80) is None  # the first ask only schedules the fetch
+    client.preview("camera", 40, 80)  # the camera view stays with the window: always null here
+    client.preview("no-such-view", 40, 80)
+    client.fetch_previews()
+
+    canvas = client.preview("canvas", 40, 80)
+    assert canvas.dtype == "uint8" and canvas.shape == (100, 134, 3)  # 300x400 strided by 3
+    assert client.previews.keys() == {"canvas"}
+    assert client.wanted == {"canvas": (40, 80)}  # asking again schedules the next round only for what tiles show

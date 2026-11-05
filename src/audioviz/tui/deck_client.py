@@ -4,25 +4,32 @@ DeckClient keeps the last reply of the server; RemoteControl is a mixer Control 
 so knob tiles work the same against a local runtime or a remote window.
 """
 
+import base64
 import json
 import socket
 import threading
 from pathlib import Path
 
+import numpy as np
+
 from audioviz.tui.deck_server import SOCKET
 
 TIMEOUT_S = 3.0  # the window answers between engine steps, which take a few hundred ms on large grids
+STARTUP_TIMEOUT_S = 60.0  # the first answer waits for the window to finish building its graph
 
 
 class DeckClient:
     def __init__(self, path: Path = SOCKET) -> None:
         self._lock = threading.Lock()
         self._socket = socket.socket(socket.AF_UNIX)
-        self._socket.settimeout(TIMEOUT_S)
+        self._socket.settimeout(STARTUP_TIMEOUT_S)  # the window listens before its event loop runs
         self._socket.connect(str(path))
         self._reader = self._socket.makefile("rb")
         self.state: dict[str, dict] = {}
+        self.previews: dict[str, np.ndarray] = {}
+        self.wanted: dict[str, tuple[int, int]] = {}
         self.refresh()
+        self._socket.settimeout(TIMEOUT_S)
 
     def _call(self, request: dict) -> dict:
         with self._lock:  # one request in flight; the poller thread and key handlers share the stream
@@ -30,11 +37,29 @@ class DeckClient:
             reply = json.loads(self._reader.readline())
         if "error" in reply:
             raise RuntimeError(reply["error"])
-        self.state = {c["name"]: c for c in reply["controls"]}
+        if "controls" in reply:
+            self.state = {c["name"]: c for c in reply["controls"]}
         return reply
 
     def refresh(self) -> None:
         self._call({"op": "controls"})
+
+    def preview(self, name: str, rows: int, cols: int) -> "np.ndarray | None":
+        """The last image fetched for a view; asking for it also schedules it for the next fetch_previews."""
+        self.wanted[name] = (rows, cols)
+        return self.previews.get(name)
+
+    def fetch_previews(self) -> None:
+        """One round trip for every view asked for since the last fetch."""
+        wanted, self.wanted = self.wanted, {}
+        if not wanted:
+            return
+        reply = self._call({"op": "views", "views": [[name, rows, cols] for name, (rows, cols) in wanted.items()]})
+        for name, image in reply["views"].items():
+            if image is None:
+                self.previews.pop(name, None)
+            else:
+                self.previews[name] = np.frombuffer(base64.b64decode(image["data"]), dtype=np.uint8).reshape(image["shape"])
 
     def save(self) -> str:
         """Writes the window's current knob values to its deck config file; returns the path."""

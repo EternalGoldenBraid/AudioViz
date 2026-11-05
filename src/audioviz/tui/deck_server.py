@@ -2,22 +2,28 @@
 
 JSON lines. Requests: {"op": "controls"} | {"op": "nudge", "name": n, "steps": k}
                       | {"op": "set", "name": n, "value": v} | {"op": "select", "name": n, "values": [v, ...]}
-                      | {"op": "save"}
+                      | {"op": "save"} | {"op": "views", "views": [[name, rows, cols], ...]}
 Every reply is {"controls": [...]} describing the current state of each control, or {"error": ...}.
+A views reply is {"views": {name: {"shape": [h, w, 3], "data": base64 uint8} | null}}: the images the TUI's
+view functions draw from the window's own graph, null while a node has no data.
 Requests run on the Qt event loop thread, the thread that steps the engine.
 """
 
+import base64
 import json
 import os
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
 
+import numpy as np
 from PyQt5.QtNetwork import QLocalServer
 
+from audioviz.tui import views
 from audioviz.tui.deck_devices import device_controls
 from audioviz.tui.mixer import CONTROLS, Control
 
+MAX_PREVIEW_PX = 160  # longest side of a served view; tiles resample to their cells anyway
 SOCKET = Path(os.environ.get("AUDIOVIZ_DECK_SOCKET") or Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "audioviz-deck.sock")
 DECK_CONFIG = Path(os.environ.get("AUDIOVIZ_DECK_CONFIG") or Path(__file__).resolve().parents[3] / "config" / "deck.json")
 LIVE_CONTROLS = ("evidence gain", "camera gain", "damping", "speed", "inference rate", "canvas rate", "learning", "learning rate")
@@ -45,6 +51,30 @@ class WindowTarget:
     @property
     def orchestrator(self):
         return self.window.source_orchestrator
+
+    # the rest of what the view functions read from a GraphRuntime
+    @property
+    def processor(self):
+        return self.window.processor
+
+    @property
+    def visual_prediction(self):
+        return self.window.visual_prediction
+
+    @property
+    def audio_readout(self):
+        return self.window.source_orchestrator.audio_readout
+
+    show_camera = False  # the camera view stays with the window
+
+
+def render_view(target, name: str, rows: int, cols: int) -> dict | None:
+    image = views.VIEWS[name](target, rows, cols)
+    if image is None:
+        return None
+    stride = max(1, -(-max(image.shape[:2]) // MAX_PREVIEW_PX))
+    image = np.ascontiguousarray(image[::stride, ::stride], dtype=np.uint8)
+    return {"shape": list(image.shape), "data": base64.b64encode(image.tobytes()).decode()}
 
 
 def describe_control(control, target) -> dict:
@@ -92,6 +122,8 @@ class DeckServer:
 
     def handle(self, request: dict) -> dict:
         op = request["op"]
+        if op == "views":
+            return {"views": {name: self.view(name, rows, cols) for name, rows, cols in request["views"]}}
         saved = None
         if op in ("nudge", "set", "select"):
             control = self.controls[request["name"]]
@@ -109,6 +141,12 @@ class DeckServer:
         if saved:
             reply["saved"] = saved
         return reply
+
+    def view(self, name: str, rows: int, cols: int) -> dict | None:
+        try:
+            return render_view(self.target, name, int(rows), int(cols))
+        except Exception:  # a node the window does not have yet, or a view that needs the local graph
+            return None
 
     def save(self) -> str:
         values = {name: control.get(self.target) for name, control in self.controls.items()}

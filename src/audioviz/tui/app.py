@@ -94,9 +94,10 @@ class ViewTile(Static, can_focus=True):
     ViewTile:focus { border: heavy $accent; }
     """
 
-    def __init__(self, view: str, runtime: GraphRuntime, **kwargs) -> None:
+    def __init__(self, view: str, runtime: GraphRuntime, deck=None, **kwargs) -> None:
         super().__init__(**kwargs)
         self.runtime = runtime
+        self.deck = deck  # when attached, the images come from the running window
         self.render_mode: str | None = None  # None: choose by tile size
         self.set_view(view)
 
@@ -115,7 +116,11 @@ class ViewTile(Static, can_focus=True):
             return
         mode = self.mode_for(size.width * size.height)
         sub_rows, sub_cols = RENDER_MODES[mode]
-        image = views_module.VIEWS[self.view](self.runtime, size.height * sub_rows, size.width * sub_cols)
+        pixels = (size.height * sub_rows, size.width * sub_cols)
+        if self.deck is not None:
+            image = self.deck.preview(self.view, *pixels)
+        else:
+            image = views_module.VIEWS[self.view](self.runtime, *pixels)
         if image is None:
             self.update(f"{self.view}: waiting for data")
             return
@@ -247,7 +252,7 @@ class AudioVizApp(App):
                     _, context, control = next(k for k in self.knobs if k[0] == name)
                     yield KnobTile(context, control, id=name)
                 else:
-                    yield ViewTile(name, self.runtime, id=name)
+                    yield ViewTile(name, self.runtime, self.deck if self.attached else None, id=name)
         yield Static("NORMAL", id="mode")
         yield Input(placeholder=":", id="command")
 
@@ -318,6 +323,7 @@ class AudioVizApp(App):
         def poll() -> None:
             try:
                 self.deck.refresh()
+                self.deck.fetch_previews()
             except (OSError, RuntimeError) as error:  # the window closed or stalled; knobs keep their last values
                 self.call_from_thread(self.query_one("#log", LogTile).write, f"deck: {error}")
 
