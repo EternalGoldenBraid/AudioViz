@@ -812,7 +812,7 @@ class AudioVizApp(App):
                 log.write("audio list|synthetic|default|<index>  gain <v>")
                 log.write("theme [name]  bg <color|theme>  group <tiles>  ungroup")
                 log.write(":w [name] save state+screenshot  :e [name] load   ? key bindings  :keys [write|reload]")
-                log.write("out off|prediction|evidence  volume <v>  audio tone <hz>")
+                log.write("out off|prediction|error|input|evidence  volume <v>  audio tone <hz>")
                 log.write("resolution <n|RxC>  render half|quad|braille|auto  zoom")
                 log.write("screenshot [name]  q   save  (attached: window knobs -> config/deck.json, loaded by main.py)")
             elif name == "keys":
