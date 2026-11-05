@@ -78,3 +78,41 @@ def test_audio_processor_signal_gate_blocks_frequency_detection():
     processor.process_audio(signal)
 
     assert processor.current_top_k_frequencies == [None, None, None]
+
+
+class _FakeStream:
+    opened: list = []
+
+    def __init__(self, device, **_):
+        if device == "broken":
+            raise RuntimeError("cannot open")
+        self.device, self.running = device, False
+        _FakeStream.opened.append(self)
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_switching_input_device_opens_the_new_stream_before_closing_the_old_one(monkeypatch):
+    monkeypatch.setattr("audioviz.audio_processing.audio_processor.sd.InputStream", _FakeStream)
+    processor = _make_processor()
+
+    processor.set_input_device(3)
+    first = processor.input_stream
+    processor.set_input_device(5)
+
+    assert (first.device, first.running, first.closed) == (3, False, True)
+    assert (processor.input_stream.device, processor.input_stream.running) == (5, True)
+
+    # A device that fails to open leaves the running stream alone.
+    try:
+        processor.set_input_device("broken")
+    except RuntimeError:
+        pass
+    assert processor.input_stream.device == 5 and processor.input_stream.running

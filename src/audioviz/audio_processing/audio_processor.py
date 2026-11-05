@@ -124,26 +124,50 @@ class AudioProcessor:
         self.current_signal_level: float = 0.0
 
         if output_device_index != -1:
-            logger.info(f"Using output device index: {output_device_index}")
-            self.stream = sd.OutputStream(
-                samplerate=sr,
-                device=output_device_index,
-                channels=output_channels,
-                callback=self.audio_output_callback,
-                blocksize=io_blocksize
-            )
+            self.stream = self._open_output(output_device_index)
 
         if self.is_streaming:
             if input_device_index != -1:
-                logger.info(f"Using input device index: {input_device_index}")
-                self.input_stream = sd.InputStream(
-                    device=input_device_index,
-                    channels=input_channels,
-                    samplerate=sr,
-                    callback=self.audio_input_callback,
-                    blocksize=io_blocksize,
-                    dtype='float32', latency='low',
-                )
+                self.input_stream = self._open_input(input_device_index)
+
+    def _open_output(self, device_index: Optional[int]) -> sd.OutputStream:
+        logger.info(f"Using output device index: {device_index}")
+        return sd.OutputStream(
+            samplerate=self.sr,
+            device=device_index,
+            channels=self.output_channels,
+            callback=self.audio_output_callback,
+            blocksize=self.io_blocksize
+        )
+
+    def _open_input(self, device_index: Optional[int]) -> sd.InputStream:
+        logger.info(f"Using input device index: {device_index}")
+        return sd.InputStream(
+            device=device_index,
+            channels=self.input_channels,
+            samplerate=self.sr,
+            callback=self.audio_input_callback,
+            blocksize=self.io_blocksize,
+            dtype='float32', latency='low',
+        )
+
+    def set_output_device(self, device_index: int) -> None:
+        """Moves playback to another device; a device that fails to open leaves the current stream running."""
+        new = self._open_output(device_index)
+        new.start()
+        old, self.stream = getattr(self, "stream", None), new
+        if old is not None:
+            old.stop()
+            old.close()
+
+    def set_input_device(self, device_index: int) -> None:
+        """Moves capture to another device; a device that fails to open leaves the current stream running."""
+        new = self._open_input(device_index)
+        new.start()
+        old, self.input_stream = getattr(self, "input_stream", None), new
+        if old is not None:
+            old.stop()
+            old.close()
 
     def start(self):
 
