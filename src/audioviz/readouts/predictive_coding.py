@@ -133,11 +133,12 @@ class PredictiveCodingRGBReadout:
 
     def infer(
         self, prior: np.ndarray, observation: np.ndarray | None,
-        *, stream_state: bool | None = None,
+        *, stream_state: bool | None = None, flows: dict | None = None,
     ) -> np.ndarray:
         return infer_joint(
             prior, ((self, observation),),
             stream_states={self: stream_state} if stream_state is not None else None,
+            flows=flows,
         )
 
     def predict_stream_state(self, hidden_activity: np.ndarray | None = None) -> float:

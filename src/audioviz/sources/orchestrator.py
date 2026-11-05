@@ -246,11 +246,15 @@ class RippleSourceOrchestrator:
             if self.prediction_error_transform.applies_to("camera_frame") else None
         )
         self.visual_observation = observation
-        return self.visual_readout.infer(
+        by_readout: dict = {}
+        correction = self.visual_readout.infer(
             self.engine.get_prior_numpy(),
             observation,
             stream_state=self.camera_source.enabled,
+            flows=by_readout if self.visual_readout.diagnostics_enabled else None,
         )
+        self._record_flows(by_readout)
+        return correction
 
     def correct_from_observations(self) -> np.ndarray:
         if self.engine.use_shader:
@@ -284,14 +288,18 @@ class RippleSourceOrchestrator:
                 stream_states=stream_states,
                 flows=by_readout if self.visual_readout.diagnostics_enabled else None,
             )
-            names = {self.visual_readout: "camera 1", self.audio_readout: "audio"}
-            names.update({readout: sensor_id for sensor_id, readout in self.sensor_readouts.items()})
-            self.branch_flows = {names[readout]: flow for readout, flow in by_readout.items()}
+            self._record_flows(by_readout)
         self.engine.apply_observation_correction(correction)
         bank = getattr(self.audio_source.processor, "cochlea", None)
         if bank is not None and audio is not None and self.audio_prediction is not None and self.audio_source.observation_gain > 0:
             bank.correct_from_graph(self.audio_prediction / self.audio_source.observation_gain)
         return correction
+
+    def _record_flows(self, by_readout: dict) -> None:
+        """Names each inferred branch's flow after its sensor; empty while diagnostics are off."""
+        names = {self.visual_readout: "camera 1", self.audio_readout: "audio"}
+        names.update({readout: sensor_id for sensor_id, readout in self.sensor_readouts.items()})
+        self.branch_flows = {names[readout]: flow for readout, flow in by_readout.items()}
 
     def _extra_camera_branches(self) -> list[tuple[PredictiveCodingRGBReadout, np.ndarray]]:
         """Readouts of enabled further cameras that delivered a frame; covering one drops only its branch."""

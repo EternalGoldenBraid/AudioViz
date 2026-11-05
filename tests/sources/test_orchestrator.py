@@ -31,11 +31,11 @@ class _FakeProcessor:
 
 
 class _RecordingVisualReadout(PredictiveCodingRGBReadout):
-    def infer(self, prior, observation, *, stream_state=None):
+    def infer(self, prior, observation, *, stream_state=None, flows=None):
         self.received_prior = prior.copy()
         self.received_observation = None if observation is None else observation.copy()
         self.received_stream_state = stream_state
-        return super().infer(prior, observation, stream_state=stream_state)
+        return super().infer(prior, observation, stream_state=stream_state, flows=flows)
 
 
 def _build_engine(*, amplitude: float = 1.0) -> RippleEngine:

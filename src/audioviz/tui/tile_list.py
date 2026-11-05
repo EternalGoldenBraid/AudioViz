@@ -22,7 +22,7 @@ class TileList(ModalScreen):
         border: heavy $accent; border-title-color: $accent; border-title-style: bold;
         border-subtitle-color: $text-muted; background: $surface; padding: 0 1;
     }
-    TileList OptionList { height: auto; max-height: 30; border: none; background: $surface; padding: 0; }
+    TileList OptionList { height: auto; border: none; background: $surface; padding: 0; }
     TileList OptionList > .option-list--option-highlighted { background: $accent 30%; }
     """
     BINDINGS = [
@@ -46,6 +46,16 @@ class TileList(ModalScreen):
             box.border_title = " tiles "
             box.border_subtitle = " Space show/hide · Enter apply · Esc cancel "
             yield OptionList(*(Option(self._row(row), id=str(i)) for i, row in enumerate(self.rows)))
+
+    def on_mount(self) -> None:
+        self._fit()
+
+    def on_resize(self) -> None:
+        self._fit()
+
+    def _fit(self) -> None:
+        # The box is height:auto, so a percentage cap on the list cannot resolve; size it from the screen, leaving the border.
+        self.query_one(OptionList).styles.max_height = max(3, int(self.size.height * 0.8) - 2)
 
     def _row(self, row: tuple[str, list[str], bool]) -> Text:
         label, tiles, section = row
