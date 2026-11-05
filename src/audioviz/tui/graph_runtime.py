@@ -15,6 +15,22 @@ from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE, AudioFeed
 
 DEFAULT_RESOLUTION = 128
 STEP_INTERVAL = BLOCK_SIZE / SAMPLE_RATE
+MIN_SIDE = 8
+
+
+def parse_resolution(value: "int | str | tuple[int, int]") -> tuple[int, int]:
+    """(rows, cols) from N (square), "RxC" or a pair; every side is at least MIN_SIDE."""
+    if isinstance(value, str):
+        rows, _, cols = value.lower().partition("x")
+        value = (int(rows), int(cols or rows))
+    rows, cols = (value, value) if isinstance(value, int) else value
+    if min(rows, cols) < MIN_SIDE:
+        raise ValueError(f"each side of the grid must be at least {MIN_SIDE}")
+    return int(rows), int(cols)
+
+
+def format_resolution(resolution: tuple[int, int]) -> str:
+    return f"{resolution[0]}x{resolution[1]}"
 
 
 class GraphRuntime:
@@ -24,7 +40,7 @@ class GraphRuntime:
     """
 
     def __init__(
-        self, feed: AudioFeed | None = None, resolution: int = DEFAULT_RESOLUTION, camera: bool = True
+        self, feed: AudioFeed | None = None, resolution: "int | str | tuple[int, int]" = DEFAULT_RESOLUTION, camera: bool = True
     ) -> None:
         self.feed = feed or AudioFeed()
         self.out = AudioOut()
@@ -41,11 +57,12 @@ class GraphRuntime:
             camera_frame=CameraFrameSourceConfig(enabled=has_camera),
         ))
 
-    def _build(self, resolution: int, *, config: RippleSourceOrchestratorConfig, damping: float = 0.995, speed: float = 1.0) -> None:
-        grid = (resolution, resolution)
+    def _build(self, resolution: "int | str | tuple[int, int]", *, config: RippleSourceOrchestratorConfig, damping: float = 0.995, speed: float = 1.0) -> None:
+        grid = parse_resolution(resolution)
+        longest = max(grid)
         engine = RippleEngine(
             resolution=grid,
-            plane_size_m=(1.0, 1.0),
+            plane_size_m=(grid[0] / longest, grid[1] / longest),  # square cells whatever the aspect
             speed=speed,
             damping=damping,
             boundary_condition="cyclic",
@@ -60,15 +77,14 @@ class GraphRuntime:
         )
         orchestrator.set_diagnostics_enabled(True)
         with self.lock:
-            self.resolution = resolution
+            self.resolution = grid
             self.engine = engine
             self.orchestrator = orchestrator
             self.visual_prediction = orchestrator.visual_readout.predict(engine.get_field_numpy())
 
-    def rebuild(self, resolution: int) -> None:
+    def rebuild(self, resolution: "int | str | tuple[int, int]") -> None:
         """Resize the grid, carrying over mixer settings; learned weights are reset."""
-        if resolution < 8:
-            raise ValueError("resolution must be at least 8")
+        resolution = parse_resolution(resolution)
         with self.lock:
             audio = self.orchestrator.audio_source
             config = replace(

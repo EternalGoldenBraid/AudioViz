@@ -18,7 +18,7 @@ from textual.widgets import Input, RichLog, Static
 
 from audioviz.tui import control
 from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE
-from audioviz.tui.graph_runtime import GraphRuntime
+from audioviz.tui.graph_runtime import GraphRuntime, format_resolution
 from audioviz.tui.devices import DevicePicker, list_devices
 from audioviz.tui.halfblock import RENDER_MODES, render_cells
 from audioviz.tui import keys as keys_module
@@ -275,7 +275,7 @@ class AudioVizApp(App):
             "theme": self.theme,
             "audio": self.runtime.feed.source,
             "out": self.runtime.out.mode,
-            "grid": self.runtime.resolution,
+            "grid": format_resolution(self.runtime.resolution),
             "step_ms": round(self.runtime.step_ms, 1),
             "stack": self.stack,
             "size": list(self.layout_size),
@@ -687,7 +687,7 @@ class AudioVizApp(App):
                 log.write("theme [name]  bg <color|theme>  group <tiles>  ungroup")
                 log.write(":w [name] save state+screenshot  :e [name] load   ? key bindings  :keys [write|reload]")
                 log.write("out off|prediction|evidence  volume <v>  audio tone <hz>")
-                log.write("resolution <n>  render half|quad|braille|auto  zoom")
+                log.write("resolution <n|RxC>  render half|quad|braille|auto  zoom")
                 log.write("screenshot [name]  q")
             elif name == "keys":
                 self.run_keys_command(args)
@@ -726,8 +726,8 @@ class AudioVizApp(App):
             elif name == "volume":
                 self.runtime.out.volume = float(args[0])
             elif name == "resolution":
-                self.runtime.rebuild(int(args[0]))
-                log.write(f"grid {self.runtime.resolution}x{self.runtime.resolution}")
+                self.runtime.rebuild(args[0])
+                log.write(f"grid {format_resolution(self.runtime.resolution)}")
             elif name == "render":
                 tile = self.focused
                 if not isinstance(tile, ViewTile) or args[0] not in (*RENDER_MODES, "auto"):
@@ -855,7 +855,7 @@ class AudioVizApp(App):
         if mode == "EDIT":
             mode = f"EDIT {self.focused.control.name}   h/l slide, Enter/Esc leave"
         self.query_one("#mode", Static).update(
-            f"{mode}   audio: {self.runtime.feed.source}   grid: {self.runtime.resolution}"
+            f"{mode}   audio: {self.runtime.feed.source}   grid: {format_resolution(self.runtime.resolution)}"
             f" ({self.runtime.step_ms:.0f} ms){zoom}"
         )
 

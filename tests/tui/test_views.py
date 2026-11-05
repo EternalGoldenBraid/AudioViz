@@ -328,3 +328,16 @@ def test_layout_refits_to_the_terminal_keeping_knob_height_and_the_bottom_edge(t
         assert app.placements[view].width == before[view]["width"] * 2
         assert app.placements[view].height > before[view]["height"]
     _headless(tmp_path, scenario)
+
+
+def test_resolution_accepts_a_square_size_or_rows_by_cols_and_keeps_cells_square():
+    from audioviz.tui.graph_runtime import parse_resolution
+    assert parse_resolution(64) == (64, 64) and parse_resolution("100x200") == (100, 200)
+    with pytest.raises(ValueError):
+        parse_resolution("4x200")
+    runtime = GraphRuntime(resolution=16, camera=False)
+    runtime.rebuild("24x48")
+    runtime.step()
+    assert runtime.resolution == (24, 48)
+    assert runtime.engine.get_field_numpy().shape[:2] == (24, 48)
+    assert runtime.engine.dx == runtime.engine.dy
