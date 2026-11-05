@@ -8,7 +8,6 @@ from audioviz.sources.orchestrator import (
     RippleSourceOrchestratorConfig,
 )
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
-from audioviz.sources.pose import RipplePoseConfig
 
 __all__ = [
     "AudioRippleSource",
@@ -18,7 +17,6 @@ __all__ = [
     "ResolvedSourceFrame",
     "RippleSourceOrchestrator",
     "RippleSourceOrchestratorConfig",
-    "RipplePoseConfig",
     "SyntheticRippleSource",
     "SyntheticSourceConfig",
     "load_cv2",
