@@ -25,3 +25,9 @@ def test_a_recording_keeps_its_first_size_when_the_layout_changes(tmp_path):
     recorder.stop()
     video = cv2.VideoCapture(str(tmp_path / "r.mp4"))
     assert recorder.frames == 3 and int(video.get(cv2.CAP_PROP_FRAME_WIDTH)) == 6 * CELL_PX[1]
+
+
+def test_a_named_tile_gets_a_label_over_its_corner():
+    plain = compose([RecordedTile(0, 0, 10, 4, solid(200))])
+    labelled = compose([RecordedTile(0, 0, 10, 4, solid(200), name="canvas")])
+    assert (labelled[:8, :8] != plain[:8, :8]).any() and (labelled[-8:, -8:] == plain[-8:, -8:]).all()

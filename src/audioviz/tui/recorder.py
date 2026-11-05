@@ -19,6 +19,7 @@ class RecordedTile:
     width: int
     height: int
     image: np.ndarray
+    name: str = ""
 
 
 def compose(tiles: list[RecordedTile], size: tuple[int, int] | None = None) -> np.ndarray:
@@ -36,7 +37,20 @@ def compose(tiles: list[RecordedTile], size: tuple[int, int] | None = None) -> n
         rows = np.arange(height) * tile.image.shape[0] // (tile.height * cell_h)
         cols = np.arange(width) * tile.image.shape[1] // (tile.width * cell_w)
         canvas[top : top + height, left : left + width] = tile.image[rows][:, cols]
+        if tile.name:
+            _title(canvas, tile.name, top, left, width)
     return canvas
+
+
+def _title(canvas: np.ndarray, text: str, top: int, left: int, width: int) -> None:
+    """A dark label strip with the tile's name over its top-left corner."""
+    import cv2
+
+    (text_w, text_h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+    right = min(left + text_w + 8, left + width)
+    bottom = min(top + text_h + 8, canvas.shape[0])
+    canvas[top:bottom, left:right] //= 4
+    cv2.putText(canvas, text, (left + 4, top + text_h + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
 
 
 class Recorder:

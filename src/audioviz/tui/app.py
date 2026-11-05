@@ -371,7 +371,7 @@ class AudioVizApp(App):
             image = getattr(widget, "last_image", None)
             if image is not None and widget.display and self.visible(name):
                 placement = self.placements[name]
-                tiles.append(RecordedTile(placement.x, placement.y, placement.width, placement.height, image))
+                tiles.append(RecordedTile(placement.x, placement.y, placement.width, placement.height, image, name))
         return tiles
 
     def record_frame(self) -> None:
