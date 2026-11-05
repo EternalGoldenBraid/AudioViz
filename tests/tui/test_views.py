@@ -427,3 +427,26 @@ def test_a_sensor_tile_is_shown_only_while_its_sensor_is_enabled(tmp_path):
         assert app.query_one("#camera_2").display
         assert app.hidden == set()  # showing is the sensor's doing, not the user's hide list
     _headless(tmp_path, scenario)
+
+
+def test_tile_list_stays_inside_a_short_terminal_so_it_can_scroll():
+    import asyncio
+    from textual.app import App
+    from textual.widgets import OptionList
+    from audioviz.tui.tile_list import TileList
+
+    sections = [("tiles", [f"tile-{i}" for i in range(40)])]
+
+    async def run():
+        app = App()
+        async with app.run_test(size=(80, 20)) as pilot:
+            app.push_screen(TileList(sections, set()))
+            await pilot.pause()
+            options = app.screen.query_one(OptionList)
+            assert options.region.height <= 20 * 0.8
+            for _ in range(39):
+                await pilot.press("j")
+            await pilot.pause()
+            assert options.scroll_y > 0
+
+    asyncio.run(run())
