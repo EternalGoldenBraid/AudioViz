@@ -54,36 +54,80 @@ Point to point. Exact for a plane or a pure rotation. Residual structure that gr
 
 <script setup>
 import { ref, computed } from 'vue'
-const t = ref(0.15)
-const ex = ref(2.6)
-const ey = ref(1.9)
-const pts = [[0.8,0.8,0],[1.0,3.0,0],[4.1,3.1,0],[4.2,0.7,0],[1.4,2.4,1],[3.8,2.2,1.6],[3.4,0.9,2.4]]
-const X = x => 40 + x * 60
-const Y = y => 250 - y * 60
-const moved = computed(() => pts.map(([px, py, h]) => ({
-  px, py, h,
-  mx: px + t.value * h * (px - ex.value),
-  my: py + t.value * h * (py - ey.value),
-})))
+const baseline = ref(7)
+const height = ref(1.1)
+const c1 = { x: 1.5, y: 5 }
+const planeY = 1.5
+const normal = { x: -0.3, y: -Math.sqrt(0.91) }
+const tangent = { x: -normal.y, y: normal.x }
+const imageDistance = 0.55
+const sx = x => 90 + x * 65
+const sy = y => 380 - y * 55
+const scene = computed(() => {
+  const c2 = { x: c1.x + baseline.value, y: c1.y }
+  const feature = { x: 5, y: planeY + height.value }
+  const planeScale = (c1.y - planeY) / (c1.y - feature.y)
+  const planePoint = { x: c1.x + (feature.x - c1.x) * planeScale, y: planeY }
+  // These slider bounds keep both features in front of the fixed camera orientation.
+  const project = point => {
+    const dx = point.x - c2.x
+    const dy = point.y - c2.y
+    const scale = imageDistance / (dx * normal.x + dy * normal.y)
+    return { x: c2.x + scale * dx, y: c2.y + scale * dy }
+  }
+  const observed = project(feature)
+  const predicted = project(planePoint)
+  const epipole = baseline.value === 0 ? null : project(c1)
+  const centre = { x: c2.x + imageDistance * normal.x, y: c2.y + imageDistance * normal.y }
+  const imagePoints = [observed, predicted, ...(epipole ? [epipole] : [])]
+  const offsets = imagePoints.map(p => (p.x - centre.x) * tangent.x + (p.y - centre.y) * tangent.y)
+  const endpoint = offset => ({ x: centre.x + offset * tangent.x, y: centre.y + offset * tangent.y })
+  return {
+    c2, feature, planePoint, observed, predicted, epipole,
+    imageStart: endpoint(Math.min(...offsets) - 0.3),
+    imageEnd: endpoint(Math.max(...offsets) + 0.3),
+    coincident: baseline.value === 0 || height.value === 0,
+  }
+})
 </script>
 
 <div class="plx" role="figure" aria-label="Interactive plane and parallax">
-  <p><strong>Drag the baseline slider.</strong> Hollow dots show H's prediction; filled dots show the observed positions. The four points on the plane stay aligned.</p>
-  <svg viewBox="-90 -15 540 285" class="plx-scene" aria-label="Plane-aligned predictions and observed points">
-    <rect :x="X(0)" :y="Y(3.8)" :width="5*60" :height="3.8*60" fill="#392e32" stroke="#E5826F" stroke-width="1.5" />
-    <g v-for="(p,i) in moved" :key="i">
-      <line v-if="p.h>0" :x1="X(ex)" :y1="Y(ey)" :x2="X(p.px)" :y2="Y(p.py)" stroke="#B39DDB" stroke-dasharray="4 3" stroke-width="0.8" />
-      <line v-if="p.h>0" :x1="X(p.px)" :y1="Y(p.py)" :x2="X(p.mx)" :y2="Y(p.my)" stroke="#F0C060" stroke-width="1.5" />
-      <circle :cx="X(p.px)" :cy="Y(p.py)" r="2.8" fill="#1B1F27" stroke="#6EA8FE" stroke-width="1" />
-      <circle v-if="p.h>0" :cx="X(p.mx)" :cy="Y(p.my)" r="2.8" fill="#F0C060" />
-    </g>
-    <path :d="`M ${X(ex)-3} ${Y(ey)-3} l 6 6 m -6 0 l 6 -6`" stroke="#B39DDB" stroke-width="1" />
-    <text :x="X(ex)+6" :y="Y(ey)+16" fill="#B39DDB" font-size="13" font-style="italic">e&#8242;</text>
+  <p>Plane + parallax: <em>Hx₁</em> predicts the blue point; the feature actually projects to <em>x₂</em>, in gold.</p>
+  <div class="plx-viewport">
+  <svg viewBox="0 0 840 370" class="plx-scene" role="img" aria-label="Two cameras, a reference plane and the parallax of a feature above it">
+    <defs>
+      <marker id="plx-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#F0C060" />
+      </marker>
+    </defs>
+    <line :x1="sx(0)" :y1="sy(planeY)" :x2="sx(10)" :y2="sy(planeY)" stroke="#6EA8FE" stroke-width="1.6" />
+    <text :x="sx(0)" :y="sy(planeY)+25" fill="#6EA8FE">plane Π</text>
+    <line :x1="sx(c1.x)" :y1="sy(c1.y)" :x2="sx(scene.c2.x)" :y2="sy(scene.c2.y)" class="plx-ray" />
+    <line :x1="sx(c1.x)" :y1="sy(c1.y)" :x2="sx(scene.planePoint.x)" :y2="sy(scene.planePoint.y)" class="plx-ray" />
+    <line :x1="sx(scene.c2.x)" :y1="sy(scene.c2.y)" :x2="sx(scene.feature.x)" :y2="sy(scene.feature.y)" class="plx-ray" />
+    <line :x1="sx(scene.c2.x)" :y1="sy(scene.c2.y)" :x2="sx(scene.planePoint.x)" :y2="sy(scene.planePoint.y)" class="plx-ray" />
+    <line :x1="sx(scene.imageStart.x)" :y1="sy(scene.imageStart.y)" :x2="sx(scene.imageEnd.x)" :y2="sy(scene.imageEnd.y)" stroke="#E5826F" stroke-width="1.5" />
+    <text :x="sx(scene.imageEnd.x)+10" :y="sy(scene.imageEnd.y)+5" fill="#E5826F">image 2</text>
+    <circle v-if="baseline > 0" :cx="sx(c1.x)" :cy="sy(c1.y)" r="3.5" fill="#7BC47F" />
+    <text v-if="baseline > 0" :x="sx(c1.x)-8" :y="sy(c1.y)-12" text-anchor="end" fill="#7BC47F">C₁</text>
+    <circle :cx="sx(scene.c2.x)" :cy="sy(scene.c2.y)" r="3.5" fill="#E5826F" />
+    <text :x="sx(scene.c2.x)+8" :y="sy(scene.c2.y)-12" fill="#E5826F">{{ baseline === 0 ? 'C₁ = C₂' : 'C₂' }}</text>
+    <circle :cx="sx(scene.planePoint.x)" :cy="sy(scene.planePoint.y)" r="4" fill="#6EA8FE" />
+    <text v-if="height > 0" :x="sx(scene.planePoint.x)+8" :y="sy(scene.planePoint.y)+25" fill="#6EA8FE">Xπ: C₁'s ray meets Π</text>
+    <circle :cx="sx(scene.feature.x)" :cy="sy(scene.feature.y)" r="4.5" fill="#F0C060" />
+    <text :x="sx(scene.feature.x)-30" :y="sy(scene.feature.y)+35" text-anchor="end" fill="#F0C060">{{ height === 0 ? 'X = Xπ: on the plane' : 'X: off the plane' }}</text>
+    <circle v-if="scene.epipole" :cx="sx(scene.epipole.x)" :cy="sy(scene.epipole.y)" r="3" fill="#B39DDB" />
+    <text v-if="scene.epipole" :x="sx(scene.epipole.x)-8" :y="sy(scene.epipole.y)+24" text-anchor="end" fill="#B39DDB">e′</text>
+    <line v-if="!scene.coincident" :x1="sx(scene.predicted.x)" :y1="sy(scene.predicted.y)" :x2="sx(scene.observed.x)" :y2="sy(scene.observed.y)" stroke="#F0C060" stroke-width="1.8" marker-end="url(#plx-arrow)" />
+    <circle data-point="predicted" :cx="sx(scene.predicted.x)" :cy="sy(scene.predicted.y)" r="3.5" fill="#6EA8FE" />
+    <circle data-point="observed" :cx="sx(scene.observed.x)" :cy="sy(scene.observed.y)" r="3.5" fill="#F0C060" />
+    <text :x="sx(scene.predicted.x)+8" :y="sy(scene.predicted.y)+22" fill="#6EA8FE">{{ scene.coincident ? 'Hx₁ = x₂' : 'Hx₁' }}</text>
+    <text v-if="!scene.coincident" :x="sx(scene.observed.x)-8" :y="sy(scene.observed.y)-12" text-anchor="end" fill="#F0C060">x₂</text>
   </svg>
+  </div>
   <div class="plx-controls">
-    <label for="plx-baseline">baseline <em>t</em></label><input id="plx-baseline" type="range" min="0" max="0.5" step="0.01" v-model.number="t" /><output for="plx-baseline">{{ t.toFixed(2) }}</output>
-    <label for="plx-epipole-x">epipole <em>x</em></label><input id="plx-epipole-x" type="range" min="-3" max="8" step="0.1" v-model.number="ex" /><output for="plx-epipole-x">{{ ex.toFixed(1) }}</output>
-    <label for="plx-epipole-y">epipole <em>y</em></label><input id="plx-epipole-y" type="range" min="-3" max="7" step="0.1" v-model.number="ey" /><output for="plx-epipole-y">{{ ey.toFixed(1) }}</output>
+    <label for="plx-baseline">camera baseline</label><input id="plx-baseline" type="range" min="0" max="7" step="0.1" v-model.number="baseline" /><output for="plx-baseline">{{ baseline.toFixed(1) }}</output>
+    <label for="plx-height">feature height</label><input id="plx-height" type="range" min="0" max="1.8" step="0.1" v-model.number="height" /><output for="plx-height">{{ height.toFixed(1) }}</output>
   </div>
 
   <style scoped>
@@ -103,11 +147,21 @@ const moved = computed(() => pts.map(([px, py, h]) => ({
     color: #9AA5B1;
     font-size: 0.9em;
   }
+  .plx-viewport {
+    overflow-x: auto;
+    margin-bottom: 16px;
+  }
   .plx-scene {
     display: block;
     width: 100%;
-    margin-bottom: 16px;
+    min-width: 620px;
     font-family: inherit;
+    font-size: 17px;
+  }
+  .plx-ray {
+    stroke: #9AA5B1;
+    stroke-width: 1;
+    stroke-dasharray: 5 5;
   }
   .plx-controls {
     display: grid;
@@ -127,14 +181,13 @@ const moved = computed(() => pts.map(([px, py, h]) => ({
     font-variant-numeric: tabular-nums;
   }
   </style>
-  <p v-if="t === 0"><strong>No translation:</strong> prediction and observation coincide at every depth. H is exact for pure rotation, but depth cannot be recovered.</p>
-  <p v-else><strong>{{ t < 0.25 ? 'Small baseline:' : 'Larger baseline:' }}</strong> off-plane points {{ t < 0.25 ? 'separate slightly from' : 'move farther from' }} H's predictions. Their residuals lie along lines through the epipole e'. H still aligns the plane.</p>
-  <p>Move the epipole to change those lines. This is a schematic model: the baseline scales the residual, not a calibrated distance in metres.</p>
+  <p v-if="baseline === 0"><strong>Cameras coincide:</strong> H's prediction and the observation agree at every height. There is no parallax and no epipole defined by translation; depth is unobservable.</p>
+  <p v-else-if="height === 0"><strong>The feature is on the plane:</strong> X and Xπ coincide, so H predicts its position exactly even with separated cameras.</p>
+  <p v-else><strong>Off the plane:</strong> C₁ sees X and Xπ along the same ray. C₂ sees them at different positions: the gold arrow is the residual after H.</p>
+  <p>The purple epipole e′ is C₁ projected into image 2. Both matches lie on its line. Cameras keep a fixed orientation; slider distances use arbitrary scene units.</p>
 </div>
 
 $x_2\sim Hx_1+\rho(x_1)\,e'$: one scalar per point places its match on the epipolar line. Without calibration, this constrains projective structure, not depth in metres.
-
-![Parallax of a point off the plane](./fig-parallax.svg)
 
 ### Fundamental $F$ and essential $E$
 
