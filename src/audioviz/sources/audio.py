@@ -99,6 +99,11 @@ class AudioRippleSource:
     def recent_observation(self) -> np.ndarray | None:
         return self._latest_observation if self.has_recent_observation() else None
 
+    def reset_observation(self) -> None:
+        self._last_observation_frame = self.processor.frame_counter
+        self._last_observation_time = None
+        self._latest_observation = None
+
     def has_new_observation(self) -> bool:
         if not self.enabled:
             return False

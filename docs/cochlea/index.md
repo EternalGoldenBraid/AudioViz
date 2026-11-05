@@ -19,10 +19,12 @@ From the cochlea worktree, run the **standalone TUI**:
 PYTHONPATH=src uv run --group tui python -m audioviz.tui.app --audio synthetic --no-camera
 ```
 
-In settings, select **audio model: cochlea**. The switch resets the canvas and
-graph weights and turns sound off. The spectral model remains the default.
-This feature is in the local graph runtime; `main.py`'s Qt window and its
-attached terminal controller retain their existing audio path.
+In settings, select **audio model: cochlea**. In the attached TUI, the same
+control is in the window's mixer and changes the window process's model.
+Selection is owned by the shared source orchestrator: the audio readout and its
+cross-modal connections are rebuilt, while the canvas and camera branch stay
+intact. Local TUI playback is muted on a model change. The spectral model
+remains the default.
 
 | Sound out | Signal | Meaning |
 | --- | --- | --- |
@@ -144,8 +146,8 @@ Let $z_B=(x_1,q_1,\ldots,x_N,q_N)$ be the state after processing the current
 batch, $a$ the audio evidence gain, and $g_B$ the graph's saved expectation
 in gain-scaled coordinates.
 
-1. Propagate the canvas and save $g_B$ from the graph, before processing the
-   batch's samples.
+1. Propagate the canvas and save $g_B$ from the graph, before consuming the
+   batch's oscillator-state target.
 2. Process each sample in order with the equations above. Retain each block's
    prediction and residual for playback.
 3. Freeze $y_B=a z_B$ as the audio branch's target. Run the existing joint
@@ -173,6 +175,12 @@ the final block's state as one graph target. Thus graph feedback is **once per
 nonempty tick**, not once per sample or once per queued block. The standalone
 observer is block-partition independent; feedback depends on tick boundaries.
 Input or output queue overflow can lose audio, so real-time execution matters.
+
+Raw-audio processing and graph updates can be scheduled separately in the Qt
+process; its graph expectation uses prior graph state, not the new audio target.
+The shared orchestrator applies feedback once when it consumes a fresh target.
+The standalone driver processes the audio batch between prediction and target
+consumption. Rendering either frontend never advances these states.
 
 This is a staggered two-rate inference scheme with a frozen local target. It
 does **not** differentiate the raw waveform loss through the whole audio history
@@ -253,7 +261,8 @@ $$
 
 Learning is off by default. With no new audio target, $D$ is frozen; hidden,
 canvas, and stream-state inference can continue. Resetting graph states retains
-weights; changing the audio representation rebuilds the graph and its weights.
+weights; changing the audio representation rebuilds only the audio branch and
+its cross-modal connections.
 
 ### Optional cross-modal hidden coupling
 
