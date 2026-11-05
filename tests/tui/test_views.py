@@ -109,7 +109,7 @@ def test_spatial_focus_picks_nearest_neighbour_in_each_direction():
 
     app = AudioVizApp.__new__(AudioVizApp)
     from audioviz.tui.app import Placement
-    app.groups, app.pages = [], {}
+    app.groups, app.pages, app.hidden = [], {}, set()
     app.placements = {
         "a": Placement(0, 0, 10, 5), "b": Placement(10, 0, 10, 5),
         "c": Placement(0, 5, 10, 5), "far": Placement(30, 0, 10, 5),
@@ -341,3 +341,43 @@ def test_resolution_accepts_a_square_size_or_rows_by_cols_and_keeps_cells_square
     assert runtime.resolution == (24, 48)
     assert runtime.engine.get_field_numpy().shape[:2] == (24, 48)
     assert runtime.engine.dx == runtime.engine.dy
+
+
+def test_dd_hides_a_tile_u_restores_it_and_the_tile_list_hides_whole_groups(tmp_path):
+    from audioviz.tui import app as app_module
+    from audioviz.tui.tile_list import TileList
+
+    app_module.SEQUENCE_SECONDS = 30.0
+    async def scenario(app, pilot):
+        app.query_one("#canvas").focus()
+        await pilot.press("d", "x")  # `d` followed by another key is not a hide
+        assert app.hidden == set()
+        app.query_one("#canvas").focus()
+        await pilot.press("d", "d")  # the pilot idles about 2 s per key, so the sequence timeout is widened above
+        assert app.hidden == {"canvas"} and not app.query_one("#canvas").display
+        assert app.focused.id != "canvas"  # focus moved to a tile that is still shown
+
+        await pilot.press("u")
+        assert app.hidden == set() and app.focused.id == "canvas"
+
+        await pilot.press("T")  # the tile list: the mixer section row toggles all its knobs
+        assert isinstance(app.screen, TileList)
+        rows = [label for label, _, section in app.screen.rows]
+        await pilot.press(*["j"] * rows.index("mixer"), "space", "enter")
+        assert set(app.members("knob-damping")) <= app.hidden
+        assert app.query_one("#canvas").display
+
+        await pilot.press("u")  # one undo brings back everything the list hid
+        assert app.hidden == set()
+
+        app.hide_tiles([n for n in app.placements if n != "log"])
+        app.hide_tiles(["log"])
+        assert app.hidden == set(app.placements) - {"log"}  # the last tile cannot be hidden
+
+        app.hidden.clear()
+        app.hidden |= {"canvas", "spectrogram"}
+        saved = app.snapshot()
+        app.hidden.clear()
+        app.restore(saved)
+        assert app.hidden == {"canvas", "spectrogram"}
+    _headless(tmp_path, scenario)

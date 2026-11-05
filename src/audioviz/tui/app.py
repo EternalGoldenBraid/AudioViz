@@ -29,11 +29,13 @@ from audioviz.tui.keys_overlay import KeysScreen
 from audioviz.tui.mixer import CONTROLS
 from audioviz.tui.settings import settings_controls
 from audioviz.tui.themes import THEMES
+from audioviz.tui.tile_list import TileList
 from audioviz.tui import views as views_module
 
 MAX_LAYERS = 8
 BRAILLE_MIN_CELLS = 1200  # tiles at least this large render at braille density
 AUTOSAVE_SECONDS = 5
+SEQUENCE_SECONDS = 1.0  # how long the first key of a multi-key binding waits for the next
 CACHE_PATH = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "audioviz" / "state.json"
 SAVES_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "audioviz" / "saves"
 
@@ -226,6 +228,9 @@ class AudioVizApp(App):
         self.group_focus: list[str] = []  # non-empty while a whole group is the focused node
         self.groups: list[list[str]] = [list(self.mixer_ids), list(self.settings_ids)]  # move, lift and fade together
         self.selection: list[str] = []  # being collected in VISUAL mode
+        self.hidden: set[str] = set()
+        self.hide_history: list[list[str]] = []  # what each hide took away, so `u` can bring it back
+        self.pending_keys: list[str] = []  # the first keys of a multi-key binding such as `d d`
         self.stack = list(self.placements)  # bottom -> top
         self._return_focus = None
         self.zoomed: str | None = None
@@ -350,11 +355,61 @@ class AudioVizApp(App):
         return (group, page) if page and len(group) > page["size"] else None
 
     def visible(self, name: str) -> bool:
+        if name in self.hidden:
+            return False
         paged = self.page_of(name)
         if paged is None:
             return True
         group, page = paged
         return group.index(name) // page["size"] == page["index"]
+
+    def hide_tiles(self, names: list[str]) -> None:
+        """Hides the tiles that are shown, never the last visible one; focus moves to the nearest tile left."""
+        names = [n for n in names if n not in self.hidden]
+        remaining = [n for n in self.placements if n not in self.hidden and n not in names]
+        if not names or not remaining:
+            return
+        focused = self._focused_name()
+        nearest = next((t for t in (self.neighbour(focused, *d) for d in ((0, 1), (0, -1), (1, 0), (-1, 0))) if t in remaining), remaining[0])
+        self.hidden |= set(names)
+        self.hide_history.append(names)
+        self.apply_layout()
+        self.query_one(f"#{nearest}").focus()
+        self.query_one("#log", LogTile).write(f"hid {', '.join(names)}; u brings it back")
+
+    def hide(self) -> None:
+        if not self.zoomed:
+            self.hide_tiles(self.group_focus or [self._focused_name()])
+
+    def unhide(self) -> None:
+        if not self.hide_history:
+            return
+        names = self.hide_history.pop()
+        self.hidden -= set(names)
+        self.apply_layout()
+        self.query_one(f"#{names[0]}").focus()
+
+    def open_tiles(self) -> None:
+        """One section per group, then the tiles that belong to none."""
+        grouped = {n for g in self.groups for n in g}
+        labels = {tuple(self.mixer_ids): "mixer", tuple(self.settings_ids): "settings"}
+        sections = [(labels.get(tuple(g), f"group of {g[0]}"), g) for g in self.groups]
+        loose = [n for n in self.placements if n not in grouped]
+        self.push_screen(TileList(sections + [("tiles", loose)], self.hidden), self.apply_tiles)
+
+    def apply_tiles(self, hidden: set[str] | None) -> None:
+        if hidden is None or hidden == self.hidden:
+            return
+        shown = [n for n in self.placements if n not in hidden]
+        if not shown:
+            self.query_one("#log", LogTile).write("keep at least one tile")
+            return
+        newly = [n for n in self.placements if n in hidden and n not in self.hidden]
+        if newly:
+            self.hide_history.append(newly)
+        self.hidden = {n for n in hidden if n in self.placements}
+        self.apply_layout()
+        self.query_one(f"#{next(n for n in shown if self.visible(n))}").focus()
 
     def page_label(self, name: str) -> str:
         paged = self.page_of(name)
@@ -635,11 +690,31 @@ class AudioVizApp(App):
             mode = "edit"
         elif mode == "normal" and knob is not None and not self.group_focus:
             mode = "knob"
-        action = self.keymap.get((mode, event.key))
-        if action is None and mode == "knob":
-            action = self.keymap.get(("normal", event.key))
+        action = self.lookup(mode, event.key)
+        if self.pending_keys:
+            sequence = " ".join([*self.pending_keys, event.key])
+            self.pending_keys = []
+            action = self.lookup(mode, sequence) or action
+        if action is None and self.starts_sequence(mode, event.key):
+            self.pending_keys = [event.key]
+            self.set_timer(SEQUENCE_SECONDS, self.clear_pending)
+            event.stop()
+            return
         if (action is not None and self.perform(action)) or mode in ("visual", "edit"):
             event.stop()  # selecting and entered knobs swallow every key
+
+    def lookup(self, mode: str, key: str) -> str | None:
+        action = self.keymap.get((mode, key))
+        if action is None and mode == "knob":
+            action = self.keymap.get(("normal", key))
+        return action
+
+    def starts_sequence(self, mode: str, key: str) -> bool:
+        modes = (mode, "normal") if mode == "knob" else (mode,)
+        return any(m in modes and k.startswith(key + " ") for m, k in self.keymap)
+
+    def clear_pending(self) -> None:
+        self.pending_keys = []
 
     def perform(self, action: str) -> bool:
         """False when the action does not apply to the focused tile, so the key stays unhandled."""
@@ -664,6 +739,7 @@ class AudioVizApp(App):
             "commit_group": lambda: self.end_visual(True), "cancel_group": lambda: self.end_visual(False),
             "zoom": self.toggle_zoom, "immersive": self.toggle_immersive, "render": self.cycle_render,
             "devices": self.open_devices,
+            "hide": self.hide, "unhide": self.unhide, "tiles": self.open_tiles,
             "turn_down": lambda: knob.adjust(-1), "turn_up": lambda: knob.adjust(1),
             "command": self._open_command, "help": self.show_keys, "quit": self.exit,
         }
@@ -831,6 +907,7 @@ class AudioVizApp(App):
             "pages": self.pages,
             "theme": self.theme,
             "tile_background": self.tile_background,
+            "hidden": sorted(self.hidden),
             "views": {t.id: t.view for t in self.query(ViewTile)},
             "render": {t.id: t.render_mode for t in self.query(ViewTile)},
             "mixer": {c.name: c.get(self.mixer_context) for c in self.mixer_controls},
@@ -848,6 +925,8 @@ class AudioVizApp(App):
             self.layout_size = tuple(data.get("size", extent))  # layouts saved before sizes were recorded span their extent
         stack = [n for n in data.get("stack", []) if n in self.placements]
         self.stack = stack + [n for n in self.placements if n not in stack]
+        hidden = {n for n in data.get("hidden", []) if n in self.placements}
+        self.hidden = hidden if len(hidden) < len(self.placements) else set()
         if "groups" in data and same_tiles:
             groups = [[n for n in g if n in self.placements] for g in data["groups"]]
             self.groups = [g for g in groups if len(g) > 1]
