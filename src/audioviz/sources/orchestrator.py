@@ -14,6 +14,7 @@ from audioviz.readouts.audio import PredictiveCodingAudioReadout
 from audioviz.readouts.predictive_coding import PredictiveCodingHiddenCoupling, infer_joint
 from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
+from audioviz.utils.source_preview import SourceSceneMapping
 from audioviz.transforms.prediction_error import PredictionErrorTransform
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 
@@ -113,10 +114,22 @@ class RippleSourceOrchestrator:
             enabled=bool(config.camera_frame.enabled),
             capture=camera_capture,
         )
+        # Observation-only second camera (e.g. IR beside EO); it feeds its own scene tile, not the canvas.
+        self.secondary_camera_source = CameraFrameSource(
+            resolution=resolution,
+            camera_index=config.camera_frame.camera_index,
+            gain=config.camera_frame.gain,
+            enabled=False,
+            scene_mapping=SourceSceneMapping("camera_secondary", "Camera 2", "rgb", "sensory"),
+        )
+        self.secondary_observation: np.ndarray | None = None
         self.prediction_error_transform = PredictionErrorTransform(
             config=config.prediction_error,
             resolution=self.canvas_shape,
         )
+
+    def observe_secondary_camera(self) -> None:
+        self.secondary_observation = self.secondary_camera_source.excitation()
 
     def set_base_amplitude(self, amplitude: float) -> None:
         self.base_amplitude = float(amplitude)
@@ -178,6 +191,7 @@ class RippleSourceOrchestrator:
         if self.engine.use_shader:
             raise NotImplementedError("Sensory inference requires an array-backed canvas.")
         self.visual_observation = None
+        self.observe_secondary_camera()
         audio = self.audio_source.observation()
         if self.audio_readout is None:
             correction = self.resolve_visual_observation_correction()
@@ -225,6 +239,7 @@ class RippleSourceOrchestrator:
             self.audio_readout.reset()
         self.audio_prediction = None
         self.visual_observation = None
+        self.secondary_observation = None
 
     def _to_canvas_grid(self, grid: np.ndarray) -> np.ndarray:
         values = np.asarray(grid, dtype=np.float32)

@@ -34,7 +34,10 @@ class CameraFrameSource:
         enabled: bool = False,
         capture=None,
         cv2_loader: Callable = load_cv2,
+        scene_mapping: SourceSceneMapping | None = None,
     ) -> None:
+        if scene_mapping is not None:
+            self.scene_mapping = scene_mapping
         self.resolution = tuple(int(value) for value in resolution)
         self.camera_index = camera_index
         self.gain = float(gain)
@@ -46,6 +49,14 @@ class CameraFrameSource:
         if enabled:
             self.ensure_open()
         self.enabled = bool(enabled)
+
+    def set_enabled_closing(self, enabled: bool) -> None:
+        """Like set_enabled, but turning off also frees the device so another source can open it."""
+        if enabled:
+            self.set_enabled(True)
+        else:
+            self.enabled = False
+            self.close()
 
     def set_gain(self, gain: float) -> None:
         self.gain = float(gain)

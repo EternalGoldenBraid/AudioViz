@@ -166,7 +166,10 @@ class PredictionLayerView(gl.GLViewWidget):
                     f"{source.mapping.key}/recurrent-label", (-1.5, y, depth),
                     f"{source.recurrent_parent.capitalize()} -> {source.mapping.label} hidden",
                 )
-        attachments = [source for source in sources if source.mapping.role != "sensory" and source.enabled]
+        attachments = [
+            source for source in sources
+            if (source.mapping.role != "sensory" or source.hidden is None) and source.enabled
+        ]
         for index, source in enumerate(attachments):
             center = -7.0 if index % 2 == 0 else 7.0
             name = f"{source.mapping.key}/observation"
