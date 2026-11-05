@@ -50,7 +50,28 @@ Point to point. Exact for a plane or a pure rotation. Residual structure that gr
 
 ### Plane + parallax
 
-$x_2\sim Hx_1+\rho(x_1)\,e'$. The residual after $H$ points along the epipole $e'$ and carries per-pixel depth.
+**Parallax** is the apparent shift of a point between two views caused by the camera moving. Near points shift a lot, far points barely at all: the shift is proportional to translation and inversely proportional to depth.
+
+Pick a dominant plane (floor, wall) and fit $H$ to it. Points on the plane land exactly where $H$ predicts. Every other point lands off by a residual:
+
+$x_2\sim Hx_1+\rho(x_1)\,e'$
+
+- The residual always points along the line through the epipole $e'$, so the unknown per pixel is one number $\rho$ (height over depth), not a 2D flow vector.
+- $\rho$ is zero on the plane and grows with height off the plane and with baseline.
+- $e'$ gives the direction of translation. $\rho$ gives relative depth.
+
+What it enables that $H$ alone misses:
+
+- $H$ treats the whole scene as one plane, so it has no opinion about anything off it. Parallax turns that failure into a depth measurement.
+- Dense structure from two views without calibration: depth is read from how far each point is off $H$.
+- Separating the plane from clutter: points with $\rho\approx 0$ are on the plane, the rest are not.
+
+The two limits, shown below left to right ($t$ is the translation between the cameras):
+
+- $t=0$ (pure rotation): the residual is zero for every point, so $H$ is exact for any scene. Depth is unobservable.
+- $t$ large: $H$ explains only the plane. The residual carries the scene's structure, and the more translation, the stronger the depth signal.
+
+![Residual after H as the baseline grows](./fig-parallax-baseline.svg)
 
 ![Parallax of a point off the plane](./fig-parallax.svg)
 
