@@ -1,5 +1,6 @@
 import sys
 import signal
+import argparse
 from pathlib import Path
 from typing import Union, Optional, Dict
 
@@ -430,5 +431,18 @@ def main():
         processor.stop()
         app.quit()
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="AudioViz")
+    parser.add_argument("--no-tui", action="store_true", help="show only the window, without the terminal controller")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    if not parse_args().no_tui:
+        try:
+            from audioviz.tui.launcher import run_with_tui
+        except ImportError:
+            logger.warning("terminal controller needs the tui group (textual); starting the window only")
+        else:
+            sys.exit(run_with_tui([sys.executable, __file__, "--no-tui"]))
     main()
