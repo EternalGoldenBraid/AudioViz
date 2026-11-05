@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from audioviz.sources import CameraFrameSource
 from audioviz.tui.deck_devices import CameraDevices
@@ -64,3 +65,34 @@ def test_selecting_no_camera_closes_both_and_choosing_one_again_reopens_it():
     assert primary.excitation() is None and secondary.excitation() is None
     control.select(None, ["2: IR"])
     assert control.selected() == ["2: IR"] and _Cv2.open == {2}
+
+
+class _UnpluggableCv2(_Cv2):
+    missing: set[int] = set()
+
+    def VideoCapture(self, index):
+        if index in self.missing:
+            return type("Dead", (), {"isOpened": lambda s: False, "release": lambda s: None})()
+        return super().VideoCapture(index)
+
+
+def test_a_failed_open_leaves_the_previous_cameras_running():
+    primary, secondary = _sources()
+    primary.cv2_loader = secondary.cv2_loader = _UnpluggableCv2
+    _UnpluggableCv2.missing = {5}
+    control = CameraDevices(CHOICES + ("5: Trust",), primary, secondary)
+    control.select(None, ["0: EO", "2: IR"])
+    with pytest.raises(RuntimeError):
+        control.select(None, ["0: EO", "5: Trust"])
+    assert control.selected() == ["0: EO", "2: IR"]
+    assert float(primary.excitation().max()) == 1.0
+
+
+def test_choices_are_read_fresh_and_a_renumbered_device_is_matched_by_name():
+    primary, secondary = _sources()
+    listing = {"now": ("0: EO", "2: IR", "5: Trust")}
+    control = CameraDevices(lambda: listing["now"], primary, secondary)
+    listing["now"] = ("0: EO", "2: IR", "4: Trust")  # replugged under another number
+    assert control.choices[-1] == "4: Trust"
+    control.select(None, ["0: EO", "5: Trust"])  # a stale client still names the old index
+    assert control.selected() == ["0: EO", "4: Trust"]

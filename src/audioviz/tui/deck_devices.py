@@ -78,18 +78,47 @@ class DeviceControl:
 
 class CameraDevices(DeviceControl):
     """Two cameras at once: the first selection feeds the canvas, the second runs beside it in its own scene tile.
-    Selecting one camera frees the second device; selecting none closes both (eyes closed)."""
+    Selecting one camera frees the second device; selecting none closes both (eyes closed).
 
-    def __init__(self, choices: tuple[str, ...], primary, secondary) -> None:
-        super().__init__("camera", choices, lambda: _camera_number(primary.camera_index), primary.set_camera_index, capacity=2)
+    The list is read from the system on every access, so a camera plugged in or renumbered after start is offered
+    under its current index; a choice made from an older list is matched by name. A selection that fails to open
+    leaves the previous cameras running."""
+
+    def __init__(self, choices, primary, secondary) -> None:
+        self._choices = choices if callable(choices) else (lambda: choices)
+        super().__init__("camera", self._choices(), lambda: _camera_number(primary.camera_index), primary.set_camera_index, capacity=2)
         self.primary, self.secondary = primary, secondary
+
+    @property
+    def choices(self) -> tuple[str, ...]:
+        return self._choices()
+
+    @choices.setter
+    def choices(self, _value) -> None:
+        pass
 
     def selected(self, context=None) -> list[str]:
         chosen = [_current(self.choices, _camera_number(source.camera_index)) for source in (self.primary, self.secondary) if source.enabled]
         return [c for c in chosen if c != "off"]
 
+    def _resolve(self, values: list[str]) -> list[str]:
+        choices = self.choices
+        by_name = {c.split(": ", 1)[-1]: c for c in choices}
+        resolved = (v if v in choices else by_name.get(v.split(": ", 1)[-1]) for v in values)
+        return list(dict.fromkeys(v for v in resolved if v))[-self.capacity:]
+
     def select(self, context, values: list[str]) -> None:
-        values = list(dict.fromkeys(v for v in values if v in self.choices))[-self.capacity:]
+        previous = self.selected()
+        try:
+            self._open(self._resolve(values))
+        except RuntimeError:
+            try:
+                self._open(previous)
+            except RuntimeError:
+                self._open([])
+            raise
+
+    def _open(self, values: list[str]) -> None:
         self.secondary.set_enabled_closing(False)  # frees the device a new primary may take
         if not values:
             self.primary.set_enabled_closing(False)
@@ -114,7 +143,7 @@ def device_controls(window, devices: list[dict]) -> dict[str, DeviceControl]:
     controls: dict[str, DeviceControl] = {}
     inputs = audio_choices(devices, "input", processor.input_channels)
     outputs = audio_choices(devices, "output", processor.output_channels)
-    cameras = camera_choices()
+    cameras = camera_choices()  # only decides whether the control exists; its list is refreshed on use
     if inputs:
         controls["audio in"] = DeviceControl(
             "audio in", inputs, lambda: getattr(getattr(processor, "input_stream", None), "device", None),
@@ -124,5 +153,5 @@ def device_controls(window, devices: list[dict]) -> dict[str, DeviceControl]:
             "audio out", outputs, lambda: getattr(getattr(processor, "stream", None), "device", None),
             processor.set_output_device)
     if cameras:
-        controls["camera"] = CameraDevices(cameras, camera, orchestrator.secondary_camera_source)
+        controls["camera"] = CameraDevices(camera_choices, camera, orchestrator.secondary_camera_source)
     return controls
