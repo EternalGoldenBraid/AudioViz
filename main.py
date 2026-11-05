@@ -13,6 +13,7 @@ import qdarkstyle
 
 from audioviz.audio_processing.audio_processor import AudioProcessor
 from audioviz.visualization.spectrogram_visualizer import SpectrogramVisualizer
+from audioviz.tui.deck_server import DeckServer
 from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
 from audioviz.visualization.pitch_helix_visualizer import PitchHelixVisualizer
 from audioviz.sources import (
@@ -409,6 +410,7 @@ def main():
         ripple_window.setWindowTitle(ripples_window_config["title"])
         ripple_window.resize(*ripples_window_config["size"])
         ripple_window.show()
+        deck = DeckServer(ripple_window)  # keeps the deck socket alive for the window's lifetime
         if visualizer is not None and not ripple_window.use_shader:
             visualizer.set_canvas_provider(ripple_window.engine.get_field_preview)
     
