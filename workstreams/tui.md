@@ -1,11 +1,11 @@
 # TUI: a terminal-native front end
 
 > **Status:** active · **Branch:** `agent/tui` (local, not pushed) · **Updated:** 2026-11-05
-> **Now:** device knobs work live: audio in/out and camera switch in the running window; `:save` stores them by name in `config/deck.json`.
-> **Next:** the attached TUI still shows idle view tiles: serve low-res previews, then knobs from `RIPPLE_CONFIG` sections (paged).
+> **Now:** `python main.py` opens the window and the TUI together (`--no-tui` for the window only). Device knobs open a checklist on Enter; `:save` stores them by name in `config/deck.json`.
+> **Next:** multi-device backend (cameras first; the checklist and protocol are already list-shaped, capacity 1), then serve low-res previews so attached tiles show something, then paged knobs from `RIPPLE_CONFIG`.
 > **Blocked:** push needs `gh auth login -h github.com`, then `git push -u origin agent/tui`.
 > **Resume:** `copilot --resume efa7117b-d1b5-4bdb-bf79-7d9c8036c52e`
-> **Run:** `uv run --group tui --with-editable . python -m audioviz.tui.app --audio synthetic`
+> **Run:** `uv run --group tui --with-editable . python main.py`
 
 **Essence.** AudioViz as a Vim-modal terminal app. Tiles are subgraph views of the
 predictive-coding graph (waveform, spectrogram, prediction, error, canvas, hidden),
