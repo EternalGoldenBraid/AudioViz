@@ -582,3 +582,28 @@ def test_alt_hjkl_resize_and_zoom_is_just_a_big_resize_that_restores(tmp_path):
         await pilot.press("z")
         assert vars(app.placements["canvas"]) == before and app.stack.index("canvas") == depth
     _headless(tmp_path, scenario)
+
+
+def test_slash_in_the_tile_list_filters_rows_and_space_toggles_the_filtered_row(tmp_path):
+    from audioviz.tui.tile_list import TileList
+    from textual.widgets import OptionList
+
+    async def scenario(app, pilot):
+        await pilot.press("T")
+        assert isinstance(app.screen, TileList)
+        options = app.screen.query_one(OptionList)
+        total = options.option_count
+        await pilot.press("slash", "s", "p", "e", "e", "d")
+        await pilot.pause()
+        assert app.screen.query_one("#search").value == "speed" and 0 < options.option_count < total
+        await pilot.press("enter")  # keep the filter, back to the list
+        await pilot.press("j")  # past the section row to the tile
+        await pilot.press("space")
+        await pilot.pause()
+        assert "knob-speed" in app.screen.hidden and len(app.screen.hidden) == 1 + len(app.hidden)
+        await pilot.press("escape")  # clears the filter without leaving
+        await pilot.pause()
+        assert isinstance(app.screen, TileList) and options.option_count == total
+        await pilot.press("escape")
+        assert not isinstance(app.screen, TileList)
+    _headless(tmp_path, scenario)
