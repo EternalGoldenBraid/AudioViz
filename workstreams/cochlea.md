@@ -23,7 +23,8 @@ history; no view advances the model. Switching models resets only the audio
 branch and cross-modal connections, preserving the canvas and camera branch.
 
 **Documentation.** [Equations, timing, limitations, and diagrams](../docs/cochlea/index.md).
-Editable two-page source: `docs/cochlea/cochlea.drawio`.
+Editable three-page source: `docs/cochlea/cochlea.drawio`.
+`scripts/render_audio_history.py` reproduces the headless Qt history screenshot.
 
 **Validation.** `uv run --group dev python -m pytest -q tests/audio_processing/test_cochlea.py tests/tui/test_cochlea_runtime.py`.
 `PYTHONPATH=src uv run python scripts/validate_cochlea.py` writes an illustrative
