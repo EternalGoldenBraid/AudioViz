@@ -133,6 +133,12 @@ class RippleSourceOrchestrator:
                 sensor_id="camera 2",
             ),
         }
+        # Every further camera is equivalent evidence on the shared canvas, with its own learned readout: no
+        # geometry between cameras is assumed; hidden units that several cameras' pixels excite are the correspondence.
+        self.sensor_readouts = {
+            "camera 2": PredictiveCodingRGBReadout(canvas_shape=self.canvas_shape, config=config.visual_pathway),
+        }
+        self.sensor_predictions: dict[str, np.ndarray | None] = {}
         self.prediction_error_transform = PredictionErrorTransform(
             config=config.prediction_error,
             resolution=self.canvas_shape,
@@ -221,6 +227,8 @@ class RippleSourceOrchestrator:
 
     def predict_visual(self) -> np.ndarray:
         prior = self.engine.get_prior_numpy()
+        for sensor_id, readout in self.sensor_readouts.items():
+            self.sensor_predictions[sensor_id] = readout.predict(prior) if self.sensors[sensor_id].enabled else None
         if self.visual_readout.config.cross_modal_enabled:
             if self.hidden_coupling is None:
                 raise RuntimeError("Cross-modal prediction requires both predictive readouts.")
@@ -249,7 +257,8 @@ class RippleSourceOrchestrator:
         self.visual_observation = None
         self.observe_sensors()
         audio = self.audio_source.observation()
-        if self.audio_readout is None:
+        extras = self._extra_camera_branches()
+        if self.audio_readout is None and not extras:
             correction = self.resolve_visual_observation_correction()
         else:
             image = (
@@ -259,14 +268,18 @@ class RippleSourceOrchestrator:
             self.visual_observation = image
             if not isinstance(self.visual_readout, PredictiveCodingRGBReadout):
                 raise TypeError("Stream-state inference requires a predictive-coding readout.")
+            branches = [(self.visual_readout, image)]
+            stream_states = {self.visual_readout: self.camera_source.enabled}
+            if self.audio_readout is not None:
+                branches.append((self.audio_readout, audio))
+                stream_states[self.audio_readout] = self.audio_source.enabled
+            # The hidden coupling is defined for exactly the visual and audio branches.
+            coupled = self.visual_readout.config.cross_modal_enabled and not extras
             correction = infer_joint(
                 self.engine.get_prior_numpy(),
-                ((self.visual_readout, image), (self.audio_readout, audio)),
-                coupling=self.hidden_coupling if self.visual_readout.config.cross_modal_enabled else None,
-                stream_states={
-                    self.visual_readout: self.camera_source.enabled,
-                    self.audio_readout: self.audio_source.enabled,
-                },
+                (*branches, *extras),
+                coupling=self.hidden_coupling if coupled else None,
+                stream_states=stream_states,
             )
         self.engine.apply_observation_correction(correction)
         bank = getattr(self.audio_source.processor, "cochlea", None)
@@ -274,10 +287,22 @@ class RippleSourceOrchestrator:
             bank.correct_from_graph(self.audio_prediction / self.audio_source.observation_gain)
         return correction
 
+    def _extra_camera_branches(self) -> list[tuple[PredictiveCodingRGBReadout, np.ndarray]]:
+        """Readouts of enabled further cameras that delivered a frame; covering one drops only its branch."""
+        if not self.prediction_error_transform.applies_to("camera_frame"):
+            return []
+        return [
+            (readout, self.sensors[sensor_id].observation)
+            for sensor_id, readout in self.sensor_readouts.items()
+            if self.sensors[sensor_id].enabled and self.sensors[sensor_id].observation is not None
+        ]
+
     def update_pathway_config(self, **changes) -> None:
         if "cross_modal_enabled" in changes:
             self._validate_cross_modal(changes["cross_modal_enabled"])
         self.visual_readout.update_config(**changes)
+        for readout in self.sensor_readouts.values():
+            readout.update_config(**changes)
         if self.audio_readout is not None:
             self.audio_readout.update_config(**changes)
 
@@ -287,12 +312,18 @@ class RippleSourceOrchestrator:
 
     def set_diagnostics_enabled(self, enabled: bool) -> None:
         self.visual_readout.set_diagnostics_enabled(enabled)
+        for readout in self.sensor_readouts.values():
+            readout.set_diagnostics_enabled(enabled)
         if self.audio_readout is not None:
             self.audio_readout.set_diagnostics_enabled(enabled)
 
     def reset_readouts(self) -> None:
         self.visual_readout.set_spatial_preview_enabled(False)
         self.visual_readout.reset()
+        for readout in self.sensor_readouts.values():
+            readout.set_spatial_preview_enabled(False)
+            readout.reset()
+        self.sensor_predictions.clear()
         if self.audio_readout is not None:
             self.audio_readout.set_spatial_preview_enabled(False)
             self.audio_readout.reset()

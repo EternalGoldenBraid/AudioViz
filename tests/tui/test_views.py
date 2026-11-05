@@ -13,7 +13,7 @@ def runtime():
     return runtime
 
 
-@pytest.mark.parametrize("name", sorted(set(VIEWS) - {"camera_1", "camera_2", "cochlea"}))
+@pytest.mark.parametrize("name", sorted(set(VIEWS) - {"camera_1", "camera_2", "camera_2_prediction", "camera_2_error", "cochlea"}))
 def test_every_view_renders_an_rgb_image(runtime, name):
     image = VIEWS[name](runtime, 20, 40)
     assert image is not None
