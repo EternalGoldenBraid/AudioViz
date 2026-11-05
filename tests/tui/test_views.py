@@ -457,3 +457,73 @@ def test_tile_list_stays_inside_a_short_terminal_so_it_can_scroll():
             assert options.scroll_y > 0
 
     asyncio.run(run())
+
+
+def test_record_writes_the_shown_tiles_and_stops_on_the_second_command(tmp_path):
+    import cv2
+
+    async def scenario(app, pilot):
+        await pilot.pause(0.5)
+        before = len(app.recorded_tiles())
+        app.hide_tiles(["spectrogram"])
+        target = tmp_path / "clip.mp4"
+        app.run_command("record", [str(target)])
+        await pilot.pause(0.8)
+        assert 0 < len(app.recorded_tiles()) == before - 1
+        app.run_command("record", [])
+        assert target.exists()
+        video = cv2.VideoCapture(str(target))
+        assert video.get(cv2.CAP_PROP_FRAME_COUNT) >= 3
+    _headless(tmp_path, scenario)
+
+
+def test_slash_filters_the_key_list_and_escape_steps_back(tmp_path):
+    from textual.widgets import Static
+
+    async def scenario(app, pilot):
+        def rows():
+            return "\n".join(str(w.render()) for w in app.screen.query("Grid > Static"))
+        await pilot.press("question_mark")
+        everything = rows()
+        await pilot.press("slash", "z", "o", "o", "m")
+        await pilot.pause()
+        assert app.screen.query_one("#search").value == "zoom" and 0 < len(rows()) < len(everything)
+        assert "zoom" in rows().lower()
+        await pilot.press("escape")  # drops the filter, stays in the list
+        await pilot.pause()
+        assert type(app.screen).__name__ == "KeysScreen" and rows() == everything
+        await pilot.press("escape")
+        assert type(app.screen).__name__ != "KeysScreen"
+    _headless(tmp_path, scenario)
+
+
+def test_record_tile_prompts_for_a_path_blinks_while_recording_and_stops_on_enter(tmp_path):
+    async def scenario(app, pilot):
+        tile = app.query_one("#record")
+        await pilot.pause(0.3)
+        assert "not recording" in str(tile.render())
+        tile.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "RecordPrompt"
+        box = app.screen.query_one("#record-path")
+        box.value = str(tmp_path / "clips" / "run.mp4")
+        await pilot.press("enter")
+        await pilot.pause(0.6)
+        assert app.recorder is not None and "REC" in str(tile.render()) and "run.mp4" in str(tile.render())
+        await pilot.press("enter")
+        assert app.recorder is None and (tmp_path / "clips" / "run.mp4").exists()
+    _headless(tmp_path, scenario)
+
+
+def test_path_suggester_completes_folders_and_recordings(tmp_path):
+    import asyncio
+    from audioviz.tui.record_tile import PathSuggester
+
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "run1.mp4").write_bytes(b"")
+    (tmp_path / "notes.txt").write_text("")
+    suggest = lambda value: asyncio.run(PathSuggester().get_suggestion(value))
+    assert suggest(f"{tmp_path}/ru") == f"{tmp_path}/run1.mp4" or suggest(f"{tmp_path}/ru") == f"{tmp_path}/runs/"
+    assert suggest(f"{tmp_path}/no") is None
+    assert suggest(f"{tmp_path}/") in {f"{tmp_path}/run1.mp4", f"{tmp_path}/runs/"}

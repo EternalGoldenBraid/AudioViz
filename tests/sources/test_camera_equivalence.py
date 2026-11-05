@@ -135,3 +135,14 @@ def test_flows_exist_for_a_single_camera_and_the_view_never_goes_blank():
     assert set(orchestrator.branch_flows) == {"camera 1"}
     assert orchestrator.branch_flows["camera 1"].error_intensity > 0
     assert flows(runtime, 12, 20).any()
+
+
+def test_two_virtual_cameras_see_one_object_at_parallax_offset():
+    import numpy as np
+
+    from audioviz.sources.virtual_camera import VirtualCapture, virtual_choices
+
+    names = list(virtual_choices())
+    left, right = (VirtualCapture(100 + names.index(n)) for n in [c for c in names if "object" in c])
+    centre = lambda frame: np.nonzero(frame[..., 0].any(axis=0))[0].mean()
+    assert abs(centre(left.read()[1]) - centre(right.read()[1])) > 20
