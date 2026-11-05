@@ -367,6 +367,7 @@ def main():
     
     # Visualizer
     visualizer = None
+    windows = {}  # the windows the terminal controller can show and hide
     spectrogram_window_config = APP_CONFIG["windows"]["spectrogram"]
     if spectrogram_window_config["enabled"]:
         visualizer = SpectrogramVisualizer(
@@ -378,6 +379,7 @@ def main():
         visualizer.setWindowTitle(spectrogram_window_config["title"])
         visualizer.resize(*spectrogram_window_config["size"])
         visualizer.show()
+        windows["spectrogram"] = visualizer
     
     # Create Pitch Helix Visualizer
     helix_window_config = APP_CONFIG["windows"]["helix"]
@@ -399,6 +401,7 @@ def main():
         helix_window.setWindowTitle(helix_window_config["title"])
         helix_window.resize(*helix_window_config["size"])
         helix_window.show()
+        windows["helix"] = helix_window
     
     # Create Ripple Wave Visualizer
     ripples_window_config = APP_CONFIG["windows"]["ripples"]
@@ -411,7 +414,8 @@ def main():
         ripple_window.setWindowTitle(ripples_window_config["title"])
         ripple_window.resize(*ripples_window_config["size"])
         ripple_window.show()
-        deck = DeckServer(ripple_window)  # keeps the deck socket alive for the window's lifetime
+        windows["ripples"] = ripple_window
+        deck = DeckServer(ripple_window, windows=windows)  # keeps the deck socket alive for the window's lifetime
         if visualizer is not None and not ripple_window.use_shader:
             visualizer.set_canvas_provider(ripple_window.engine.get_field_preview)
     

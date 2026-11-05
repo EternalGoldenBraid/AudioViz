@@ -562,6 +562,8 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.prediction_scene is not None:
             if self.source_orchestrator.visual_observation is None:
                 self.prediction_scene.invalidate_evidence("camera")
+            if self.source_orchestrator.secondary_observation is None:
+                self.prediction_scene.invalidate_evidence("camera_secondary")
             if not self.audio_source.has_recent_observation():
                 self.prediction_scene.invalidate_evidence("audio")
             if scene_requested:
@@ -612,6 +614,14 @@ class RippleWaveVisualizer(VisualizerBase):
                 stream_state=source.enabled if readout is not None else None,
                 stream_state_prediction=readout.stream_state_prediction if readout is not None else None,
             ))
+        sources.append(SourceScenePreview(
+            mapping=orchestrator.secondary_camera_source.scene_mapping,
+            enabled=orchestrator.secondary_camera_source.enabled,
+            observation=(
+                orchestrator.secondary_camera_source.scene_mapping.sample(orchestrator.secondary_observation)
+                if orchestrator.secondary_observation is not None else None
+            ),
+        ))
         sources.append(SourceScenePreview(
             mapping=self.synthetic_source.scene_mapping,
             enabled=self.synthetic_source.enabled,
@@ -732,6 +742,7 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def close_camera_source(self) -> None:
         self.camera_source.close()
+        self.source_orchestrator.secondary_camera_source.close()
 
     def _create_pose_debug_widget(self):
         self.pose_debug_viewer = PoseDebugView()
