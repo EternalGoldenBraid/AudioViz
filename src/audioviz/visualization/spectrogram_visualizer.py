@@ -1,18 +1,20 @@
 import time
 from collections.abc import Callable
 
-from PyQt5 import QtWidgets
+from PyQt5 import QtCore, QtWidgets
 from loguru import logger
 import pyqtgraph as pg
 # pg.setConfigOptions(useOpenGL=True) 
 # pg.setConfigOptions(antialias=True)
 import numpy as np
 import librosa as lr
-from matplotlib import cm
+from matplotlib import cm, colormaps
 from matplotlib.colors import Normalize
 
 from .visualizer_base import VisualizerBase
 from audioviz.audio_processing.audio_processor import AudioProcessor
+from audioviz.sources.orchestrator import AUDIO_MODELS, RippleSourceOrchestrator
+from .audio_history_view import COCHLEA_COLORMAP, COCHLEA_DB_RANGE, cochlea_db, spectrum_db, waveform_envelope
 
 class SpectrogramVisualizer(VisualizerBase):
     def __init__(self,
@@ -32,11 +34,12 @@ class SpectrogramVisualizer(VisualizerBase):
         self._landscape_failed = False
         self._last_frame = -1
         self._last_3d_update = -float("inf")
+        self.audio_model_owner: RippleSourceOrchestrator | None = None
 
         self.spectrogram_plot_item: pg.PlotItem
         self.spectrogram_view: pg.ImageView
         self.spectrogram_y_labels = processor.freq_bins
-        self.waveform_plot: pg.PlotWidget
+        self.waveform_plot: pg.PlotItem
         self.waveform_curve: pg.PlotDataItem
         
         self.waveform_y_range: tuple = (-1, 1)
@@ -59,6 +62,12 @@ class SpectrogramVisualizer(VisualizerBase):
         reset.clicked.connect(self._reset_landscape)
         controls.addWidget(reset)
         controls.addStretch()
+        controls.addWidget(QtWidgets.QLabel("Audio model"))
+        self.audio_model_selector = QtWidgets.QComboBox()
+        self.audio_model_selector.addItems(AUDIO_MODELS)
+        self.audio_model_selector.setEnabled(False)
+        self.audio_model_selector.setToolTip("Selects the running graph's audio representation.")
+        controls.addWidget(self.audio_model_selector)
         layout.addLayout(controls)
         self.landscape_help = QtWidgets.QLabel(
             "Drag to orbit; wheel to zoom; Ctrl-drag to pan. "
@@ -77,36 +86,119 @@ class SpectrogramVisualizer(VisualizerBase):
         layout.addWidget(self.landscape_error)
     
         # Spectrogram plot using ImageItem
-        self.spectrogram_plot_item = pg.PlotItem(title="Spectrogram")
+        self.spectrogram_plot_item = pg.PlotItem(title="Spectrogram | diagnostic signal analysis")
         self.spectrogram_plot_item.getViewBox().invertY(False)
     
         # Set axis labels
-        self.spectrogram_plot_item.setLabel('bottom', "Time (frames)")
-        self.spectrogram_plot_item.setLabel('left', "Hertz")
+        self.spectrogram_plot_item.setLabel('bottom', "Time relative to latest audio", units="s")
+        self.spectrogram_plot_item.setLabel('left', "Frequency", units="Hz")
         self.spectrogram_plot_item.setYRange(*self.spectrogram_y_range)
         # Set freq labels
         self.spectrogram_plot_item.setYRange(0, self.processor.n_spec_bins)
     
-        self.spectrogram_image_item = pg.ImageItem()
+        self.spectrogram_image_item = pg.ImageItem(axisOrder="row-major")
         self.spectrogram_plot_item.addItem(self.spectrogram_image_item)
     
         # Pack into GraphicsLayoutWidget
         spectrogram_widget = pg.GraphicsLayoutWidget()
         self.spectrogram_widget = spectrogram_widget
         spectrogram_widget.addItem(self.spectrogram_plot_item)
+        spectrum_lut = self.cmap(np.linspace(0, 1, 256), bytes=True)
+        self.spectrogram_colorbar = pg.ColorBarItem(
+            values=(self.norm.vmin, self.norm.vmax),
+            colorMap=pg.ColorMap(np.linspace(0, 1, 256), spectrum_lut),
+            label="dB re 1", interactive=False,
+        )
+        self.spectrogram_colorbar.setImageItem(self.spectrogram_image_item)
+        spectrogram_widget.addItem(self.spectrogram_colorbar, row=0, col=1)
+        spectrogram_widget.nextRow()
+        self.cochlea_plot = spectrogram_widget.addPlot(title="Cochlea | enable the cochlea audio model")
+        self.cochlea_plot.setLabel("left", "Oscillator index")
+        self.cochlea_plot.setLabel("bottom", "Time relative to latest audio", units="s")
+        self.cochlea_image = pg.ImageItem(axisOrder="row-major")
+        self.cochlea_plot.addItem(self.cochlea_image)
+        lut = colormaps[COCHLEA_COLORMAP](np.linspace(0, 1, 256), bytes=True)
+        self.cochlea_colorbar = pg.ColorBarItem(
+            values=COCHLEA_DB_RANGE, colorMap=pg.ColorMap(np.linspace(0, 1, 256), lut),
+            label="dB re 1", interactive=False,
+        )
+        self.cochlea_colorbar.setImageItem(self.cochlea_image)
+        spectrogram_widget.addItem(self.cochlea_colorbar, row=1, col=1)
+        for plot in (self.spectrogram_plot_item, self.cochlea_plot):
+            plot.getAxis("left").setWidth(85)
+            plot.getAxis("bottom").setStyle(hideOverlappingLabels=False)
+        self.spectrogram_plot_item.setXLink(self.cochlea_plot)
     
         layout.addWidget(spectrogram_widget)
     
         # Waveform plot
-        self.waveform_plot = pg.PlotWidget(title="Waveform")
-        self.waveform_plot.setLabel("bottom", "Samples")
+        self.waveform_plot = spectrogram_widget.addPlot(row=2, col=0, title="Raw waveform | fixed amplitude, peak-preserving envelope")
+        self.waveform_plot.setLabel("bottom", "Time relative to latest audio", units="s")
         self.waveform_plot.setLabel("left", "Amplitude")
-        self.waveform_plot.setYRange(-1, 1)
-        self.waveform_curve = self.waveform_plot.plot(pen="y")
-        layout.addWidget(self.waveform_plot)
+        self.waveform_plot.setYRange(-1, 1, padding=0)
+        self.waveform_plot.getAxis("left").setWidth(85)
+        self.waveform_plot.getAxis("bottom").setStyle(hideOverlappingLabels=False)
+        self.waveform_plot.setXLink(self.spectrogram_plot_item)
+        self.waveform_plot.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen("#44546a")))
+        self.waveform_curve = self.waveform_plot.plot(pen="#5adc8c")
+        self.waveform_low = self.waveform_plot.plot(pen="#5adc8c")
+        self.waveform_plot.addItem(pg.FillBetweenItem(
+            self.waveform_low, self.waveform_curve, brush=pg.mkBrush(90, 220, 140, 110),
+        ))
+        for row, stretch in enumerate((3, 3, 2)):
+            spectrogram_widget.ci.layout.setRowStretchFactor(row, stretch)
 
     def set_canvas_provider(self, provider: Callable[[], np.ndarray]) -> None:
         self.canvas_provider = provider
+
+    def set_audio_model_controller(self, owner: RippleSourceOrchestrator) -> None:
+        self.audio_model_owner = owner
+        self.audio_model_selector.setCurrentText(owner.audio_model)
+        self.audio_model_selector.setEnabled(not owner.engine.use_shader)
+        self.audio_model_selector.activated[str].connect(owner.set_audio_model)
+
+    def _update_cochlea(self) -> None:
+        if self.audio_model_owner is not None:
+            self.audio_model_selector.setCurrentText(self.audio_model_owner.audio_model)
+        if getattr(self.processor, "cochlea", None) is None:
+            self.cochlea_image.clear()
+            self.cochlea_plot.setTitle("Cochlea | enable the cochlea audio model")
+            return
+        history = self.processor.get_audio_history()
+        if history is None or not history.cochlea.samples.size:
+            self.cochlea_image.clear()
+            self.cochlea_plot.setTitle("Cochlea | waiting for audio")
+            return
+        columns = max(1, int(self.cochlea_plot.width()))
+        levels = cochlea_db(history, columns)
+        count = levels.shape[0]
+        self.cochlea_image.setImage(levels, autoLevels=False)
+        self.cochlea_image.setRect(QtCore.QRectF(-history.duration, 0.5, history.duration, count))
+        self.cochlea_plot.setXRange(-history.duration, 0, padding=0)
+        self.cochlea_plot.getAxis("bottom").setTicks([[(float(t), f"{t:g}") for t in np.linspace(-history.duration, 0, 5)]])
+        self.cochlea_plot.setYRange(0.5, count + 0.5, padding=0)
+        indices = np.unique(np.linspace(1, count, min(5, count)).astype(int))
+        self.cochlea_plot.getAxis("left").setTicks([[(int(i), str(i)) for i in indices]])
+        self.cochlea_plot.setTitle("Cochlea | RMS oscillator state, low index at bottom")
+
+    def _update_spectrum(self) -> None:
+        history = self.processor.get_audio_history()
+        if history is None:
+            return
+        columns = max(1, int(self.spectrogram_plot_item.width()))
+        self.spectrogram_image_item.setImage(spectrum_db(history, columns), autoLevels=False)
+        count = len(history.frequencies)
+        self.spectrogram_image_item.setRect(QtCore.QRectF(-history.duration, -.5, history.duration, count))
+        self.spectrogram_plot_item.setXRange(-history.duration, 0, padding=0)
+        self.spectrogram_plot_item.setYRange(-.5, count - .5, padding=0)
+        self.spectrogram_plot_item.setLabel("left", "Hz (mel)" if history.mel_power else "Hz", units=None)
+        indices = np.unique(np.linspace(0, count - 1, min(5, count)).astype(int))
+        self.spectrogram_plot_item.getAxis("left").setTicks([
+            [(int(i), f"{history.frequencies[i]:.0f}") for i in indices]
+        ])
+        self.spectrogram_plot_item.getAxis("bottom").setTicks([
+            [(float(t), f"{t:g}") for t in np.linspace(-history.duration, 0, 5)]
+        ])
 
     def _toggle_landscape(self, enabled: bool) -> None:
         if enabled and self.landscape is None:
@@ -151,6 +243,7 @@ class SpectrogramVisualizer(VisualizerBase):
         if landscape_active:
             self.landscape.set_canvas(self.canvas_provider() if self.canvas_provider is not None else None)
             self._last_3d_update = now
+        self._update_cochlea()
         snapshot = self.processor.get_latest_snapshot()
         if snapshot is None:
             if landscape_active:
@@ -173,29 +266,13 @@ class SpectrogramVisualizer(VisualizerBase):
             )
             self._last_frame = frame
             return
-        time_start_spectrogram = time.time()
-        # Process spectrogram
-        spectrogram_db = lr.power_to_db(spectrogram, ref=1.0)
-        rgba_img = self.cmap(self.norm(spectrogram_db.T))
-        rgb_img = (rgba_img[:, :, :3] * 255).astype(np.uint8)
+        self._update_spectrum()
         
-        self.spectrogram_image_item.setImage(
-            rgb_img,
-            autoLevels=False,
-            autoRange=False,
-            levels=(0, 255)
-        )
-        time_end_spectrogram = time.time()
-        # print(f"Spectrogram processing time: {time_end_spectrogram - time_start_spectrogram:.4f} seconds")
-        
-        time_start_waveform = time.time()
-        # Process waveform
-        mean_waveform = np.mean(audio, axis=1)
-        
-        n_samples = int(self.waveform_plot_duration * self.processor.sr)
-        if len(mean_waveform) > n_samples:
-            mean_waveform = mean_waveform[-n_samples:]
-        
-        self.waveform_curve.setData(mean_waveform)
-        time_end_waveform = time.time()
-        # print(f"Waveform processing time: {time_end_waveform - time_start_waveform:.4f} seconds")
+        history = self.processor.get_audio_history()
+        times, low, high = waveform_envelope(history, max(1, int(self.waveform_plot.width())))
+        self.waveform_curve.setData(times, high)
+        self.waveform_low.setData(times, low)
+        self.waveform_plot.setYRange(-1, 1, padding=0)
+        self.waveform_plot.getAxis("bottom").setTicks([
+            [(float(t), f"{t:g}") for t in np.linspace(-history.duration, 0, 5)]
+        ])

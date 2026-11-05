@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from audioviz.audio_processing.history import TimedHistory, readonly
 
 @dataclass(frozen=True)
 class CochleaConfig:
@@ -43,13 +44,26 @@ class Cochlea:
     (velocity + damping * position) / damped_angular_frequency.
     """
 
-    def __init__(self, sample_rate: float, config: CochleaConfig | None = None) -> None:
+    def __init__(
+        self, sample_rate: float, config: CochleaConfig | None = None, *,
+        history_hop: int = 256, history_columns: int | None = None, sample_offset: int = 0,
+    ) -> None:
         self.config = config or CochleaConfig()
         if not np.isfinite(sample_rate) or sample_rate <= 0:
             raise ValueError("sample_rate must be finite and positive")
         if self.config.maximum_frequency >= sample_rate / 2:
             raise ValueError("cochlea frequencies must be below Nyquist")
         self.sample_rate = float(sample_rate)
+        if isinstance(history_hop, bool) or not isinstance(history_hop, int) or history_hop <= 0:
+            raise ValueError("history_hop must be a positive integer")
+        if history_columns is None:
+            history_columns = int(np.ceil(4 * sample_rate / history_hop))
+        if isinstance(history_columns, bool) or not isinstance(history_columns, int) or history_columns <= 0:
+            raise ValueError("history_columns must be a positive integer")
+        self.history_hop = history_hop
+        self._history = np.zeros((self.config.nodes, history_columns))
+        self._history_samples = np.zeros(history_columns, dtype=np.int64)
+        self._activity_sum = np.zeros(self.config.nodes)
         self.frequencies = np.geomspace(
             self.config.minimum_frequency, self.config.maximum_frequency, self.config.nodes
         )
@@ -62,14 +76,27 @@ class Cochlea:
         self._sine = radius * np.sin(angle)
         self.state = np.zeros((self.config.nodes, 2), dtype=np.float64)
         self.last_block: CochleaBlock | None = None
+        self.reset(sample_offset=sample_offset)
 
     @property
     def observation_size(self) -> int:
         return 2 * self.config.nodes
 
-    def reset(self) -> None:
+    def reset(self, *, sample_offset: int = 0) -> None:
         self.state.fill(0.0)
         self.last_block = None
+        self.sample_offset = sample_offset
+        self.samples_processed = 0
+        self._history_written = 0
+        self._activity_sum.fill(0.0)
+
+    def activity_history(self) -> TimedHistory:
+        count = min(self._history_written, self._history.shape[1])
+        indices = np.arange(self._history_written - count, self._history_written) % self._history.shape[1]
+        return TimedHistory(
+            readonly(self._history[:, indices]), readonly(self._history_samples[indices]),
+            window_samples=self.history_hop,
+        )
 
     def process(self, samples: np.ndarray) -> CochleaBlock:
         samples = np.asarray(samples, dtype=np.float64)
@@ -84,6 +111,14 @@ class Cochlea:
             prediction[index] = x.sum()
             error[index] = sample - prediction[index]
             x += rate * error[index]
+            self._activity_sum += x * x + q * q
+            self.samples_processed += 1
+            if self.samples_processed % self.history_hop == 0:
+                column = self._history_written % self._history.shape[1]
+                self._history[:, column] = np.sqrt(self._activity_sum / self.history_hop)
+                self._history_samples[column] = self.sample_offset + self.samples_processed
+                self._activity_sum.fill(0.0)
+                self._history_written += 1
         state = np.column_stack((x, q))
         if not np.all(np.isfinite(state)) or not np.all(np.isfinite(error)):
             raise FloatingPointError("Cochlea inference produced non-finite values")

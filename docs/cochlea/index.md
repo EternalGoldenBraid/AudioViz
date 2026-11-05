@@ -19,10 +19,16 @@ From the cochlea worktree, run the **standalone TUI**:
 PYTHONPATH=src uv run --group tui python -m audioviz.tui.app --audio synthetic --no-camera
 ```
 
-In settings, select **audio model: cochlea**. The switch resets the canvas and
-graph weights and turns sound off. The spectral model remains the default.
-This feature is in the local graph runtime; `main.py`'s Qt window and its
-attached terminal controller retain their existing audio path.
+In settings, select **audio model: cochlea**. In the attached TUI, the same
+control is in the window's mixer and changes the window process's model.
+Selection is owned by the shared source orchestrator: the audio readout and its
+cross-modal connections are rebuilt, while the canvas and camera branch stay
+intact. Local TUI playback is muted on a model change. The spectral model
+remains the default.
+
+The listening controls below belong to the standalone TUI. Qt's existing
+device playback path is unchanged; this shared-view slice does not add a Qt
+listening-tap selector.
 
 | Sound out | Signal | Meaning |
 | --- | --- | --- |
@@ -144,8 +150,8 @@ Let $z_B=(x_1,q_1,\ldots,x_N,q_N)$ be the state after processing the current
 batch, $a$ the audio evidence gain, and $g_B$ the graph's saved expectation
 in gain-scaled coordinates.
 
-1. Propagate the canvas and save $g_B$ from the graph, before processing the
-   batch's samples.
+1. Propagate the canvas and save $g_B$ from the graph, before consuming the
+   batch's oscillator-state target.
 2. Process each sample in order with the equations above. Retain each block's
    prediction and residual for playback.
 3. Freeze $y_B=a z_B$ as the audio branch's target. Run the existing joint
@@ -173,6 +179,12 @@ the final block's state as one graph target. Thus graph feedback is **once per
 nonempty tick**, not once per sample or once per queued block. The standalone
 observer is block-partition independent; feedback depends on tick boundaries.
 Input or output queue overflow can lose audio, so real-time execution matters.
+
+Raw-audio processing and graph updates can be scheduled separately in the Qt
+process; its graph expectation uses prior graph state, not the new audio target.
+The shared orchestrator applies feedback once when it consumes a fresh target.
+The standalone driver processes the audio batch between prediction and target
+consumption. Rendering either frontend never advances these states.
 
 This is a staggered two-rate inference scheme with a frozen local target. It
 does **not** differentiate the raw waveform loss through the whole audio history
@@ -253,7 +265,8 @@ $$
 
 Learning is off by default. With no new audio target, $D$ is frozen; hidden,
 canvas, and stream-state inference can continue. Resetting graph states retains
-weights; changing the audio representation rebuilds the graph and its weights.
+weights; changing the audio representation rebuilds only the audio branch and
+its cross-modal connections.
 
 ### Optional cross-modal hidden coupling
 
@@ -306,7 +319,73 @@ This example uses two bank-tuned tones, a one-second settling period, and no
 graph feedback. Input and residual share the same amplitude scale.
 It demonstrates causal tracking, not general audio reconstruction quality.
 
+## Shared audio history
+
+![Process-owned audio and graph exchange feed the projector and attached tablet](cochlea-shared-views.png)
+
+The Qt audio window includes an **oscillator-index / time** row. Its model
+selector and the attached TUI's mixer address the same orchestrator. The
+terminal's **cochlea** tile is a lower-resolution projection of that history,
+with low indices at the bottom and time moving right. Both use a fixed
+$[-80,0]$ dB state-amplitude scale (reference amplitude 1), so fading remains
+visible. Literal spinning phase indicators are not included.
+
+![Actual dark Qt audio window: diagnostic mel spectrum, oscillator activity, and raw waveform aligned in time](audio-history.png)
+
+Three synthetic tone bursts, with graph feedback off for this illustration.
+The cochlea's bands show state amplitude, including off-resonance responses and
+decay. The diagnostic spectrum still exposes centered block-edge artifacts;
+its shorter retained interval is blank on the left, not stretched across time.
+
+`AudioProcessor.get_audio_history()` returns read-only copies on the process's
+audio sample clock. Renderers do not infer, integrate, or feed back into the
+model. The waveform, diagnostic spectrum and oscillator history share the same
+latest sample $S$; time is $(s-S)/f_s$ seconds.
+
+Each oscillator-history column summarizes $H$ corrected sample states:
+
+$$
+A_{i,k}=\sqrt{\frac{1}{H}\sum_{n=kH}^{(k+1)H-1}
+\left(x_{i,n}^{2}+q_{i,n}^{2}\right)}.
+$$
+
+This is RMS **state amplitude**, not physical energy or a per-node acoustic
+error. A bounded ring stores complete hops, with their end-sample timestamps.
+Its window placement is independent of input-block partitioning and rendering.
+Switching models or standalone input sources clears oscillator history while
+preserving the process sample clock.
+
+The diagnostic spectrum retains the existing per-block centered STFT/mel
+analysis. Its actual frame-center timestamps are recorded: adjacent blocks may
+have coincident boundary frames. Display resampling selects the later frame at
+that time; it does not stretch extra columns into fictitious elapsed time.
+Older missing data and incomplete oscillator hops remain blank.
+
+The diagnostic spectrogram uses $20\log_{10}$ for STFT magnitudes and
+$10\log_{10}$ for mel powers, both referenced to 1 in their stored units.
+The default display scale is fixed at $[-80,0]$ dB; it does not normalize to
+the loudest visible frame. These are uncalibrated analysis units, not sound
+pressure or waveform dBFS. Frequency labels use actual FFT bins or mel-filter
+centres, and the mel axis is explicitly marked as mel-spaced.
+
+The 2D waveform shares the full history interval with both heatmaps. Qt and
+terminal views use a fixed $[-1,1]$ amplitude range and per-column min/max
+envelopes, preserving transients as resolution decreases. The 3D landscape
+retains its separate short waveform-source duration.
+
+The attached terminal reads these same arrays through the deck socket. It
+keeps its local graph idle; no microphone or oscillator bank is started by
+opening the remote view.
+
 ## Reproduce and inspect
+
+Render the actual Qt history window without opening audio devices:
+
+```bash
+PYTHONPATH=src uv run python scripts/render_audio_history.py
+```
+
+The output is `outputs/cochlea/audio-history.png`.
 
 ```bash
 PYTHONPATH=src uv run python scripts/validate_cochlea.py
@@ -320,7 +399,7 @@ processing faster than real time on the current machine and a residual-power
 threshold for the two-tone example. It does not measure hardware round-trip
 latency or guarantee real-time performance of a large canvas.
 
-The editable diagram has two pages:
+The editable diagram has three pages: sample loop, graph boundary, and shared views.
 [cochlea.drawio](./cochlea.drawio). Open it in VS Code with the draw.io extension,
 or in draw.io desktop; double-click a label to edit it.
 
@@ -331,7 +410,11 @@ or in draw.io desktop; double-click a label to edit it.
 | Signed graph target | `src/audioviz/sources/audio.py` |
 | Pooled state decoder | `src/audioviz/readouts/audio.py` |
 | Graph inference and weight updates | `src/audioviz/readouts/predictive_coding.py` |
-| Two-rate scheduling and feedback | `src/audioviz/tui/graph_runtime.py` |
+| Shared model selection and graph feedback | `src/audioviz/sources/orchestrator.py` |
+| Standalone two-rate driver | `src/audioviz/tui/graph_runtime.py` |
+| Shared time grids, decibels and waveform envelopes | `src/audioviz/visualization/audio_history_view.py` |
+| Full-resolution history window | `src/audioviz/visualization/spectrogram_visualizer.py` |
+| Attached thumbnails | `src/audioviz/tui/views.py`, `deck_server.py` |
 | Ordered input blocks and listening taps | `src/audioviz/tui/audio_feed.py`, `audio_out.py` |
 
 The diagrams and equations describe the implementation in this worktree.

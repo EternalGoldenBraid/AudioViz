@@ -1,4 +1,5 @@
 from collections import deque
+from threading import Lock
 from typing import Optional, Union, Tuple, List
 
 import numpy as np
@@ -8,6 +9,7 @@ import librosa as lr
 from loguru import logger
 
 from audioviz.audio_processing.cochlea import Cochlea
+from audioviz.audio_processing.history import AudioHistory, TimedHistory, readonly
 from audioviz.utils.signal_processing import perceptual_soft_threshold
 
 def get_stft_spectrogram(segment: np.ndarray, hop_length: int,
@@ -65,6 +67,8 @@ class AudioProcessor:
         self.io_blocksize: int = io_blocksize
         self.data = data
         self.cochlea: Cochlea | None = None
+        self.samples_processed = 0
+        self._history_lock = Lock()
 
         self.input_channels: int = input_channels
         self.output_channels: int = output_channels
@@ -86,6 +90,7 @@ class AudioProcessor:
             np.zeros((self.n_spec_bins, n_spec_frames), dtype=np.float32)
             for _ in range(self.input_channels)
         ]
+        self.spectrogram_samples = np.full(n_spec_frames, -1, dtype=np.int64)
 
         self.snapshot_queue: deque[Tuple[np.ndarray, List[np.ndarray]]] = deque(maxlen=5)
         self.num_top_frequencies: int = 3
@@ -246,8 +251,16 @@ class AudioProcessor:
                 self.spectrogram_buffers[channel_idx], -frames_spec, axis=1
             )
             self.spectrogram_buffers[channel_idx][:, -frames_spec:] = spectrogram
+        self.spectrogram_samples = np.roll(self.spectrogram_samples, -frames_spec)
+        self.spectrogram_samples[-frames_spec:] = (
+            self.samples_processed + np.arange(frames_spec) * self.hop_length
+        )
 
     def process_audio(self, indata: np.ndarray):
+        with self._history_lock:
+            self._process_audio(indata)
+
+    def _process_audio(self, indata: np.ndarray):
         frames = indata.shape[0]
 
         if self.cochlea is not None:
@@ -257,6 +270,7 @@ class AudioProcessor:
         self.current_signal_level = self._compute_signal_level(indata)
 
         self.update_spectrogram_buffer(indata)
+        self.samples_processed += frames
 
         if self.current_signal_level < self.minimum_signal_level:
             self.current_top_k_frequencies[:] = [None] * self.num_top_frequencies
@@ -370,6 +384,32 @@ class AudioProcessor:
             return self.snapshot_queue[-1]
         else:
             return None
+
+    def get_audio_history(self) -> AudioHistory | None:
+        with self._history_lock:
+            return self._get_audio_history()
+
+    def _get_audio_history(self) -> AudioHistory | None:
+        snapshot = self.get_latest_snapshot()
+        if snapshot is None:
+            return None
+        audio, spectra = snapshot
+        valid = self.spectrogram_samples >= 0
+        frequencies = (
+            lr.mel_frequencies(n_mels=self.n_spec_bins + 2, fmin=0, fmax=self.sr / 2)[1:-1]
+            if self.n_mels is not None else self.freq_bins
+        )
+        bank = self.cochlea
+        return AudioHistory(
+            sample_rate=self.sr, sample_end=self.samples_processed,
+            waveform=readonly(np.mean(audio, axis=1)),
+            spectrum=TimedHistory(
+                readonly(np.mean(spectra, axis=0)[:, valid]),
+                readonly(self.spectrogram_samples[valid]),
+            ),
+            frequencies=readonly(frequencies), mel_power=self.n_mels is not None,
+            cochlea=None if bank is None else bank.activity_history(),
+        )
 
     def stop(self) -> None:
         """Stop audio processing and release resources."""

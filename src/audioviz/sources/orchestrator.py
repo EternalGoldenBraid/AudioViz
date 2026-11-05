@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from audioviz.audio_processing.cochlea import Cochlea
 from audioviz.readouts import (
     PredictiveCodingConfig,
     PredictiveCodingRGBReadout,
@@ -18,6 +19,8 @@ from audioviz.utils.source_preview import SourceSceneMapping
 from audioviz.transforms.prediction_error import PredictionErrorTransform
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
 from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
+
+AUDIO_MODELS = ("spectral", "cochlea")
 
 
 @dataclass(frozen=True)
@@ -147,6 +150,43 @@ class RippleSourceOrchestrator:
         for sensor in self.sensors.values():
             sensor.observe()
 
+    @property
+    def audio_model(self) -> str:
+        return "cochlea" if getattr(self.audio_source.processor, "cochlea", None) is not None else "spectral"
+
+    def set_audio_model(self, model: str) -> None:
+        """Replace only the audio representation; camera and canvas states stay intact."""
+        if model not in AUDIO_MODELS:
+            raise ValueError(f"audio_model must be one of {AUDIO_MODELS}")
+        if model == self.audio_model:
+            return
+        processor = self.audio_source.processor
+        if processor is None or self.audio_readout is None:
+            raise RuntimeError("Audio model selection requires an audio processor")
+        if self.engine.use_shader:
+            raise NotImplementedError("Cochlea graph inference requires an array-backed canvas")
+        bank = (
+            Cochlea(
+                processor.sr, history_hop=processor.hop_length,
+                history_columns=int(np.ceil(processor.num_samples_in_buffer / processor.hop_length)),
+                sample_offset=processor.samples_processed,
+            ) if model == "cochlea" else None
+        )
+        readout = PredictiveCodingAudioReadout(
+            canvas_shape=self.canvas_shape, config=self.audio_readout.config,
+            observation_size=bank.observation_size if bank is not None else AUDIO_SPECTRAL_BANDS,
+        )
+        readout.set_diagnostics_enabled(self.audio_readout.diagnostics_enabled)
+        readout.set_spatial_preview_enabled(self.audio_readout.spatial_preview_enabled)
+        processor.cochlea = bank
+        self.audio_readout = readout
+        self.hidden_coupling = (
+            PredictiveCodingHiddenCoupling(self.visual_readout, readout)
+            if isinstance(self.visual_readout, PredictiveCodingRGBReadout) else None
+        )
+        self.audio_prediction = None
+        self.audio_source.reset_observation()
+
     def set_base_amplitude(self, amplitude: float) -> None:
         self.base_amplitude = float(amplitude)
 
@@ -229,6 +269,9 @@ class RippleSourceOrchestrator:
                 },
             )
         self.engine.apply_observation_correction(correction)
+        bank = getattr(self.audio_source.processor, "cochlea", None)
+        if bank is not None and audio is not None and self.audio_prediction is not None and self.audio_source.observation_gain > 0:
+            bank.correct_from_graph(self.audio_prediction / self.audio_source.observation_gain)
         return correction
 
     def update_pathway_config(self, **changes) -> None:

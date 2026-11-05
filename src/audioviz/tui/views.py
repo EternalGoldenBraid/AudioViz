@@ -9,11 +9,15 @@ from typing import Callable
 import numpy as np
 
 from audioviz.tui.graph_runtime import GraphRuntime
-from audioviz.tui.halfblock import field_to_rgb, heat_to_rgb, waveform_to_rgb
+from audioviz.tui.halfblock import field_to_rgb, waveform_to_rgb
+from audioviz.visualization.audio_history_view import (
+    COCHLEA_COLORMAP, COCHLEA_DB_RANGE, cochlea_db, level_rgb,
+    SPECTRUM_COLORMAP, SPECTRUM_DB_RANGE, spectrum_db,
+    waveform_envelope,
+)
 
 View = Callable[[GraphRuntime, int, int], "np.ndarray | None"]
 
-DYNAMIC_RANGE_DB = 60.0
 WAVEFORM_PEAK_FLOOR = 0.02  # keeps room noise from filling the tile
 BACKGROUND = np.array([12, 12, 16], dtype=np.uint8)
 OBSERVED = np.array([40, 90, 120], dtype=np.uint8)
@@ -21,21 +25,35 @@ PREDICTED = np.array([250, 150, 30], dtype=np.uint8)
 COCHLEA_PREVIEW_SAMPLES = 128
 
 
-def waveform(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
-    snapshot = runtime.processor.get_latest_snapshot()
-    if snapshot is None:
+def cochlea(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+    history = runtime.processor.get_audio_history()
+    if history is None:
         return None
-    samples = snapshot[0][-8192:, 0]
-    return waveform_to_rgb(samples / max(float(np.abs(samples).max()), WAVEFORM_PEAK_FLOOR), rows, cols)
+    levels = cochlea_db(history, cols)
+    if levels is None or history.cochlea.samples.size == 0:
+        return None
+    return level_rgb(levels[::-1], COCHLEA_DB_RANGE, COCHLEA_COLORMAP)
+
+
+def waveform(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
+    history = runtime.processor.get_audio_history()
+    if history is None:
+        return None
+    _, low, high = waveform_envelope(history, cols)
+    bottom = (1 - np.clip(low, -1, 1)) / 2 * (rows - 1)
+    top = (1 - np.clip(high, -1, 1)) / 2 * (rows - 1)
+    height = np.arange(rows)[:, None]
+    image = np.tile(BACKGROUND, (rows, len(low), 1))
+    image[rows // 2] = (50, 60, 70)
+    image[(height >= np.floor(top)) & (height <= np.floor(bottom))] = (90, 220, 140)
+    return image
 
 
 def spectrogram(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
-    snapshot = runtime.processor.get_latest_snapshot()
-    if snapshot is None:
+    history = runtime.processor.get_audio_history()
+    if history is None:
         return None
-    power_db = 10.0 * np.log10(snapshot[1][0] + 1e-10)
-    unit = (power_db - (power_db.max() - DYNAMIC_RANGE_DB)) / DYNAMIC_RANGE_DB
-    return heat_to_rgb(unit[::-1])
+    return level_rgb(spectrum_db(history, cols)[::-1], SPECTRUM_DB_RANGE, SPECTRUM_COLORMAP)
 
 
 def camera(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
@@ -164,6 +182,7 @@ def hidden(runtime: GraphRuntime, rows: int, cols: int) -> np.ndarray | None:
 
 
 VIEWS: dict[str, View] = {
+    "cochlea": cochlea,
     "waveform": waveform,
     "spectrogram": spectrogram,
     "canvas": canvas,

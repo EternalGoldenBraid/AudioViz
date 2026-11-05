@@ -138,6 +138,12 @@ def test_landscape_toggle_uses_fixed_db_scale_new_generations_and_read_only_canv
         num_samples_in_buffer=1000, frame_counter=1,
         get_latest_snapshot=lambda: (audio, [spectrum, spectrum]),
     )
+    from audioviz.audio_processing.history import AudioHistory, TimedHistory
+    processor.get_audio_history = lambda: AudioHistory(
+        sample_rate=1000, sample_end=1000, waveform=audio.mean(axis=1),
+        spectrum=TimedHistory(spectrum, np.arange(20) * 50),
+        frequencies=processor.freq_bins, mel_power=processor.n_mels is not None, cochlea=None,
+    )
     view = SpectrogramVisualizer(
         processor, colormaps["viridis"], Normalize(-80, 0), .1,
     )

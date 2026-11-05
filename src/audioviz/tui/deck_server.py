@@ -24,6 +24,7 @@ from audioviz.tui.deck_devices import device_controls
 from audioviz.tui.graph_runtime import format_resolution, parse_resolution
 from audioviz.tui.mixer import CONTROLS, Control
 from audioviz.tui.settings import RESOLUTIONS
+from audioviz.sources.orchestrator import AUDIO_MODELS
 
 MAX_PREVIEW_PX = 160  # default longest side of a served view; the TUI may ask for up to MAX_PREVIEW_LIMIT
 MAX_PREVIEW_LIMIT = 640
@@ -143,6 +144,11 @@ class DeckServer:
             self.controls[GRID_CONTROL] = grid_control(window.resolution)
         if getattr(window, "processor", None) is not None:
             self.controls.update(device_controls(window, query_audio_devices()))
+            self.controls["audio model"] = Control(
+                "audio model", 0, 0, lambda target: target.orchestrator.audio_model,
+                lambda target, value: target.orchestrator.set_audio_model(value),
+                choices=AUDIO_MODELS,
+            )
         for name, widget in (windows or {}).items():
             self.controls[f"{name} window"] = window_control(name, widget)
         self.server = QLocalServer()

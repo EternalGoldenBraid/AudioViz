@@ -4,11 +4,10 @@ import threading
 from dataclasses import replace
 from time import monotonic
 
-from audioviz.audio_processing.cochlea import Cochlea
 from audioviz.sources.camera import CameraFrameSourceConfig
 from audioviz.engine import RippleEngine
 from audioviz.sources.audio import AudioSourceConfig
-from audioviz.sources.orchestrator import RippleSourceOrchestrator, RippleSourceOrchestratorConfig
+from audioviz.sources.orchestrator import AUDIO_MODELS, RippleSourceOrchestrator, RippleSourceOrchestratorConfig
 from audioviz.sources.synthetic import SyntheticSourceConfig
 from audioviz.tui.audio_out import AudioOut
 from audioviz.tui.camera_feed import CameraFeed
@@ -17,7 +16,6 @@ from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE, AudioFeed, AudioFra
 DEFAULT_RESOLUTION = 128
 STEP_INTERVAL = BLOCK_SIZE / SAMPLE_RATE
 MIN_SIDE = 8
-AUDIO_MODELS = ("spectral", "cochlea")
 
 
 def parse_resolution(value: "int | str | tuple[int, int]") -> tuple[int, int]:
@@ -48,8 +46,6 @@ class GraphRuntime:
         if audio_model not in AUDIO_MODELS:
             raise ValueError(f"audio_model must be one of {AUDIO_MODELS}")
         self.feed = feed or AudioFeed()
-        if audio_model == "cochlea":
-            self.feed.processor.cochlea = Cochlea(SAMPLE_RATE)
         self.out = AudioOut()
         self.camera = CameraFeed()
         has_camera = camera and self.camera.open()
@@ -63,6 +59,8 @@ class GraphRuntime:
             synthetic=SyntheticSourceConfig(enabled=False),
             camera_frame=CameraFrameSourceConfig(enabled=has_camera),
         ))
+        if audio_model == "cochlea":
+            self.orchestrator.set_audio_model(audio_model)
 
     def _build(self, resolution: "int | str | tuple[int, int]", *, config: RippleSourceOrchestratorConfig, damping: float = 0.995, speed: float = 1.0) -> None:
         grid = parse_resolution(resolution)
@@ -116,18 +114,17 @@ class GraphRuntime:
 
     @property
     def audio_model(self) -> str:
-        return "cochlea" if self.processor.cochlea is not None else "spectral"
+        return self.orchestrator.audio_model
 
     def set_audio_model(self, model: str) -> None:
-        """Changing representation rebuilds graph weights and mutes playback."""
+        """Select the process-owned representation and mute local playback."""
         if model not in AUDIO_MODELS:
             raise ValueError(f"audio_model must be one of {AUDIO_MODELS}")
         with self.lock:
             if model == self.audio_model:
                 return
+            self.orchestrator.set_audio_model(model)
             self.out.set_mode("off")
-            self.processor.cochlea = Cochlea(SAMPLE_RATE) if model == "cochlea" else None
-            self.rebuild(self.resolution)
 
     def step(self) -> None:
         started = monotonic()
@@ -140,9 +137,6 @@ class GraphRuntime:
             if cochlea is not None:
                 blocks = self.feed.pump()
             self.orchestrator.correct_from_observations()
-            source = self.orchestrator.audio_source
-            if cochlea is not None and blocks and source.enabled and source.observation_gain > 0:
-                cochlea.correct_from_graph(self.orchestrator.audio_prediction / source.observation_gain)
             self._sound(blocks)
         self.step_ms = (monotonic() - started) * 1000.0
 

@@ -1,100 +1,143 @@
-<mxfile host="Electron" modified="2026-11-05T15:00:00Z" version="26.0.0">
+<mxfile host="Electron" modified="2026-11-05T18:24:09Z" version="26.0.0">
   <diagram id="sample-loop" name="Sample loop">
-    <mxGraphModel grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1120" pageHeight="720" math="0" shadow="0" background="#ffffff">
+    <mxGraphModel grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1120" pageHeight="720" math="0" shadow="0" background="#111827">
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="title" value="One sample. One prediction. One residual." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=30;fontStyle=1;fontColor=#172b4d;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+        <mxCell id="title" value="One sample. One prediction. One residual." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=30;fontStyle=1;fontColor=#e5edf8;strokeColor=none;fillColor=none;" vertex="1" parent="1">
           <mxGeometry x="40" y="20" width="1040" height="50" as="geometry"/>
         </mxCell>
-        <mxCell id="subtitle" value="Synthesize first. Hear the sample. Correct the states. Repeat at 22,050 Hz." style="text;html=1;whiteSpace=wrap;align=left;fontSize=17;fontColor=#52647c;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+        <mxCell id="subtitle" value="Synthesize first. Hear the sample. Correct the states. Repeat at 22,050 Hz." style="text;html=1;whiteSpace=wrap;align=left;fontSize=17;fontColor=#a8b7cc;strokeColor=none;fillColor=none;" vertex="1" parent="1">
           <mxGeometry x="40" y="80" width="1040" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="state" value="&lt;b&gt;Persistent state&lt;/b&gt;&lt;br&gt;&lt;br&gt;16 positions x&lt;br&gt;16 quadratures q" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="state" value="&lt;b&gt;Persistent state&lt;/b&gt;&lt;br&gt;&lt;br&gt;16 positions x&lt;br&gt;16 quadratures q" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#222b3a;strokeColor=#91a1b8;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="40" y="170" width="190" height="110" as="geometry"/>
         </mxCell>
-        <mxCell id="dynamics" value="&lt;b&gt;Advance dynamics&lt;/b&gt;&lt;br&gt;&lt;br&gt;Exact damped rotation&lt;br&gt;No new audio used" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="dynamics" value="&lt;b&gt;Advance dynamics&lt;/b&gt;&lt;br&gt;&lt;br&gt;Exact damped rotation&lt;br&gt;No new audio used" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#172f4f;strokeColor=#6c9bcf;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="290" y="170" width="220" height="110" as="geometry"/>
         </mxCell>
-        <mxCell id="sum" value="&lt;b&gt;Sum positions&lt;/b&gt;&lt;br&gt;&lt;br&gt;One waveform&lt;br&gt;Unit weights" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="sum" value="&lt;b&gt;Sum positions&lt;/b&gt;&lt;br&gt;&lt;br&gt;One waveform&lt;br&gt;Unit weights" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#172f4f;strokeColor=#6c9bcf;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="580" y="170" width="180" height="110" as="geometry"/>
         </mxCell>
-        <mxCell id="prediction" value="&lt;b&gt;Predicted sample&lt;/b&gt;&lt;br&gt;&lt;br&gt;s_hat = sum(x_prior)&lt;br&gt;LISTEN: prediction" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="prediction" value="&lt;b&gt;Predicted sample&lt;/b&gt;&lt;br&gt;&lt;br&gt;s_hat = sum(x_prior)&lt;br&gt;LISTEN: prediction" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#172f4f;strokeColor=#6c9bcf;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="840" y="170" width="220" height="110" as="geometry"/>
         </mxCell>
-        <mxCell id="correction" value="&lt;b&gt;Correct positions&lt;/b&gt;&lt;br&gt;&lt;br&gt;x += (eta / N) e&lt;br&gt;q stays unchanged" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="correction" value="&lt;b&gt;Correct positions&lt;/b&gt;&lt;br&gt;&lt;br&gt;x += (eta / N) e&lt;br&gt;q stays unchanged" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#42351b;strokeColor=#dfb768;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="290" y="400" width="220" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="raw" value="&lt;b&gt;Raw sample&lt;/b&gt;&lt;br&gt;&lt;br&gt;Microphone: s&lt;br&gt;LISTEN: input" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="raw" value="&lt;b&gt;Raw sample&lt;/b&gt;&lt;br&gt;&lt;br&gt;Microphone: s&lt;br&gt;LISTEN: input" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#153a31;strokeColor=#6fbc9e;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="580" y="400" width="180" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="error" value="&lt;b&gt;Raw prediction error&lt;/b&gt;&lt;br&gt;&lt;br&gt;e = s - s_hat&lt;br&gt;LISTEN: error" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="error" value="&lt;b&gt;Raw prediction error&lt;/b&gt;&lt;br&gt;&lt;br&gt;e = s - s_hat&lt;br&gt;LISTEN: error" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#42252e;strokeColor=#e59398;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="840" y="400" width="220" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="next-label" value="next sample" style="text;html=1;whiteSpace=wrap;align=center;fontSize=15;fontColor=#52647c;strokeColor=none;fillColor=#ffffff;" vertex="1" parent="1">
+        <mxCell id="next-label" value="next sample" style="text;html=1;whiteSpace=wrap;align=center;fontSize=15;fontColor=#a8b7cc;strokeColor=none;fillColor=#111827;" vertex="1" parent="1">
           <mxGeometry x="50" y="320" width="160" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="footer" value="&lt;b&gt;The residual corrects a model, not a preprocessed spectrum.&lt;/b&gt;&lt;br&gt;Saved prediction + saved error = raw input, sample for sample." style="text;html=1;whiteSpace=wrap;align=left;fontSize=18;fontColor=#172b4d;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+        <mxCell id="footer" value="&lt;b&gt;The residual corrects a model, not a preprocessed spectrum.&lt;/b&gt;&lt;br&gt;Saved prediction + saved error = raw input, sample for sample." style="text;html=1;whiteSpace=wrap;align=left;fontSize=18;fontColor=#e5edf8;strokeColor=none;fillColor=none;" vertex="1" parent="1">
           <mxGeometry x="40" y="630" width="1040" height="60" as="geometry"/>
         </mxCell>
-        <mxCell id="e-state" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#476c9b;" edge="1" source="state" target="dynamics" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-dynamics" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#476c9b;" edge="1" source="dynamics" target="sum" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-sum" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#476c9b;" edge="1" source="sum" target="prediction" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-prediction" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#476c9b;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="prediction" target="error" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-raw" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#548248;" edge="1" source="raw" target="error" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-prior" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#476c9b;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="dynamics" target="correction" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-error" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=3;strokeColor=#b85450;exitX=0.5;exitY=1;entryX=0.5;entryY=1;" edge="1" source="error" target="correction" parent="1">
+        <mxCell id="e-state" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#7dafdf;" edge="1" source="state" target="dynamics" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-dynamics" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#7dafdf;" edge="1" source="dynamics" target="sum" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-sum" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#7dafdf;" edge="1" source="sum" target="prediction" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-prediction" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#7dafdf;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="prediction" target="error" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-raw" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#a1d7be;" edge="1" source="raw" target="error" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-prior" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#7dafdf;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="dynamics" target="correction" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-error" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=3;strokeColor=#e59398;exitX=0.5;exitY=1;entryX=0.5;entryY=1;" edge="1" source="error" target="correction" parent="1">
           <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="950" y="580"/><mxPoint x="400" y="580"/></Array></mxGeometry>
         </mxCell>
-        <mxCell id="e-next" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#666666;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="correction" target="state" parent="1">
+        <mxCell id="e-next" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#91a1b8;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="correction" target="state" parent="1">
           <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="20" y="460"/><mxPoint x="20" y="225"/></Array></mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
   <diagram id="graph-boundary" name="Graph boundary">
-    <mxGraphModel grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1120" pageHeight="720" math="0" shadow="0" background="#ffffff">
+    <mxGraphModel grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1120" pageHeight="720" math="0" shadow="0" background="#111827">
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="title" value="Two clocks. One explicit boundary." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=30;fontStyle=1;fontColor=#172b4d;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+        <mxCell id="title" value="Two clocks. One explicit boundary." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=30;fontStyle=1;fontColor=#e5edf8;strokeColor=none;fillColor=none;" vertex="1" parent="1">
           <mxGeometry x="40" y="20" width="1040" height="50" as="geometry"/>
         </mxCell>
-        <mxCell id="subtitle" value="Audio inference runs per sample. Graph exchange happens once per nonempty tick." style="text;html=1;whiteSpace=wrap;align=left;fontSize=17;fontColor=#52647c;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+        <mxCell id="subtitle" value="Standalone driver order shown. Qt processes audio on its own timer before graph target consumption." style="text;html=1;whiteSpace=wrap;align=left;fontSize=17;fontColor=#a8b7cc;strokeColor=none;fillColor=none;" vertex="1" parent="1">
           <mxGeometry x="40" y="80" width="1040" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="graph-prior" value="&lt;b&gt;1  Save expectation&lt;/b&gt;&lt;br&gt;&lt;br&gt;Canvas prior + audio hidden&lt;br&gt;Graph predicts 32 states: g" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="graph-prior" value="&lt;b&gt;1  Save expectation&lt;/b&gt;&lt;br&gt;&lt;br&gt;Canvas prior + audio hidden&lt;br&gt;Graph predicts 32 states: g" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#322646;strokeColor=#b59adb;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="40" y="170" width="280" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="audio" value="&lt;b&gt;2  Process audio&lt;/b&gt;&lt;br&gt;&lt;br&gt;Predict, hear, correct&lt;br&gt;Repeat for every sample" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="audio" value="&lt;b&gt;2  Process audio&lt;/b&gt;&lt;br&gt;&lt;br&gt;Predict, hear, correct&lt;br&gt;Repeat for every sample" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#172f4f;strokeColor=#6c9bcf;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="400" y="170" width="280" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="target" value="&lt;b&gt;3  Freeze state target&lt;/b&gt;&lt;br&gt;&lt;br&gt;y = gain x [x1, q1, ...]&lt;br&gt;After the final audio block" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="target" value="&lt;b&gt;3  Freeze state target&lt;/b&gt;&lt;br&gt;&lt;br&gt;y = gain x [x1, q1, ...]&lt;br&gt;After the final audio block" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#153a31;strokeColor=#6fbc9e;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="760" y="170" width="300" height="120" as="geometry"/>
         </mxCell>
-        <mxCell id="infer" value="&lt;b&gt;4  Infer in the graph&lt;/b&gt;&lt;br&gt;&lt;br&gt;State error revises hidden&lt;br&gt;and canvas states&lt;br&gt;Optionally learn weights" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="infer" value="&lt;b&gt;4  Infer in the graph&lt;/b&gt;&lt;br&gt;&lt;br&gt;State error revises hidden&lt;br&gt;and canvas states&lt;br&gt;Optionally learn weights" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#322646;strokeColor=#b59adb;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="760" y="440" width="300" height="140" as="geometry"/>
         </mxCell>
-        <mxCell id="feedback" value="&lt;b&gt;5  Correct live state&lt;/b&gt;&lt;br&gt;&lt;br&gt;z += beta (g / gain - z)&lt;br&gt;Keep the frozen y unchanged&lt;br&gt;Use the saved expectation g" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="feedback" value="&lt;b&gt;5  Correct live state&lt;/b&gt;&lt;br&gt;&lt;br&gt;z += beta (g / gain - z)&lt;br&gt;Keep the frozen y unchanged&lt;br&gt;Use the saved expectation g" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#42351b;strokeColor=#dfb768;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="400" y="440" width="280" height="140" as="geometry"/>
         </mxCell>
-        <mxCell id="next" value="&lt;b&gt;Next audio sample&lt;/b&gt;&lt;br&gt;&lt;br&gt;Advance the corrected state&lt;br&gt;Sum positions to predict&lt;br&gt;No waveform is rewritten" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;fontSize=18;fontColor=#172b4d;" vertex="1" parent="1">
+        <mxCell id="next" value="&lt;b&gt;Next audio sample&lt;/b&gt;&lt;br&gt;&lt;br&gt;Advance the corrected state&lt;br&gt;Sum positions to predict&lt;br&gt;No waveform is rewritten" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#172f4f;strokeColor=#6c9bcf;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
           <mxGeometry x="40" y="440" width="280" height="140" as="geometry"/>
         </mxCell>
-        <mxCell id="saved-label" value="g is saved before this batch is observed" style="text;html=1;whiteSpace=wrap;align=center;fontSize=16;fontColor=#79579a;strokeColor=none;fillColor=#ffffff;" vertex="1" parent="1">
+        <mxCell id="saved-label" value="g is saved before this batch is observed" style="text;html=1;whiteSpace=wrap;align=center;fontSize=16;fontColor=#c9afe9;strokeColor=none;fillColor=#111827;" vertex="1" parent="1">
           <mxGeometry x="180" y="325" width="410" height="30" as="geometry"/>
         </mxCell>
-        <mxCell id="footer" value="&lt;b&gt;Raw error constrains the sound. State error connects the representation to the graph.&lt;/b&gt;&lt;br&gt;No new blocks: no audio-state feedback and no replay. Zero gain: skip feedback." style="text;html=1;whiteSpace=wrap;align=left;fontSize=18;fontColor=#172b4d;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+        <mxCell id="footer" value="&lt;b&gt;Raw error constrains the sound. State error connects the representation to the graph.&lt;/b&gt;&lt;br&gt;No new blocks: no audio-state feedback and no replay. Zero gain: skip feedback." style="text;html=1;whiteSpace=wrap;align=left;fontSize=18;fontColor=#e5edf8;strokeColor=none;fillColor=none;" vertex="1" parent="1">
           <mxGeometry x="40" y="630" width="1040" height="60" as="geometry"/>
         </mxCell>
-        <mxCell id="e-1-2" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#666666;" edge="1" source="graph-prior" target="audio" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-2-3" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#476c9b;" edge="1" source="audio" target="target" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-3-4" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#548248;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="target" target="infer" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-4-5" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#666666;" edge="1" source="infer" target="feedback" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-5-next" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#476c9b;" edge="1" source="feedback" target="next" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
-        <mxCell id="e-saved" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#9673a6;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="graph-prior" target="feedback" parent="1">
+        <mxCell id="e-1-2" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#91a1b8;" edge="1" source="graph-prior" target="audio" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-2-3" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#7dafdf;" edge="1" source="audio" target="target" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-3-4" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#a1d7be;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="target" target="infer" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-4-5" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#91a1b8;" edge="1" source="infer" target="feedback" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-5-next" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#7dafdf;" edge="1" source="feedback" target="next" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e-saved" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#b59adb;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="graph-prior" target="feedback" parent="1">
           <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="180" y="380"/><mxPoint x="540" y="380"/></Array></mxGeometry>
         </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="shared-views" name="Shared views">
+    <mxGraphModel grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1120" pageHeight="720" math="0" shadow="0" background="#111827">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="shared-title" value="One process. Several views." style="text;html=1;whiteSpace=wrap;align=left;fontSize=30;fontStyle=1;fontColor=#e5edf8;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1040" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-subtitle" value="The model owns the state. Views read it; controls address its owner." style="text;html=1;whiteSpace=wrap;align=left;fontSize=18;fontColor=#a8b7cc;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="1040" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-process" value="Main application process" style="swimlane;startSize=45;rounded=1;html=1;whiteSpace=wrap;fillColor=#172337;swimlaneFillColor=#111827;strokeColor=#586a83;fontColor=#e5edf8;fontSize=21;fontStyle=1;align=left;spacingLeft=20;" vertex="1" parent="1">
+          <mxGeometry x="40" y="140" width="1040" height="340" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-audio" value="&lt;b&gt;Audio processor&lt;/b&gt;&lt;br&gt;&lt;br&gt;Raw waveform + spectrum&lt;br&gt;One cochlea, sample by sample" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#172f4f;strokeColor=#6c9bcf;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="shared-process">
+          <mxGeometry x="40" y="80" width="270" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-graph" value="&lt;b&gt;Graph orchestrator&lt;/b&gt;&lt;br&gt;&lt;br&gt;State targets and expectations&lt;br&gt;Owns model selection" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#322646;strokeColor=#b59adb;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="shared-process">
+          <mxGeometry x="380" y="80" width="270" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-qt" value="&lt;b&gt;Qt / projector&lt;/b&gt;&lt;br&gt;&lt;br&gt;Full-resolution audio plots&lt;br&gt;Shared model selector" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#153a31;strokeColor=#6fbc9e;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="shared-process">
+          <mxGeometry x="730" y="80" width="270" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-history" value="&lt;b&gt;Read-only audio history&lt;/b&gt;&lt;br&gt;Bounded arrays + one sample clock" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#222b3a;strokeColor=#91a1b8;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="shared-process">
+          <mxGeometry x="340" y="250" width="360" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-junction" value="" style="ellipse;fillColor=#a1d7be;strokeColor=#a1d7be;" vertex="1" parent="shared-process">
+          <mxGeometry x="862" y="279" width="6" height="6" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-tablet" value="&lt;b&gt;Attached TUI / tablet&lt;/b&gt;&lt;br&gt;&lt;br&gt;Thumbnails via deck socket&lt;br&gt;Controls the same orchestrator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#153a31;strokeColor=#6fbc9e;strokeWidth=2;fontSize=18;fontColor=#e5edf8;" vertex="1" parent="1">
+          <mxGeometry x="770" y="550" width="270" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-note" value="&lt;b&gt;Same samples. Same states. Same time window.&lt;/b&gt;&lt;br&gt;&lt;br&gt;Only the rendering resolution changes.&lt;br&gt;Opening, hiding or resizing a view never advances the model." style="text;html=1;whiteSpace=wrap;align=left;fontSize=19;fontColor=#e5edf8;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="550" width="660" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="shared-exchange" style="edgeStyle=orthogonalEdgeStyle;html=1;startArrow=block;endArrow=block;strokeWidth=2;strokeColor=#b59adb;" edge="1" source="shared-audio" target="shared-graph" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="shared-record" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#7dafdf;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" edge="1" source="shared-audio" target="shared-history" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="shared-read" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeWidth=2;strokeColor=#a1d7be;" edge="1" source="shared-history" target="shared-junction" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="shared-render-qt" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#a1d7be;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" edge="1" source="shared-junction" target="shared-qt" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="shared-render-tui" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeWidth=2;strokeColor=#a1d7be;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="shared-junction" target="shared-tablet" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
       </root>
     </mxGraphModel>
   </diagram>

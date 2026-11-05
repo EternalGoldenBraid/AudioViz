@@ -68,7 +68,7 @@ def default_layout(width: int, height: int, mixer_ids: list[str], settings_ids: 
     layout = {}
     for row, y, h in ((("canvas", "camera_1", "visual_prediction", "visual_error"), 0, first),
                       (("spectrogram", "waveform", "prediction", "error"), first, second),
-                      (("hidden", "camera_2", "log"), first + second, rest - first - second)):
+                      (("cochlea", "hidden", "camera_2", "log"), first + second, rest - first - second)):
         columns = {2: [0, 2, 4], 3: [0, 1, 2, 4]}.get(len(row), range(len(row) + 1))  # a short row spans whole columns
         for i, name in enumerate(row):
             layout[name] = Placement(edges[columns[i]], y, edges[columns[i + 1]] - edges[columns[i]], h)
@@ -109,6 +109,14 @@ class ViewTile(Static, can_focus=True):
     def set_view(self, view: str) -> None:
         self.view = view
         self.border_title = view
+        self.border_subtitle = self.view_caption
+
+    @property
+    def view_caption(self) -> str:
+        return {
+            "cochlea": "index / time > | -80..0 dB",
+            "waveform": "fixed +/-1 | time >",
+        }.get(self.view, "")
 
     def refresh_view(self) -> None:
         size = self.content_size
@@ -122,7 +130,7 @@ class ViewTile(Static, can_focus=True):
         else:
             image = views_module.VIEWS[self.view](self.runtime, *pixels)
         if image is None:
-            self.update(f"{self.view}: waiting for data")
+            self.update("Select audio model: cochlea; waiting for audio" if self.view == "cochlea" else f"{self.view}: waiting for data")
             return
         self.update(render_cells(image, size.height, size.width, mode))
 
@@ -357,7 +365,7 @@ class AudioVizApp(App):
             styles.height = stage.height if zoomed else placement.height
             styles.opacity = 1.0 if zoomed else placement.opacity
             styles.layer = f"z{depth}"
-            widget.border_subtitle = self.page_label(name)
+            widget.border_subtitle = self.page_label(name) or (widget.view_caption if isinstance(widget, ViewTile) else "")
         self.set_mode(self.mode)
 
     def page_of(self, name: str) -> tuple[list[str], dict[str, int]] | None:
