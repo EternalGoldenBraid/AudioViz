@@ -381,17 +381,18 @@ def test_dd_hides_a_tile_u_restores_it_and_the_tile_list_hides_whole_groups(tmp_
     from audioviz.tui.tile_list import TileList
 
     app_module.SEQUENCE_SECONDS = 30.0
+    default = set(app_module.HIDDEN_BY_DEFAULT)
     async def scenario(app, pilot):
         app.query_one("#canvas").focus()
         await pilot.press("d", "x")  # `d` followed by another key is not a hide
-        assert app.hidden == set()
+        assert app.hidden == default
         app.query_one("#canvas").focus()
         await pilot.press("d", "d")  # the pilot idles about 2 s per key, so the sequence timeout is widened above
-        assert app.hidden == {"canvas"} and not app.query_one("#canvas").display
+        assert app.hidden == default | {"canvas"} and not app.query_one("#canvas").display
         assert app.focused.id != "canvas"  # focus moved to a tile that is still shown
 
         await pilot.press("u")
-        assert app.hidden == set() and app.focused.id == "canvas"
+        assert app.hidden == default and app.focused.id == "canvas"
 
         await pilot.press("T")  # the tile list: the mixer section row toggles all its knobs
         assert isinstance(app.screen, TileList)
@@ -401,7 +402,7 @@ def test_dd_hides_a_tile_u_restores_it_and_the_tile_list_hides_whole_groups(tmp_
         assert app.query_one("#canvas").display
 
         await pilot.press("u")  # one undo brings back everything the list hid
-        assert app.hidden == set()
+        assert app.hidden == default
 
         app.hide_tiles([n for n in app.placements if n != "log"])
         app.hide_tiles(["log"])
@@ -425,5 +426,11 @@ def test_a_sensor_tile_is_shown_only_while_its_sensor_is_enabled(tmp_path):
         sensor.enabled = True  # the graph now uses it; the tile appears without any key press
         app.apply_layout()
         assert app.query_one("#camera_2").display
-        assert app.hidden == set()  # showing is the sensor's doing, not the user's hide list
+        assert not app.query_one("#camera_2_error").display  # camera 2's other views start hidden until the tile list shows them
+        app.hidden.discard("camera_2_error")
+        app.apply_layout()
+        assert app.query_one("#camera_2_error").display
+        sensor.enabled = False
+        app.apply_layout()
+        assert not app.query_one("#camera_2_error").display  # and they follow their sensor off again
     _headless(tmp_path, scenario)

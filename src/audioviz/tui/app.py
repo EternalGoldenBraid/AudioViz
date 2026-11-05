@@ -53,6 +53,7 @@ class Placement:
 
 KNOB_HEIGHT = 3
 MIXER_PAGE = 6  # knobs shown at once in the mixer group
+HIDDEN_BY_DEFAULT = ("camera_2_prediction", "camera_2_error")  # sit over camera_2 until shown from the tile list
 
 
 def knob_id(name: str) -> str:
@@ -72,6 +73,8 @@ def default_layout(width: int, height: int, mixer_ids: list[str], settings_ids: 
         columns = {2: [0, 2, 4], 3: [0, 1, 2, 4]}.get(len(row), range(len(row) + 1))  # a short row spans whole columns
         for i, name in enumerate(row):
             layout[name] = Placement(edges[columns[i]], y, edges[columns[i + 1]] - edges[columns[i]], h)
+    for name in HIDDEN_BY_DEFAULT:
+        layout[name] = Placement(**vars(layout["camera_2"]))
     per_column = bottom // KNOB_HEIGHT
     for ids, x0, x1, slots in ((mixer_ids, 0, edges[2], MIXER_PAGE), (settings_ids, edges[2], width, len(settings_ids))):
         columns = -(-slots // per_column)
@@ -243,7 +246,7 @@ class AudioVizApp(App):
         self.group_focus: list[str] = []  # non-empty while a whole group is the focused node
         self.groups: list[list[str]] = [list(self.mixer_ids), list(self.settings_ids)]  # move, lift and fade together
         self.selection: list[str] = []  # being collected in VISUAL mode
-        self.hidden: set[str] = set()
+        self.hidden: set[str] = set(HIDDEN_BY_DEFAULT)
         self.hide_history: list[list[str]] = []  # what each hide took away, so `u` can bring it back
         self.pending_keys: list[str] = []  # the first keys of a multi-key binding such as `d d`
         self.stack = list(self.placements)  # bottom -> top
@@ -381,8 +384,13 @@ class AudioVizApp(App):
         return {i: self.runtime.show_camera if s is orchestrator.camera_source else s.enabled
                 for i, s in orchestrator.sensors.items()}
 
+    def sensor_of(self, name: str) -> str | None:
+        """The sensor a tile is named after: `camera_2` and `camera_2_error` both belong to `camera 2`."""
+        return next((s for s in self.sensors_enabled() if name == s.replace(" ", "_") or name.startswith(s.replace(" ", "_") + "_")), None)
+
     def visible(self, name: str) -> bool:
-        if name in self.hidden or not self.sensors_enabled().get(name.replace("_", " "), True):
+        sensor = self.sensor_of(name)
+        if name in self.hidden or (sensor is not None and not self.sensors_enabled()[sensor]):
             return False
         paged = self.page_of(name)
         if paged is None:
@@ -966,6 +974,7 @@ class AudioVizApp(App):
         stack = [n for n in data.get("stack", []) if n in self.placements]
         self.stack = stack + [n for n in self.placements if n not in stack]
         hidden = {n for n in data.get("hidden", []) if n in self.placements}
+        hidden |= {n for n in HIDDEN_BY_DEFAULT if n not in data.get("placements", {})}  # tiles the save predates
         self.hidden = hidden if len(hidden) < len(self.placements) else set()
         if "groups" in data and same_tiles:
             groups = [[n for n in g if n in self.placements] for g in data["groups"]]
