@@ -20,7 +20,7 @@ import numpy as np
 from PyQt5.QtNetwork import QLocalServer
 
 from audioviz.tui import views
-from audioviz.tui.deck_devices import device_controls
+from audioviz.tui.deck_devices import audio_controls, device_controls
 from audioviz.tui.graph_runtime import format_resolution, parse_resolution
 from audioviz.tui.mixer import CONTROLS, Control
 from audioviz.tui.settings import RESOLUTIONS
@@ -189,6 +189,8 @@ class DeckServer:
                 control.set(self.target, request["value"])
         elif op == "save":
             saved = self.save()
+        elif op == "rescan":
+            self.rescan_devices()
         elif op != "controls":
             raise ValueError(f"unknown op {op!r}")
         reply = {
@@ -198,6 +200,14 @@ class DeckServer:
         if saved:
             reply["saved"] = saved
         return reply
+
+    def rescan_devices(self) -> None:
+        """Lists audio devices plugged in since start (cameras are listed live); open audio streams are reopened."""
+        processor = getattr(self.target.window, "processor", None)
+        if processor is None:
+            return
+        processor.rescan_devices()
+        self.controls.update(audio_controls(processor, query_audio_devices()))
 
     def sensors(self) -> list:
         orchestrator = self.target.orchestrator

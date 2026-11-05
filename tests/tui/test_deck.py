@@ -246,3 +246,24 @@ def test_the_window_serves_the_tui_views_downsampled_and_the_client_decodes_them
     assert canvas.dtype == "uint8" and canvas.shape == (100, 134, 3)  # 300x400 strided by 3
     assert client.previews.keys() == {"canvas"}
     assert client.wanted == {"canvas": (40, 80)}  # asking again schedules the next round only for what tiles show
+
+
+def test_rescan_relists_audio_devices_plugged_in_after_start(tmp_path, monkeypatch):
+    from audioviz.tui import deck_devices, deck_server
+
+    listing = {"devices": DEVICES[:2]}
+    monkeypatch.setattr(deck_server, "query_audio_devices", lambda: listing["devices"])
+    monkeypatch.setattr(deck_devices, "camera_choices", lambda: ())
+    processor = FakeProcessor()
+    processor.rescanned = 0
+    processor.rescan_devices = lambda: setattr(processor, "rescanned", processor.rescanned + 1)
+    window = SimpleNamespace(
+        engine=FakeEngine(), source_orchestrator=SimpleNamespace(camera_source=SimpleNamespace(camera_index=0)),
+        processor=processor)
+    server = DeckServer(window, tmp_path / "a.sock", tmp_path / "deck.json")
+    server.controls = {"audio in": server.controls["audio in"]}  # the fake window has no orchestrator for the other knobs
+    assert server.controls["audio in"].choices == ("1: usb mic",)
+    listing["devices"] = DEVICES  # a microphone is plugged in
+    server.handle({"op": "rescan"})
+    assert processor.rescanned == 1
+    assert server.controls["audio in"].choices == ("1: usb mic", "2: busy mic", "3: pro mic")
