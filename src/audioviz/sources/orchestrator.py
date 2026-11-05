@@ -16,6 +16,7 @@ from audioviz.sources.camera import CameraFrameSource, CameraFrameSourceConfig
 from audioviz.sources.synthetic import SyntheticRippleSource, SyntheticSourceConfig
 from audioviz.transforms.prediction_error import PredictionErrorTransform
 from audioviz.transforms.prediction_error import PredictionErrorTransformConfig
+from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
 
 
 @dataclass(frozen=True)
@@ -66,9 +67,11 @@ class RippleSourceOrchestrator:
             if visual_readout is None
             else visual_readout
         )
+        cochlea = getattr(processor, "cochlea", None)
         self.audio_readout = (
             PredictiveCodingAudioReadout(
-                canvas_shape=self.canvas_shape, config=config.visual_pathway
+                canvas_shape=self.canvas_shape, config=config.visual_pathway,
+                observation_size=cochlea.observation_size if cochlea is not None else AUDIO_SPECTRAL_BANDS,
             )
             if processor is not None else None
         )

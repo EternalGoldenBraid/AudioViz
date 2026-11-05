@@ -81,12 +81,16 @@ class AudioRippleSource:
         if not self.has_new_observation():
             return None
         frame = self.processor.frame_counter
-        evidence = spectral_observation(
-            self.processor.spectrogram_buffers,
-            window_sum=float(np.sum(self.processor.stft_window)),
-            mel_power=self.processor.n_mels is not None,
-            gain=self.observation_gain,
-        )
+        cochlea = getattr(self.processor, "cochlea", None)
+        if cochlea is not None:
+            evidence = cochlea.last_block.state * self.observation_gain
+        else:
+            evidence = spectral_observation(
+                self.processor.spectrogram_buffers,
+                window_sum=float(np.sum(self.processor.stft_window)),
+                mel_power=self.processor.n_mels is not None,
+                gain=self.observation_gain,
+            )
         self._last_observation_frame = frame
         self._last_observation_time = monotonic()
         self._latest_observation = evidence
@@ -96,7 +100,13 @@ class AudioRippleSource:
         return self._latest_observation if self.has_recent_observation() else None
 
     def has_new_observation(self) -> bool:
-        return self.enabled and self.processor.frame_counter > self._last_observation_frame
+        if not self.enabled:
+            return False
+        cochlea = getattr(self.processor, "cochlea", None)
+        return (
+            self.processor.frame_counter > self._last_observation_frame
+            and (cochlea is None or cochlea.last_block is not None)
+        )
 
     def has_recent_observation(self) -> bool:
         return (
@@ -175,6 +185,22 @@ class AudioRippleSource:
         if self.processor is None:
             return ()
         if self.predictive:
+            cochlea = getattr(self.processor, "cochlea", None)
+            if cochlea is not None:
+                return (
+                    SourceControl("signal_level", "Signal Level", "0.00", kind="text"),
+                    SourceControl("observation_status", "Cochlea Evidence", "waiting", kind="text"),
+                    SourceControl("spectral_bands", "Cochlea States (signed x, q)",
+                                  cochlea.observation_size, kind="text", tooltip=(
+                                      "Interleaved position and quadrature, ordered from low to high frequency. "
+                                      "The waveform and spectrogram remain diagnostic views."
+                                  )),
+                    SourceControl("observation_gain", "Audio Evidence Gain", self.observation_gain,
+                                  minimum=0.0, maximum=100.0, step=0.1, tooltip=(
+                                      "Scales oscillator states at the graph boundary, not the raw audio. "
+                                      "Zero disables graph feedback into the cochlea."
+                                  )),
+                )
             return (
                 SourceControl("signal_level", "Signal Level", "0.00", kind="text", tooltip=(
                     "Level of the latest input block. Predictive evidence is not suppressed by the signal or peak gates."

@@ -7,6 +7,7 @@ from functools import partial
 import librosa as lr
 from loguru import logger
 
+from audioviz.audio_processing.cochlea import Cochlea
 from audioviz.utils.signal_processing import perceptual_soft_threshold
 
 def get_stft_spectrogram(segment: np.ndarray, hop_length: int,
@@ -63,6 +64,7 @@ class AudioProcessor:
         self.is_streaming: bool = is_streaming
         self.io_blocksize: int = io_blocksize
         self.data = data
+        self.cochlea: Cochlea | None = None
 
         self.input_channels: int = input_channels
         self.output_channels: int = output_channels
@@ -248,6 +250,8 @@ class AudioProcessor:
     def process_audio(self, indata: np.ndarray):
         frames = indata.shape[0]
 
+        if self.cochlea is not None:
+            self.cochlea.process(np.asarray(indata).mean(axis=1))
         self.audio_buffer = np.roll(self.audio_buffer, -frames, axis=0)
         self.audio_buffer[-frames:] = indata
         self.current_signal_level = self._compute_signal_level(indata)

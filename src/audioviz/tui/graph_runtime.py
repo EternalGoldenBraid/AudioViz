@@ -4,6 +4,7 @@ import threading
 from dataclasses import replace
 from time import monotonic
 
+from audioviz.audio_processing.cochlea import Cochlea
 from audioviz.sources.camera import CameraFrameSourceConfig
 from audioviz.engine import RippleEngine
 from audioviz.sources.audio import AudioSourceConfig
@@ -11,11 +12,12 @@ from audioviz.sources.orchestrator import RippleSourceOrchestrator, RippleSource
 from audioviz.sources.synthetic import SyntheticSourceConfig
 from audioviz.tui.audio_out import AudioOut
 from audioviz.tui.camera_feed import CameraFeed
-from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE, AudioFeed
+from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE, AudioFeed, AudioFrame
 
 DEFAULT_RESOLUTION = 128
 STEP_INTERVAL = BLOCK_SIZE / SAMPLE_RATE
 MIN_SIDE = 8
+AUDIO_MODELS = ("spectral", "cochlea")
 
 
 def parse_resolution(value: "int | str | tuple[int, int]") -> tuple[int, int]:
@@ -40,9 +42,14 @@ class GraphRuntime:
     """
 
     def __init__(
-        self, feed: AudioFeed | None = None, resolution: "int | str | tuple[int, int]" = DEFAULT_RESOLUTION, camera: bool = True
+        self, feed: AudioFeed | None = None, resolution: "int | str | tuple[int, int]" = DEFAULT_RESOLUTION,
+        camera: bool = True, audio_model: str = "spectral",
     ) -> None:
+        if audio_model not in AUDIO_MODELS:
+            raise ValueError(f"audio_model must be one of {AUDIO_MODELS}")
         self.feed = feed or AudioFeed()
+        if audio_model == "cochlea":
+            self.feed.processor.cochlea = Cochlea(SAMPLE_RATE)
         self.out = AudioOut()
         self.camera = CameraFeed()
         has_camera = camera and self.camera.open()
@@ -107,15 +114,36 @@ class GraphRuntime:
     def audio_readout(self):
         return self.orchestrator.audio_readout
 
+    @property
+    def audio_model(self) -> str:
+        return "cochlea" if self.processor.cochlea is not None else "spectral"
+
+    def set_audio_model(self, model: str) -> None:
+        """Changing representation rebuilds graph weights and mutes playback."""
+        if model not in AUDIO_MODELS:
+            raise ValueError(f"audio_model must be one of {AUDIO_MODELS}")
+        with self.lock:
+            if model == self.audio_model:
+                return
+            self.out.set_mode("off")
+            self.processor.cochlea = Cochlea(SAMPLE_RATE) if model == "cochlea" else None
+            self.rebuild(self.resolution)
+
     def step(self) -> None:
         started = monotonic()
         with self.lock:
-            self.feed.pump()
+            cochlea = self.processor.cochlea
+            blocks = self.feed.pump() if cochlea is None else ()
             frame = self.orchestrator.resolve()
             self.engine.propagate(frame.drive_grid)
             self.visual_prediction = self.orchestrator.predict_visual()
+            if cochlea is not None:
+                blocks = self.feed.pump()
             self.orchestrator.correct_from_observations()
-            self._sound()
+            source = self.orchestrator.audio_source
+            if cochlea is not None and blocks and source.enabled and source.observation_gain > 0:
+                cochlea.correct_from_graph(self.orchestrator.audio_prediction / source.observation_gain)
+            self._sound(blocks)
         self.step_ms = (monotonic() - started) * 1000.0
 
     def set_camera(self, on: bool) -> None:
@@ -134,9 +162,23 @@ class GraphRuntime:
         if not (self.show_camera or self.feed_canvas):
             self.camera.release()
 
-    def _sound(self) -> None:
+    def _sound(self, blocks: tuple[AudioFrame, ...]) -> None:
         source = self.orchestrator.audio_source
+        if not source.enabled:
+            return
+        if self.processor.cochlea is not None or self.out.mode == "input":
+            for block in blocks:
+                if self.out.mode in ("input", "evidence"):
+                    self.out.submit_waveform(block.samples)
+                elif self.out.mode == "prediction":
+                    self.out.submit_waveform(block.cochlea.prediction)
+                elif self.out.mode == "error":
+                    self.out.submit_waveform(block.cochlea.error)
+            return
         bands = source.recent_observation() if self.out.mode == "evidence" else self.orchestrator.audio_prediction
+        if self.out.mode == "error":
+            observed = source.recent_observation()
+            bands = None if observed is None or bands is None else observed - bands
         self.out.submit(bands, source.observation_gain)
 
     def start(self) -> None:

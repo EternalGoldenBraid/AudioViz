@@ -1,4 +1,4 @@
-"""Audio output: a sine-bank vocoder that sounds the 16 spectral bands of a prediction."""
+"""Waveform listening taps and the legacy spectral sine-bank vocoder."""
 
 from collections import deque
 
@@ -8,7 +8,7 @@ import numpy as np
 from audioviz.tui.audio_feed import BLOCK_SIZE, N_MELS, SAMPLE_RATE
 from audioviz.utils.audio_features import AUDIO_SPECTRAL_BANDS
 
-MODES = ("off", "prediction", "evidence")
+MODES = ("off", "prediction", "error", "input", "evidence")
 MAX_QUEUED_BLOCKS = 8
 
 
@@ -51,6 +51,9 @@ class AudioOut:
     def set_mode(self, mode: str, *, speakers: bool = True) -> None:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
+        if mode != self.mode:
+            self._queue.clear()
+            self.last_block = None
         self.mode = mode
         if mode == "off":
             self.close()
@@ -73,8 +76,20 @@ class AudioOut:
     def submit(self, bands: np.ndarray | None, gain: float) -> None:
         if self.mode == "off" or bands is None:
             return
-        amps = np.clip(np.asarray(bands, dtype=np.float64) / max(gain, 1e-9), 0.0, None)
+        amps = np.asarray(bands, dtype=np.float64) / max(gain, 1e-9)
+        if self.mode != "error":
+            amps = np.clip(amps, 0.0, None)
         block = np.tanh(self.vocoder.block(amps) * self.volume)
+        self.last_block = block
+        self._queue.append(block)
+
+    def submit_waveform(self, samples: np.ndarray) -> None:
+        if self.mode == "off":
+            return
+        samples = np.asarray(samples, dtype=np.float64)
+        if samples.ndim != 1 or not 0 < samples.size <= BLOCK_SIZE or not np.all(np.isfinite(samples)):
+            raise ValueError("output waveform must be finite, mono, and at most one audio block")
+        block = np.clip(samples * self.volume, -1.0, 1.0).astype(np.float32)
         self.last_block = block
         self._queue.append(block)
 
@@ -89,4 +104,7 @@ class AudioOut:
         outdata[:] = 0.0
         if self._queue:
             block = self._queue.popleft()
-            outdata[: len(block), 0] = block[:frames]
+            count = min(len(block), frames)
+            outdata[:count, 0] = block[:count]
+            if count < len(block):
+                self._queue.appendleft(block[count:])
