@@ -206,7 +206,7 @@ The fundamental matrix $F$ maps image position $x_1$ to an epipolar line $l'$ co
 
 ![Epipolar geometry](./fig-epipolar.svg)
 
-**Symbols:** $C_1,C_2$ are cameras observing feature $X$. $e,e'$ are the cameras' projections into each other's images. $K_1,K_2$ are intrinsics; $R,t$ are relative rotation and translation; $[t]_\times$ represents the cross product with $t$.
+**Symbols:** $C_1,C_2$ are camera projection centres; $x_1,x_2$ are where their viewing rays through feature $X$ intersect the virtual image planes. $e,e'$ are the cameras' projections into each other's images. $K_1,K_2$ are intrinsics; $R,t$ are relative rotation and translation; $[t]_\times$ represents the cross product with $t$.
 
 ### Dense flow $u(x)$
 
