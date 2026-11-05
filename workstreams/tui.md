@@ -1,8 +1,8 @@
 # TUI: a terminal-native front end
 
 > **Status:** active · **Branch:** `agent/tui` (local, not pushed) · **Updated:** 2026-11-05
-> **Now:** save works live: `:save` (attached) writes window knobs to `config/deck.json`; `main.py` applies it at launch.
-> **Next:** device selection from the deck (audio in/out, camera; hot-swap), saved in the same file.
+> **Now:** device knobs work live: audio in/out and camera switch in the running window; `:save` stores them by name in `config/deck.json`.
+> **Next:** the attached TUI still shows idle view tiles: serve low-res previews, then knobs from `RIPPLE_CONFIG` sections (paged).
 > **Blocked:** push needs `gh auth login -h github.com`, then `git push -u origin agent/tui`.
 > **Resume:** `copilot --resume efa7117b-d1b5-4bdb-bf79-7d9c8036c52e`
 > **Run:** `uv run --group tui --with-editable . python -m audioviz.tui.app --audio synthetic`
