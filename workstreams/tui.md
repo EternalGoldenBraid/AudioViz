@@ -21,6 +21,13 @@ correction). Resolution is bounded by that readout.
 
 **Visual prediction.** `visual_prediction` shows what the model expects the canvas to be; `visual_error` is camera observation minus that (grey while `canvas feed` is off). Default layout is three rows: canvas, camera, visual prediction, visual error / spectrogram, waveform, prediction, error / hidden, log.
 
+**Next (2026-11-05).** Seen in a wide pane: tiles keep their start-up size and fill only the left corner, so layout must follow the terminal size.
+- *Disable tiles* to save compute: a hidden tile is not rendered, and a view nobody shows is not computed (`infer_joint` is 86% of the step, so the audio/visual readout pathways also need on/off knobs).
+- *Scaling*: re-fit the layout on resize; later, group members scale before they page.
+- *Sound*: speakers plugged in; `sound out` and `:devices` exist, verify audibility of the vocoder, then input/output device switching online.
+- *Resolution*: the TUI grid is square N; `main.py` uses non-square `(rows, cols)` (currently 100x200, options up to 1080x1920). Accept `RxC`.
+- *All `main.py` tuning as knobs*, grouped by its sections (field, dynamics, renderer, sources.audio, sources.pose, plotting) as paged groups. Needs the supernode container and whole-view paging first.
+
 **Live editing.** Edit `views.py` or `halfblock.py` while the app runs: tiles pick it up on the
 next frame (`reloaded views` in the log); a syntax error keeps the old code live.
 
