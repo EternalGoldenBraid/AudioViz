@@ -312,3 +312,19 @@ def test_question_mark_lists_bindings_and_a_rebound_key_takes_effect(tmp_path):
         await pilot.press("x")
         assert app.zoomed
     _headless(tmp_path, scenario)
+
+
+def test_layout_refits_to_the_terminal_keeping_knob_height_and_the_bottom_edge(tmp_path):
+    async def scenario(app, pilot):
+        knob, view = "knob-damping", "canvas"
+        before = {n: vars(p).copy() for n, p in app.placements.items()}
+        old_w, old_h = app.layout_size
+        await pilot.resize_terminal(old_w * 2, old_h + 21)  # one row is the mode bar
+        await pilot.pause(0.2)
+        new_w, new_h = app.layout_size
+        assert (new_w, new_h) == (old_w * 2, old_h + 20)
+        assert app.placements[knob].height == before[knob]["height"]
+        assert app.placements[knob].y + app.placements[knob].height == before[knob]["y"] + before[knob]["height"] + 20
+        assert app.placements[view].width == before[view]["width"] * 2
+        assert app.placements[view].height > before[view]["height"]
+    _headless(tmp_path, scenario)

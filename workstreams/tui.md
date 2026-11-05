@@ -23,7 +23,7 @@ correction). Resolution is bounded by that readout.
 
 **Next (2026-11-05).** Seen in a wide pane: tiles keep their start-up size and fill only the left corner, so layout must follow the terminal size.
 - *Disable tiles* to save compute: a hidden tile is not rendered, and a view nobody shows is not computed (`infer_joint` is 86% of the step, so the audio/visual readout pathways also need on/off knobs).
-- *Scaling*: re-fit the layout on resize; later, group members scale before they page.
+- *Scaling* (done: placements refit to the terminal on resize, knobs keep their height and the bottom edge); later, group members scale before they page.
 - *Sound*: speakers plugged in; `sound out` and `:devices` exist, verify audibility of the vocoder, then input/output device switching online.
 - *Resolution*: the TUI grid is square N; `main.py` uses non-square `(rows, cols)` (currently 100x200, options up to 1080x1920). Accept `RxC`.
 - *All `main.py` tuning as knobs*, grouped by its sections (field, dynamics, renderer, sources.audio, sources.pose, plotting) as paged groups. Needs the supernode container and whole-view paging first.

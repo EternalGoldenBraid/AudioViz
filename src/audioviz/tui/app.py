@@ -206,6 +206,7 @@ class AudioVizApp(App):
         self.knobs += [(knob_id(c.name), self, c) for c in self.settings]
         self.mixer_ids = [k for k, ctx, _ in self.knobs if ctx is self.runtime]
         self.settings_ids = [k for k, ctx, _ in self.knobs if ctx is self]
+        self.layout_size: tuple[int, int] | None = None  # the stage size the placements were laid out for; set on mount
         self.placements = default_layout(120, 36, self.mixer_ids, self.settings_ids)  # resized to the real stage on mount
         self.pages: dict[str, dict[str, int]] = {self.mixer_ids[0]: {"size": MIXER_PAGE, "index": 0}}  # by group's first member
         self.group_focus: list[str] = []  # non-empty while a whole group is the focused node
@@ -238,8 +239,9 @@ class AudioVizApp(App):
         self.query_one("#log", LogTile).border_title = "log"
         for name, placement in default_layout(self.size.width, max(self.size.height - 1, 12), self.mixer_ids, self.settings_ids).items():
             self.placements[name] = placement
+        self.layout_size = self.stage_size()
         self.load_state(self.cache_path, quiet=True)
-        self.apply_layout()
+        self.refit()
         self.runtime.start()
         self.set_interval(1 / 15, self.refresh_tiles)
         if self.hot_reload:
@@ -276,6 +278,7 @@ class AudioVizApp(App):
             "grid": self.runtime.resolution,
             "step_ms": round(self.runtime.step_ms, 1),
             "stack": self.stack,
+            "size": list(self.layout_size),
             "placements": {k: vars(v) for k, v in self.placements.items()},
             "mixer": {c.name: c.format(self.runtime) for c in CONTROLS},
             "settings": {c.name: c.format(self) for c in self.settings},
@@ -289,6 +292,7 @@ class AudioVizApp(App):
         self.runtime.stop()
 
     def refresh_tiles(self) -> None:
+        self.fit_if_resized()
         for tile in self.query(ViewTile):
             if tile.display:
                 tile.refresh_view()
@@ -376,9 +380,31 @@ class AudioVizApp(App):
             knob.refresh_view()
         self.set_mode("EDIT" if on and isinstance(knob, KnobTile) else "NORMAL")
 
-    def on_resize(self) -> None:
-        if self.zoomed:
-            self.apply_layout()
+    def stage_size(self) -> tuple[int, int]:
+        return self.size.width, max(self.size.height - 1, 12)
+
+    def refit(self) -> None:
+        """Scale placements from the size they were laid out for to the current terminal.
+
+        Knob tiles keep their height and stay anchored to the bottom; every other tile scales
+        in both directions over the space above the knob strip.
+        """
+        (old_w, old_h), (new_w, new_h) = self.layout_size, self.stage_size()
+        knobs = [p for n, p in self.placements.items() if n.startswith("knob-")]
+        strip = old_h - min((p.y for p in knobs), default=old_h)
+        sx, sy = new_w / old_w, max(new_h - strip, 3) / max(old_h - strip, 3)
+        for name, p in self.placements.items():
+            p.x, p.width = round(p.x * sx), max(round(p.width * sx), 4)
+            if name.startswith("knob-"):
+                p.y += new_h - old_h
+            else:
+                p.y, p.height = round(p.y * sy), max(round(p.height * sy), 3)
+        self.layout_size = (new_w, new_h)
+        self.apply_layout()
+
+    def fit_if_resized(self) -> None:
+        if self.layout_size and self.layout_size != self.stage_size():
+            self.refit()
 
     def open_devices(self) -> None:
         try:
@@ -762,6 +788,10 @@ class AudioVizApp(App):
         for name, values in data.get("placements", {}).items():
             if same_tiles:
                 self.placements[name] = Placement(**values)
+        if same_tiles:
+            extent = (max(p.x + p.width for p in self.placements.values()),
+                      max(p.y + p.height for p in self.placements.values()))
+            self.layout_size = tuple(data.get("size", extent))  # layouts saved before sizes were recorded span their extent
         stack = [n for n in data.get("stack", []) if n in self.placements]
         self.stack = stack + [n for n in self.placements if n not in stack]
         if "groups" in data and same_tiles:
