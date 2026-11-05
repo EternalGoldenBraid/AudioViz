@@ -50,6 +50,19 @@ class CameraFrameSource:
     def set_gain(self, gain: float) -> None:
         self.gain = float(gain)
 
+    def set_camera_index(self, index: int | str) -> None:
+        """Moves capture to another camera; a camera that fails to open leaves the previous one running."""
+        previous = self.camera_index
+        self.close()
+        self.camera_index = index
+        if self.enabled:
+            try:
+                self.ensure_open()
+            except RuntimeError:
+                self.camera_index = previous
+                self.ensure_open()
+                raise
+
     def ensure_open(self) -> None:
         if self.capture is not None:
             return
