@@ -315,6 +315,32 @@ This example uses two bank-tuned tones, a one-second settling period, and no
 graph feedback. Input and residual share the same amplitude scale.
 It demonstrates causal tracking, not general audio reconstruction quality.
 
+## Shared audio history
+
+`AudioProcessor.get_audio_history()` returns read-only copies on the process's
+audio sample clock. Renderers do not infer, integrate, or feed back into the
+model. The waveform, diagnostic spectrum and oscillator history share the same
+latest sample $S$; time is $(s-S)/f_s$ seconds.
+
+Each oscillator-history column summarizes $H$ corrected sample states:
+
+$$
+A_{i,k}=\sqrt{\frac{1}{H}\sum_{n=kH}^{(k+1)H-1}
+\left(x_{i,n}^{2}+q_{i,n}^{2}\right)}.
+$$
+
+This is RMS **state amplitude**, not physical energy or a per-node acoustic
+error. A bounded ring stores complete hops, with their end-sample timestamps.
+Its window placement is independent of input-block partitioning and rendering.
+Switching models or standalone input sources clears oscillator history while
+preserving the process sample clock.
+
+The diagnostic spectrum retains the existing per-block centered STFT/mel
+analysis. Its actual frame-center timestamps are recorded: adjacent blocks may
+have coincident boundary frames. Display resampling selects the later frame at
+that time; it does not stretch extra columns into fictitious elapsed time.
+Older missing data and incomplete oscillator hops remain blank.
+
 ## Reproduce and inspect
 
 ```bash

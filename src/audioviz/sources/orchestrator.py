@@ -165,7 +165,13 @@ class RippleSourceOrchestrator:
             raise RuntimeError("Audio model selection requires an audio processor")
         if self.engine.use_shader:
             raise NotImplementedError("Cochlea graph inference requires an array-backed canvas")
-        bank = Cochlea(processor.sr) if model == "cochlea" else None
+        bank = (
+            Cochlea(
+                processor.sr, history_hop=processor.hop_length,
+                history_columns=int(np.ceil(processor.num_samples_in_buffer / processor.hop_length)),
+                sample_offset=processor.samples_processed,
+            ) if model == "cochlea" else None
+        )
         readout = PredictiveCodingAudioReadout(
             canvas_shape=self.canvas_shape, config=self.audio_readout.config,
             observation_size=bank.observation_size if bank is not None else AUDIO_SPECTRAL_BANDS,

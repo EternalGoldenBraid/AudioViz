@@ -101,7 +101,7 @@ class AudioFeed:
 
     def _reset_cochlea(self) -> None:
         if self.processor.cochlea is not None:
-            self.processor.cochlea.reset()
+            self.processor.cochlea.reset(sample_offset=self.processor.samples_processed)
 
     def _on_block(self, indata: np.ndarray, frames: int, time, status) -> None:
         self._queue.append(indata.copy())
