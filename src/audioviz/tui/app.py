@@ -109,10 +109,14 @@ class ViewTile(Static, can_focus=True):
     def set_view(self, view: str) -> None:
         self.view = view
         self.border_title = view
-        self.border_subtitle = {
+        self.border_subtitle = self.view_caption
+
+    @property
+    def view_caption(self) -> str:
+        return {
             "cochlea": "index / time > | -80..0 dB",
             "waveform": "fixed +/-1 | time >",
-        }.get(view, "")
+        }.get(self.view, "")
 
     def refresh_view(self) -> None:
         size = self.content_size
@@ -359,7 +363,7 @@ class AudioVizApp(App):
             styles.height = stage.height if zoomed else placement.height
             styles.opacity = 1.0 if zoomed else placement.opacity
             styles.layer = f"z{depth}"
-            widget.border_subtitle = self.page_label(name)
+            widget.border_subtitle = self.page_label(name) or (widget.view_caption if isinstance(widget, ViewTile) else "")
         self.set_mode(self.mode)
 
     def page_of(self, name: str) -> tuple[list[str], dict[str, int]] | None:

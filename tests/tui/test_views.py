@@ -68,6 +68,9 @@ def test_old_saved_layout_keeps_the_new_cochlea_tile(tmp_path, monkeypatch):
             app.restore({"placements": old, "stack": list(old)})
             assert app.placements == current
             assert "cochlea" in app.stack
+            app.apply_layout()
+            assert app.query_one("#cochlea").border_subtitle == "index / time > | -80..0 dB"
+            assert app.query_one("#waveform").border_subtitle == "fixed +/-1 | time >"
 
     asyncio.run(restore())
 
