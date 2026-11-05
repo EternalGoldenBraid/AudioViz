@@ -1,4 +1,5 @@
 from collections import deque
+from threading import Lock
 from typing import Optional, Union, Tuple, List
 
 import numpy as np
@@ -67,6 +68,7 @@ class AudioProcessor:
         self.data = data
         self.cochlea: Cochlea | None = None
         self.samples_processed = 0
+        self._history_lock = Lock()
 
         self.input_channels: int = input_channels
         self.output_channels: int = output_channels
@@ -255,6 +257,10 @@ class AudioProcessor:
         )
 
     def process_audio(self, indata: np.ndarray):
+        with self._history_lock:
+            self._process_audio(indata)
+
+    def _process_audio(self, indata: np.ndarray):
         frames = indata.shape[0]
 
         if self.cochlea is not None:
@@ -380,6 +386,10 @@ class AudioProcessor:
             return None
 
     def get_audio_history(self) -> AudioHistory | None:
+        with self._history_lock:
+            return self._get_audio_history()
+
+    def _get_audio_history(self) -> AudioHistory | None:
         snapshot = self.get_latest_snapshot()
         if snapshot is None:
             return None
@@ -389,6 +399,7 @@ class AudioProcessor:
             lr.mel_frequencies(n_mels=self.n_spec_bins + 2, fmin=0, fmax=self.sr / 2)[1:-1]
             if self.n_mels is not None else self.freq_bins
         )
+        bank = self.cochlea
         return AudioHistory(
             sample_rate=self.sr, sample_end=self.samples_processed,
             waveform=readonly(np.mean(audio, axis=1)),
@@ -397,7 +408,7 @@ class AudioProcessor:
                 readonly(self.spectrogram_samples[valid]),
             ),
             frequencies=readonly(frequencies), mel_power=self.n_mels is not None,
-            cochlea=None if self.cochlea is None else self.cochlea.activity_history(),
+            cochlea=None if bank is None else bank.activity_history(),
         )
 
     def stop(self) -> None:

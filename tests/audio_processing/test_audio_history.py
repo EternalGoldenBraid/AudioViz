@@ -68,3 +68,44 @@ def test_common_time_grid_keeps_missing_data_and_uses_actual_spectral_timestamps
         history_grid(activity, sample_end=8, sample_span=8, columns=8),
         [[np.nan, np.nan, 5, 5, 6, 6, np.nan, np.nan]],
     )
+
+
+def test_a_snapshot_cannot_mix_the_next_cochlea_block_with_the_previous_waveform(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    runtime = GraphRuntime(resolution=8, camera=False, audio_model="cochlea")
+    runtime.step()
+    processor = runtime.processor
+    entered, release, reading, completed = Event(), Event(), Event(), Event()
+    update = processor.update_spectrogram_buffer
+
+    def delayed_update(samples):
+        entered.set()  # cochlea has advanced; the waveform snapshot is still old
+        assert release.wait(5)
+        update(samples)
+
+    def read():
+        reading.set()
+        snapshot = processor.get_audio_history()
+        completed.set()
+        return snapshot
+
+    monkeypatch.setattr(processor, "update_spectrogram_buffer", delayed_update)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            writer = pool.submit(processor.process_audio, np.zeros((1024, 1)))
+            try:
+                assert entered.wait(5)
+                reader = pool.submit(read)
+                assert reading.wait(5)
+                assert not completed.wait(.05)
+            finally:
+                release.set()
+            writer.result()
+            snapshot = reader.result()
+            assert snapshot.sample_end == 2048
+            assert snapshot.cochlea.samples[-1] == 2048
+            np.testing.assert_array_equal(snapshot.waveform[-1024:], 0)
+    finally:
+        runtime.stop()
