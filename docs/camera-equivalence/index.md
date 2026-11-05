@@ -32,13 +32,26 @@ No transform is fitted for now. Once both cameras project onto the canvas, the c
 2. Show the underlying mappings: for a selected hidden unit $i$, its receptive field in each camera (from $g_k$).
 3. Show which canvas regions both cameras excite.
 
-Fitting $H$ (DLT with RANSAC on receptive-field centroids $c_i^{(k)}$) is deferred until the visualization shows whether a homography is a sensible description.
+Fitting a transform to the receptive-field centroids $c_i^{(k)}$ is deferred until the visualization shows which description fits (next section).
 
 ![Hidden units as correspondences between the two cameras](./correspondence.svg)
 
+## Candidate transforms
+
+Later, the correspondences can be compared against several transforms. They form a chain of generalizations, so a fit that fails at one level shows what the next level adds.
+
+![Transforms ordered by generality](./transforms.svg)
+
+- **Homography $H$**: point to point. Exact for a plane or a pure rotation. Residual structure that grows with scene depth means $\rho\neq 0$.
+- **Plane + parallax**: $x_2\sim Hx_1+\rho(x_1)\,e'$. The residual after $H$ points along the epipole $e'$ and carries per-pixel depth.
+- **Fundamental $F$ / essential $E$**: point to line. Holds for any rigid scene without needing depth; $E$ adds known intrinsics.
+- **Dense flow $u(x)$**: no geometry assumed. Covers non-rigid motion and anything the others miss.
+
+![What each transform predicts in image 2](./predictions.svg)
+
 ## Open questions
 
-- A homography is exact only for planar or distant scenes. What is the next transform (epipolar / fundamental matrix, depth-dependent warp, learned flow)?
+- A homography is exact only for planar or distant scenes. Which level of the chain is the first that fits the measured correspondences?
 - EO and IR are not a matched pair. Do shared units emerge at all without cross-modal supervision?
 - Should the checkerboard calibration be an independent baseline?
 - Where does the visualization show up in the TUI: tile, overlay or log?

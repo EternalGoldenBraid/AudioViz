@@ -1,0 +1,43 @@
+\documentclass[tikz,border=8pt]{standalone}
+\usepackage{xcolor}
+\usetikzlibrary{calc,arrows.meta,backgrounds}
+\definecolor{bg}{HTML}{1B1F27}
+\definecolor{fg}{HTML}{E6EDF3}
+\definecolor{dim}{HTML}{9AA5B1}
+\definecolor{cb}{HTML}{6EA8FE}
+\definecolor{cc}{HTML}{F0C060}
+\definecolor{cd}{HTML}{B39DDB}
+\definecolor{ce}{HTML}{E5826F}
+\definecolor{c2}{HTML}{E5826F}
+\begin{document}
+\begin{tikzpicture}[show background rectangle, background rectangle/.style={fill=bg}, inner frame sep=10pt, every node/.style={text=fg},
+  panel/.style={draw=c2, line width=1pt, fill=c2!12!bg},
+  pt/.style={-{Stealth[length=2mm]}, line width=1.2pt}]
+\foreach \i/\t/\col in {0/{homography}/cb, 5/{epipolar}/cd, 10/{flow}/ce}{
+  \draw[panel] (\i,0) rectangle (\i+4,3.6);
+  \node[text=\col] at (\i+2,4.1) {\t};
+  \draw[dim, line width=0.8pt] (\i+1.1,1.5) circle (3pt);
+}
+% homography: x1 maps to a single point
+\fill[cb] (3.0,2.5) circle (3.5pt);
+\draw[pt, cb] (1.2,1.55) -- (2.9,2.45);
+\node[text=cb, font=\small] at (2,-0.5) {$x_2 = Hx_1$: a point};
+
+% epipolar: x1 maps to a line through the epipole
+\coordinate (e) at (5+3.4,3.1);
+\fill[cd] (e) circle (2.5pt);
+\node[text=cd, font=\small, above] at (e) {$e'$};
+\draw[cd, line width=1.4pt] (e) -- (5+0.1,1.0);
+\node[text=cd, font=\small] at (7,-0.5) {$x_2^{\top}Fx_1=0$: a line};
+
+% flow: every pixel has its own vector
+\foreach \x in {10.6,11.4,12.2,13.0}{
+  \foreach \y in {0.5,1.2,1.9,2.6}{
+    \draw[pt, ce, line width=0.8pt] (\x,\y) -- ++({0.35*cos(40*\x+30*\y)},{0.3*sin(30*\x+50*\y)});
+  }
+}
+\node[text=ce, font=\small] at (12,-0.5) {$x_2=x_1+u(x_1)$: a vector field};
+
+\node[anchor=west] at (0,5.1) {What each transform predicts in image 2 for a point $x_1$ in image 1 (ring: same position)};
+\end{tikzpicture}
+\end{document}
