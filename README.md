@@ -58,8 +58,9 @@ selections open the TUI's input and output checklists: **j/k** move, **Space**
 selects, **Enter** confirms, and **Esc** returns to startup.
 
 Device choices are saved locally; new selections also store names to detect
-renumbered devices. Startup errors remain visible in the TUI, with actions to
-choose devices, retry, or quit. Quitting stops the window process it launched.
+renumbered devices. Startup errors remain visible in the TUI, with retry and
+quit actions. Live streaming also offers device selection; file playback skips
+device setup. Quitting stops the window process it launched.
 `--no-tui` keeps the window-only path and its terminal prompts. The device file
 is ignored by Git; `config/audio_devices.example.json` documents its structure.
 

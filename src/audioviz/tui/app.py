@@ -381,7 +381,12 @@ class AudioVizApp(App):
             self._mount_deck()
         except (OSError, ValueError, RuntimeError, sd.PortAudioError) as error:
             self.startup.stop()
-            panel.status(f"{error}\n\nChoose devices to change the selection, or retry startup.")
+            recovery = (
+                "Choose devices to change the selection, or retry startup."
+                if self.startup.config_file is not None
+                else "Check the window configuration, then retry startup."
+            )
+            panel.status(f"{error}\n\n{recovery}")
         finally:
             self._startup_busy = False
 

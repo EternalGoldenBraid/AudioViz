@@ -1,5 +1,6 @@
 import asyncio
 import json
+import socket
 import sys
 
 import pytest
@@ -175,6 +176,21 @@ def test_failed_or_timed_out_child_is_reaped_with_visible_error(tmp_path, comman
     asyncio.run(run())
 
 
+def test_existing_live_deck_is_preserved_during_startup_and_shutdown(startup):
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(str(startup.socket_path))
+        server.listen()
+
+        with pytest.raises(RuntimeError, match="already owns the deck socket"):
+            asyncio.run(startup.connect())
+        startup.stop()
+
+        assert startup.process is None
+        assert startup.socket_path.exists()
+        assert not startup.log_path.exists()
+        assert server.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) == 1
+
+
 def test_incompatible_saved_rate_is_rejected_before_opening_streams(startup, monkeypatch):
     from audioviz.tui import startup as startup_module
 
@@ -264,7 +280,10 @@ def test_file_playback_startup_does_not_offer_or_query_audio_setup(startup, tmp_
             await wait_for(lambda: "Missing audio file" in str(app.query_one("#startup-status", Static).render()))
             await pilot.pause()
             assert app.query_one(OptionList).option_count == 2
-            assert "Missing audio file" in str(app.query_one("#startup-status", Static).render())
+            status = str(app.query_one("#startup-status", Static).render())
+            assert "Missing audio file" in status
+            assert "retry startup" in status
+            assert "Choose devices" not in status
 
     asyncio.run(run())
 
