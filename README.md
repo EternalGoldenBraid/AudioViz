@@ -142,22 +142,43 @@ settings to a live attached graph.
 
 ### Android camera over local Wi-Fi
 
-Run the normal attached application with `uv run python main.py`. On Android,
-install a camera-streaming app such as
-[IP Webcam](https://play.google.com/store/apps/details?id=com.pas.webcam).
-Connect the phone and laptop to the same trusted LAN, allow camera access,
-and start the app's local server. Cloud broadcasting and phone audio are not
-needed. Start with 640x480 at 10-15 fps.
+1. **Android:** install
+   [IP Webcam](https://play.google.com/store/apps/details?id=com.pas.webcam),
+   allow camera access and connect to the laptop's trusted Wi-Fi network.
+   Leave cloud broadcasting off and disable audio streaming. Start with 640x480
+   at 10-15 fps, then tap **Start server**.
+2. **Read the phone's address.** For example, if it displays
+   `http://192.168.1.20:8080`, its MJPEG URL is normally
+   `http://192.168.1.20:8080/video`. Replace this example IP with the address
+   actually shown on your phone.
+3. **Check from the laptop:** open that address in a browser and confirm the
+   phone's camera page/video is reachable. The HTML camera page and the video
+   stream are different URLs; AudioViz needs the `/video` stream.
+4. **Launch AudioViz** from the checkout containing this feature:
 
-Open the address shown by the phone in the laptop browser to verify connectivity.
-Use the **video stream URL**, not the HTML viewer page. IP Webcam commonly serves
-MJPEG at `/video`; for example, enter this in AudioViz's command line:
+```
+uv run python main.py
+```
+
+5. **Connect from the TUI:** press `:` and enter the command below, using your
+   phone's IP. To use both angles, first select the laptop camera in **Sources**:
+   Enter opens its checklist, Space checks the camera and Enter applies.
 
 ```
 :camera http://192.168.1.20:8080/video
 ```
 
-Replace the example address with the phone's address. HTTP(S) MJPEG and RTSP
+After connection, Sources shows `1 live` for a phone-only selection, or
+`1 live | 2 live` when the laptop camera was already selected. `connecting` and
+`reconnecting` describe a pending/unavailable stream; they do not mean frames
+are arriving. Save and reuse the setup with:
+
+```
+:w phone
+:load phone
+```
+
+HTTP(S) MJPEG and RTSP
 streams are accepted through OpenCV's FFmpeg backend. URLs with embedded
 credentials are not supported; use this feature only on a trusted LAN.
 
