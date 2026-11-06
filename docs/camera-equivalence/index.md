@@ -1,13 +1,20 @@
 <script setup>
 import { ref, computed } from "vue";
 import SceneFigure from "./SceneFigure.vue";
-import { DEFAULTS, createWorld, readerView } from "./scene.mjs";
+import { DEFAULTS, READER_LIMITS, createWorld, readerView } from "./scene.mjs";
 const baseline = ref(DEFAULTS.baseline);
 const height = ref(DEFAULTS.height);
 const azimuth = ref(DEFAULTS.azimuth);
 const elevation = ref(DEFAULTS.elevation);
 const world = computed(() => createWorld({ baseline: baseline.value, height: height.value }));
 const reader = computed(() => readerView({ azimuth: azimuth.value, elevation: elevation.value }));
+function orbit(view) {
+  azimuth.value = view.azimuth;
+  elevation.value = view.elevation;
+}
+function resetView() {
+  orbit(DEFAULTS);
+}
 </script>
 
 # Two cameras as equivalent evidence on one canvas
@@ -22,12 +29,14 @@ $x_{kj}$ is feature $j$'s image position in camera $k$; $\pi_k$ projects a point
 
 The figures share one synthetic 3D scene. Their camera parameters are known for illustration; they are not estimates from the learned canvas. The reader is a third perspective observer: changing your viewpoint changes the drawing, not the cameras' observations.
 
+Mouse or pen drag rotates any 3D figure through a full orbit. All four 3D views share that viewpoint; **Reset view** restores the static framing. On touch screens, the figures remain horizontally pannable and the sliders rotate the view.
+
 <div class="scene-controls">
-  <label for="reader-azimuth">reader azimuth</label><input id="reader-azimuth" type="range" min="-40" max="40" step="1" v-model.number="azimuth" /><output for="reader-azimuth">{{ azimuth }}°</output>
-  <label for="reader-elevation">reader elevation</label><input id="reader-elevation" type="range" min="8" max="45" step="1" v-model.number="elevation" /><output for="reader-elevation">{{ elevation }}°</output>
+  <label for="reader-azimuth">reader azimuth</label><input id="reader-azimuth" type="range" :min="-READER_LIMITS.azimuth" :max="READER_LIMITS.azimuth" step="1" v-model.number="azimuth" /><output for="reader-azimuth">{{ azimuth }}°</output>
+  <label for="reader-elevation">reader elevation</label><input id="reader-elevation" type="range" :min="-READER_LIMITS.elevation" :max="READER_LIMITS.elevation" step="1" v-model.number="elevation" /><output for="reader-elevation">{{ elevation }}°</output>
 </div>
 
-<SceneFigure mode="world" :world="world" :reader="reader" />
+<SceneFigure mode="world" :world="world" :reader="reader" @orbit="orbit" @reset-view="resetView" />
 
 **In the figure:** $W$ marks the world origin. $C_k$ is a camera's projection centre; $I_k$ its virtual image plane (green or coral); $O_k$ its image-coordinate origin, where the optical axis meets that plane. $X$ is a test feature and $x_k$ its ray's intersection with $I_k$. $\Pi$ is the blue reference plane. Camera centres are not image origins.
 
@@ -77,7 +86,7 @@ Later, the correspondences can be compared against several transforms. The solid
 
 The homography $H$ maps reference-plane points between images. Under pure rotation, it is exact at every depth.
 
-<SceneFigure mode="homography" :world="world" :reader="reader" />
+<SceneFigure mode="homography" :world="world" :reader="reader" @orbit="orbit" @reset-view="resetView" />
 
 **Symbols:** $C_1,C_2$ are projection centres. $X_\pi$ is where $C_1$'s ray through test feature $X$ meets reference plane $\Pi$; its image positions are $x_1$ in camera 1 and blue $Hx_1$ in camera 2. $K_1,K_2$ are intrinsics. With relative pose $X_{c2}=R X_{c1}+t$ and plane $n^\top X_{c1}=d$, the mapping is
 
@@ -96,7 +105,7 @@ Here $n,d$ are expressed in camera 1's coordinates. The same convention is used 
   <label for="scene-height">off-plane offset</label><input id="scene-height" type="range" min="0" max="2.5" step="0.1" v-model.number="height" /><output for="scene-height">{{ height.toFixed(1) }}</output>
 </div>
 
-<SceneFigure mode="parallax" :world="world" :reader="reader" />
+<SceneFigure mode="parallax" :world="world" :reader="reader" @orbit="orbit" @reset-view="resetView" />
 
 These controls update the scene used by every figure. Distances are arbitrary scene units; the offset is perpendicular to $\Pi$. Camera orientations and intrinsics stay fixed. Purple $e'$ is $C_1$ projected into image 2; $Hx_1$ and $x_2$ lie on its line.
 
@@ -106,7 +115,7 @@ $x_1,x_2$ are the feature's positions in the two images; $H$ is the reference pl
 
 The fundamental matrix $F$ maps image position $x_1$ to an epipolar line $l'$ containing its match $x_2$. The essential matrix $E$ expresses this constraint in calibrated camera coordinates.
 
-<SceneFigure mode="epipolar" :world="world" :reader="reader" />
+<SceneFigure mode="epipolar" :world="world" :reader="reader" @orbit="orbit" @reset-view="resetView" />
 
 **Symbols:** $C_1,C_2$ are camera projection centres; $x_1,x_2$ are where their viewing rays through feature $X$ intersect the virtual image planes. $e,e'$ are the cameras' projections into each other's images. $K_1,K_2$ are intrinsics; $R,t$ are relative rotation and translation; $[t]_\times$ represents the cross product with $t$.
 
@@ -147,6 +156,8 @@ node docs/camera-equivalence/render-figures.mjs
 ```
 
 The renderer requires LaTeX with TikZ/standalone and `dvisvgm`. Generated `.tex` and `.svg` files are committed together; geometry edits belong in the shared modules.
+
+`scene.browser.mjs` exports a browser regression fixture taking a Playwright page open on this document. It checks drag orbit, shared/reset viewpoints, unchanged sensor plots and click-to-comment labels.
 
 <style>
 .scene-controls {

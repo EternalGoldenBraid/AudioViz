@@ -63,7 +63,7 @@ test("sampled flow uses actual visible 3D correspondences; independent motion ca
 });
 
 test("the reader is a perspective observer with fixed scene bounds, independent of feature height", () => {
-  for (const azimuth of [-40, 25, 40]) for (const elevation of [8, 22, 45]) {
+  for (const azimuth of [-180, -90, 25, 90, 180]) for (const elevation of [-80, 0, 22, 80]) {
     const reader = readerView({ azimuth, elevation });
     for (const baseline of [0, 6]) for (const height of [0, 2.5]) {
       const w = createWorld({ baseline, height });
@@ -83,7 +83,7 @@ test("the reader is a perspective observer with fixed scene bounds, independent 
 test("renderers share finite bounded primitives; reader motion leaves sensor-coordinate plots unchanged", () => {
   for (const baseline of [0,6]) for (const height of [0,2.5]) {
     const w = createWorld({baseline,height});
-    for (const azimuth of [-40,25,40]) for (const elevation of [8,22,45]) {
+    for (const azimuth of [-180,-90,25,90,180]) for (const elevation of [-80,0,22,80]) {
       const reader = readerView({azimuth,elevation});
       for (const mode of Object.keys(MODES)) {
         const figure = buildFigure(mode,w,reader);

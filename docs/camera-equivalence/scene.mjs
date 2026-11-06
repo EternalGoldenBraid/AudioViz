@@ -1,4 +1,5 @@
 export const DEFAULTS = Object.freeze({ baseline: 6, height: 1.4, azimuth: 25, elevation: 22 });
+export const READER_LIMITS = Object.freeze({ azimuth: 180, elevation: 80 });
 export const SIZE = Object.freeze({ width: 800, height: 420 });
 export const add = (a, b) => a.map((x, i) => x + b[i]);
 export const sub = (a, b) => a.map((x, i) => x - b[i]);
@@ -117,8 +118,8 @@ export function createWorld({ baseline = DEFAULTS.baseline, height = DEFAULTS.he
   return world;
 }
 export function readerView({ azimuth = DEFAULTS.azimuth, elevation = DEFAULTS.elevation } = {}) {
-  bounded(azimuth, -40, 40, "Reader azimuth");
-  bounded(elevation, 8, 45, "Reader elevation");
+  bounded(azimuth, -READER_LIMITS.azimuth, READER_LIMITS.azimuth, "Reader azimuth");
+  bounded(elevation, -READER_LIMITS.elevation, READER_LIMITS.elevation, "Reader elevation");
   const a = azimuth * Math.PI / 180, e = elevation * Math.PI / 180;
   const target = [0, 0, 2.5];
   const origin = add(target, [18*Math.sin(a)*Math.cos(e), 18*Math.sin(e), -18*Math.cos(a)*Math.cos(e)]);
@@ -130,6 +131,7 @@ export function readerView({ azimuth = DEFAULTS.azimuth, elevation = DEFAULTS.el
   const zoom = Math.min((SIZE.width-120)/(high[0]-low[0]), (SIZE.height-90)/(high[1]-low[1]));
   const centre = low.map((x, i) => (x + high[i]) / 2);
   return {
+    azimuth, elevation,
     observer,
     project(point) {
       const uv = project(observer, point).uv;

@@ -1,6 +1,7 @@
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { buildFigure, COLORS } from "./figures.mjs";
+import { READER_LIMITS } from "./scene.mjs";
 
 const props = defineProps({
   mode: { type: String, required: true },
@@ -8,6 +9,47 @@ const props = defineProps({
   reader: { type: Object, required: true },
 });
 const figure = computed(() => buildFigure(props.mode, props.world, props.reader));
+const emit = defineEmits(["orbit", "reset-view"]);
+const spatial = computed(() => !["flow", "predictions"].includes(props.mode));
+const dragging = ref(false);
+let gesture = null;
+let moved = false;
+
+function startDrag(event) {
+  if (!spatial.value || !event.isPrimary || event.button !== 0 || event.pointerType === "touch") return;
+  moved = false;
+  gesture = {
+    id: event.pointerId, x: event.clientX, y: event.clientY,
+    azimuth: props.reader.azimuth, elevation: props.reader.elevation,
+  };
+}
+function drag(event) {
+  if (!gesture || event.pointerId !== gesture.id) return;
+  const dx = event.clientX-gesture.x, dy = event.clientY-gesture.y;
+  if (!moved && Math.hypot(dx,dy) < 4) return;
+  if (!moved) event.currentTarget.setPointerCapture(event.pointerId);
+  moved = dragging.value = true;
+  event.preventDefault();
+  const azimuth = ((Math.round(gesture.azimuth+dx*0.4)+180)%360+360)%360-180;
+  const elevation = Math.round(Math.max(-READER_LIMITS.elevation,Math.min(READER_LIMITS.elevation,gesture.elevation-dy*0.4)));
+  emit("orbit", { azimuth, elevation });
+}
+function endDrag(event) {
+  if (gesture && event && event.pointerId !== gesture.id) return;
+  gesture = null;
+  dragging.value = false;
+}
+function cancelDrag() {
+  endDrag();
+  moved = false;
+}
+function finishMouse(event) {
+  // A drag release is not a click-to-comment gesture.
+  if (moved && event.button === 0) {
+    event.stopPropagation();
+    moved = false;
+  }
+}
 const residual = computed(() => Math.hypot(
   ...props.world.predicted.uv.map((x, i) => x - props.world.observations[1].uv[i]),
 ).toFixed(3));
@@ -15,8 +57,16 @@ const residual = computed(() => Math.hypot(
 
 <template>
   <figure class="scene-figure" :data-scene-mode="mode">
+    <div v-if="spatial" class="scene-orbit-controls">
+      <span>Mouse drag to rotate</span>
+      <button type="button" @click="emit('reset-view')">Reset view</button>
+    </div>
     <div class="scene-viewport">
-      <svg :viewBox="`0 0 ${figure.width} ${figure.height}`" role="img" :aria-label="figure.title">
+      <svg :viewBox="`0 0 ${figure.width} ${figure.height}`" role="img" :aria-label="figure.title"
+        :class="{ orbitable: spatial, orbiting: dragging }"
+        @pointerdown="startDrag" @pointermove="drag" @pointerup="endDrag"
+        @pointercancel="cancelDrag" @lostpointercapture="endDrag"
+        @pointerleave="!dragging && endDrag()" @mouseup="finishMouse">
         <rect width="100%" height="100%" :fill="COLORS.bg" />
         <g v-for="(shape, i) in figure.shapes" :key="i">
           <polygon v-if="shape.type === 'polygon'" :points="shape.points.map(p => p.join(',')).join(' ')"
@@ -51,6 +101,25 @@ const residual = computed(() => Math.hypot(
   font-family: "Latin Modern Roman", "CMU Serif", "Computer Modern", serif;
 }
 .scene-viewport { overflow-x: auto; }
+.orbitable { cursor: grab; user-select: none; }
+.orbiting { cursor: grabbing; }
+.scene-orbit-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  color: #9AA5B1;
+  font-size: 14px;
+}
+.scene-orbit-controls button {
+  padding: 4px 8px;
+  border: 1px solid #9AA5B1;
+  color: #F0C060;
+  background: #1B1F27;
+  font: inherit;
+  cursor: pointer;
+}
 svg {
   display: block;
   width: 100%;
