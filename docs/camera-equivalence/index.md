@@ -96,19 +96,15 @@ Uniform scale, rotation and translation form a **similarity**. Unequal scale or 
 
 Here $s$ is a uniform scale, $R_{\mathrm{2D}}$ a planar rotation, $t_{\mathrm{2D}}$ a 2D translation, and $A$ an invertible $2\times2$ matrix. $\widetilde x=[x^\top,1]^\top$ lifts an image position into homogeneous coordinates; $\sim$ means equality up to scale. Uniform scale alone stays within similarity. Plane-plus-parallax is a description of 3D structure under camera translation, not another single 2D matrix.
 
-Move either slider continuously or select a milestone. The experiment first zooms and rolls camera 2, then tilts the reference plane, then turns camera 2, and finally lifts interior samples off the plane. Each stage retains the earlier changes.
+Move the slider continuously or select a milestone. The experiment first zooms and rolls camera 2, then tilts the reference plane, then turns camera 2, and finally lifts interior samples off the plane. Each stage retains the earlier changes.
 
-#### Image matches (2D)
+#### Scene and camera images {#scene-construction-3d}
 
-<TransformProgression :reader="reader" />
+One slider drives the 3D construction and both camera images together. The image views stay directly beneath the scene; their coordinates do not change when you rotate the reader.
 
-The image-1 grid defines fixed viewing rays. Their intersections with $\Pi$ construct the plane samples in 3D; the final stage moves interior samples toward camera 1 along those rays. Parallel optical axes at equal camera depth give an exact affine mapping of the tilted plane.
+<TransformProgression :reader="reader" @orbit="orbit" @reset-view="resetView" />
 
-#### Scene construction (3D)
-
-This view has its own progression slider. At matching slider values, the 2D and 3D views use identical points and pinhole cameras.
-
-<TransformProgression view="3d" :reader="reader" @orbit="orbit" @reset-view="resetView" />
+The image-1 grid defines fixed viewing rays. Their intersections with $\Pi$ construct the plane samples in 3D; the final stage moves interior samples toward camera 1 along those rays. Both image views project those same points through the same cameras shown above them. Parallel optical axes at equal camera depth give an exact affine mapping of the tilted plane.
 
 The experiment has its own controlled geometry and fixed framing; its reader orientation is shared with the main scene. The baseline and off-plane controls below still belong to the main scene. Parallax needs camera translation and off-plane structure; it vanishes for a plane or coincident camera centres.
 
@@ -187,7 +183,7 @@ node docs/camera-equivalence/render-figures.mjs
 
 The renderer requires LaTeX with TikZ/standalone and `dvisvgm`. Generated `.tex` and `.svg` files are committed together; geometry edits belong in the shared modules.
 
-`scene.browser.mjs` and `progression.browser.mjs` export browser regression fixtures taking a Playwright page open on this document. They check drag orbit, shared/reset viewpoints, unchanged sensor plots, click-to-comment labels, transform milestones and keyboard operation.
+`scene.browser.mjs` and `progression.browser.mjs` export browser regression fixtures taking a Playwright page open on this document. They check drag orbit, shared/reset viewpoints, unchanged sensor plots, click-to-comment labels, synchronized scene/image milestones and keyboard operation.
 
 <style>
 .scene-controls {
