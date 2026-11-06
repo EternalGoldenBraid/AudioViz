@@ -29,7 +29,7 @@ The figures share one synthetic 3D scene. Their camera parameters are known for 
 
 <SceneFigure mode="world" :world="world" :reader="reader" />
 
-**In the figure:** $C_k$ is a camera's projection centre; $I_k$ its virtual image plane (green or coral); $O_k$ its image-coordinate origin, where the optical axis meets that plane. $X$ is a test feature and $x_k$ its ray's intersection with $I_k$. $\Pi$ is the blue reference plane. Camera centres are not image origins.
+**In the figure:** $W$ marks the world origin. $C_k$ is a camera's projection centre; $I_k$ its virtual image plane (green or coral); $O_k$ its image-coordinate origin, where the optical axis meets that plane. $X$ is a test feature and $x_k$ its ray's intersection with $I_k$. $\Pi$ is the blue reference plane. Camera centres are not image origins.
 
 The virtual surfaces are transparent. At projected edge/ray crossings, the farther stroke has a small gap to show depth. Only labelled dots mark the actual ray/plane intersections.
 

@@ -84,7 +84,7 @@ export function buildFigure(mode, world, reader) {
         line(add(p,[0,-3]),add(p,[0,3]),COLORS.dim);
         label(p, i ? "O₂" : "O₁", `$O_${i+1}$`, COLORS.dim, i ? [20,0] : [-16,-14], i ? "start" : "end");
       }
-      const origin = [-5.3,-1.5,0];
+      const origin = [0,0,0];
       for (const [axis, color, text, tex] of [
         [[0.8,0,0],COLORS.c2,"x","$x$"], [[0,0.8,0],COLORS.c1,"y","$y$"], [[0,0,0.8],COLORS.prediction,"z","$z$"],
       ]) {

@@ -96,6 +96,8 @@ test("renderers share finite bounded primitives; reader motion leaves sensor-coo
       const h = buildFigure("homography",w,reader), p = buildFigure("parallax",w,reader);
       same(h.shapes.find(s => s.id==="plane-point").p, p.shapes.find(s => s.id==="plane-point").p);
       same(h.shapes.find(s => s.id==="predicted").p, reader.project(w.predicted.point));
+      same(buildFigure("world",w,reader).shapes.find(s => s.text==="W").p,
+        add(reader.project([0,0,0]),[-12,12]));
     }
     for (const mode of ["flow","predictions"]) {
       assert.deepEqual(buildFigure(mode,w,readerView()), buildFigure(mode,w,readerView({azimuth:-30})));
