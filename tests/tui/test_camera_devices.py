@@ -96,3 +96,24 @@ def test_choices_are_read_fresh_and_a_renumbered_device_is_matched_by_name():
     assert control.choices[-1] == "4: Trust"
     control.select(None, ["0: EO", "5: Trust"])  # a stale client still names the old index
     assert control.selected() == ["0: EO", "4: Trust"]
+
+
+def test_config_roundtrip_retains_both_camera_selections_and_matches_new_indices(tmp_path):
+    import json
+    from audioviz.tui.deck_server import DeckServer
+
+    primary, secondary = _sources()
+    listing = {"now": CHOICES}
+    camera = CameraDevices(lambda: listing["now"], primary, secondary)
+    camera.select(None, list(CHOICES))
+    server = object.__new__(DeckServer)
+    server.target = None
+    server.controls = {"camera": camera}
+    server.config_path = tmp_path / "settings.json"
+    server.save({"backend": "window"})
+    assert json.loads(server.config_path.read_text())["mixer"]["camera"] == list(CHOICES)
+    camera.select(None, [])
+    listing["now"] = ("4: EO", "5: IR")
+    server.load(strict=True)
+    assert camera.selected() == ["4: EO", "5: IR"]
+    camera.select(None, [])

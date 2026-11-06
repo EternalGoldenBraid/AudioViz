@@ -104,9 +104,20 @@ class DeckClient:
             else:
                 self.previews[name] = np.frombuffer(base64.b64decode(image["data"]), dtype=np.uint8).reshape(image["shape"])
 
-    def save(self) -> str:
-        """Writes the window's current knob values to its deck config file; returns the path."""
-        return self._call({"op": "save"})["saved"]
+    def save(self, path: Path | None = None, state: dict | None = None) -> str:
+        """Writes current runtime values and optional TUI state to one config."""
+        request = {"op": "save"}
+        if path is not None:
+            request["path"] = str(path)
+        if state is not None:
+            request["state"] = state
+        return self._call(request)["saved"]
+
+    def load(self, path: Path) -> None:
+        self._call({"op": "load", "path": str(path)})
+
+    def reset(self) -> None:
+        self._call({"op": "reset"})
 
     def rescan(self) -> None:
         """Asks the window to re-list its devices; audio streams are briefly reopened."""
@@ -117,6 +128,9 @@ class DeckClient:
 
     def nudge(self, name: str, steps: int) -> None:
         self._call({"op": "nudge", "name": name, "steps": steps})
+
+    def set(self, name: str, value) -> None:
+        self._call({"op": "set", "name": name, "value": value})
 
     def controls(self) -> list["RemoteControl"]:
         return [RemoteControl(name, self) for name in self.state]
@@ -132,6 +146,18 @@ class RemoteControl:
     @property
     def toggle(self) -> bool:
         return self.client.state[self.name]["toggle"]
+
+    @property
+    def category(self) -> str | None:
+        return self.client.state[self.name].get("category")
+
+    @property
+    def description(self) -> str:
+        return self.client.state[self.name].get("description", "")
+
+    @property
+    def label(self) -> str | None:
+        return self.client.state[self.name].get("label")
 
     def position(self, context=None) -> float:
         return self.client.state[self.name]["position"]
@@ -163,7 +189,8 @@ class RemoteControl:
         self.client.nudge(self.name, steps)
 
     def get(self, context=None):
-        return self.client.state[self.name]["text"]
+        state = self.client.state[self.name]
+        return state.get("value", state["text"])
 
     def set(self, context, value) -> None:
         pass  # restoring a saved state never writes to the live window

@@ -91,6 +91,8 @@ class GraphRuntime:
         """Resize the grid, carrying over mixer settings; learned weights are reset."""
         resolution = parse_resolution(resolution)
         with self.lock:
+            if resolution == self.resolution:
+                return
             audio = self.orchestrator.audio_source
             config = replace(
                 self.orchestrator.config,

@@ -19,6 +19,10 @@ class Control:
     log: bool = False
     toggle: bool = False
     choices: tuple | None = None  # discrete values; h/l step through them
+    category: str | None = None
+    description: str = ""
+    label: str | None = None
+    step: float | None = None
 
     def _index(self, runtime) -> int:
         value = self.get(runtime)
@@ -44,6 +48,9 @@ class Control:
             return
         if self.toggle:
             self.set(runtime, 1.0 if steps > 0 else 0.0)
+            return
+        if self.step is not None:
+            self.set(runtime, min(max(self.get(runtime) + steps * self.step, self.low), self.high))
             return
         position = min(max(self.position(runtime) + steps / STEPS, 0.0), 1.0)
         if self.log:
@@ -85,4 +92,11 @@ CONTROLS: tuple[Control, ...] = (
     Control("canvas rate", 0.0001, 1.0, _config("canvas_rate"), _pathway("canvas_rate"), log=True),
     Control("learning", 0, 1, _config("learning_enabled"), lambda r, v: _pathway("learning_enabled")(r, bool(v)), toggle=True),
     Control("learning rate", 0.0001, 1.0, _config("learning_rate"), _pathway("learning_rate"), log=True),
+    Control("inference steps", 1, 64, _config("inference_steps"),
+            lambda r, v: _pathway("inference_steps")(r, int(v)), step=1),
+    Control("weight decay", 0, 1, _config("weight_decay"), _pathway("weight_decay"), step=0.0001),
+    Control("weight clip", 0.0001, 1000, _config("weight_clip"), _pathway("weight_clip"), step=0.01),
+    Control("gradient clip", 0.0001, 1000, _config("gradient_clip"), _pathway("gradient_clip"), step=0.01),
+    Control("hidden loop", 0, 1, _config("cross_modal_enabled"),
+            lambda r, v: _pathway("cross_modal_enabled")(r, bool(v)), toggle=True),
 )

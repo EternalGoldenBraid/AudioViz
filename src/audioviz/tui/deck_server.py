@@ -2,7 +2,8 @@
 
 JSON lines. Requests: {"op": "controls"} | {"op": "nudge", "name": n, "steps": k}
                       | {"op": "set", "name": n, "value": v} | {"op": "select", "name": n, "values": [v, ...]}
-                      | {"op": "save"} | {"op": "views", "views": [[name, rows, cols], ...]}
+                      | {"op": "save", "path": p, "state": ui} | {"op": "load", "path": p}
+                      | {"op": "reset"} | {"op": "views", "views": [[name, rows, cols], ...]}
 Every reply is {"controls": [...]} describing the current state of each control, or {"error": ...}.
 A views reply is {"views": {name: {"shape": [h, w, 3], "data": base64 uint8} | null}}: the images the TUI's
 view functions draw from the window's own graph, null while a node has no data.
@@ -24,6 +25,7 @@ from audioviz.tui.deck_devices import audio_controls, device_controls
 from audioviz.tui.graph_runtime import format_resolution, parse_resolution
 from audioviz.tui.mixer import CONTROLS, Control
 from audioviz.tui.settings import RESOLUTIONS
+from audioviz.tui.window_settings import window_settings
 from audioviz.sources.orchestrator import AUDIO_MODELS
 
 MAX_PREVIEW_PX = 160  # default longest side of a served view; the TUI may ask for up to MAX_PREVIEW_LIMIT
@@ -54,7 +56,8 @@ def saved_grid(config_path: Path = DECK_CONFIG) -> tuple[int, int] | None:
     """The grid saved by the deck, read before the window is built."""
     if not config_path.exists():
         return None
-    value = json.loads(config_path.read_text()).get(GRID_CONTROL)
+    data = json.loads(config_path.read_text())
+    value = data.get("mixer", data).get(GRID_CONTROL)
     return parse_resolution(value) if value else None
 
 
@@ -128,10 +131,18 @@ def describe_control(control, target) -> dict:
         "text": control.format(target),
         "choices": list(control.choices) if control.choices else None,
         "toggle": control.toggle,
+        "value": control_value(control, target),
+        "category": getattr(control, "category", None),
+        "description": getattr(control, "description", ""),
+        "label": getattr(control, "label", None),
     }
     if hasattr(control, "selected"):  # a device list: the checked entries and how many may be checked
         description.update(selected=control.selected(target), capacity=control.capacity)
     return description
+
+
+def control_value(control, target):
+    return control.selected(target) if hasattr(control, "selected") else control.get(target)
 
 
 class DeckServer:
@@ -142,6 +153,8 @@ class DeckServer:
         self.controls["speed"] = replace(self.controls["speed"], low=10.0, high=3000.0, log=True)  # the window runs in m/s
         if hasattr(window, "resolution"):
             self.controls[GRID_CONTROL] = grid_control(window.resolution)
+        if getattr(window, "source_control_binding", None) is not None:
+            self.controls.update(window_settings(window))
         if getattr(window, "processor", None) is not None:
             self.controls.update(device_controls(window, query_audio_devices()))
             self.controls["audio model"] = Control(
@@ -188,7 +201,15 @@ class DeckServer:
             else:
                 control.set(self.target, request["value"])
         elif op == "save":
-            saved = self.save()
+            saved = self.save(request.get("state"), Path(request["path"]) if "path" in request else None)
+        elif op == "load":
+            self.load(Path(request["path"]), strict=True)
+        elif op == "reset":
+            window = self.target.window
+            if not window.renderer.prepare_frame():
+                raise RuntimeError("Renderer is not ready to reset.")
+            window.engine.reset()
+            window._sync_after_reset()
         elif op == "rescan":
             self.rescan_devices()
         elif op != "controls":
@@ -219,24 +240,55 @@ class DeckServer:
         except Exception:  # a node the window does not have yet, or a view that needs the local graph
             return None
 
-    def save(self) -> str:
-        values = {name: control.get(self.target) for name, control in self.controls.items()}
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        self.config_path.write_text(json.dumps(values, indent=2) + "\n")
-        return str(self.config_path)
+    def save(self, state: dict | None = None, path: Path | None = None) -> str:
+        values = {name: control_value(control, self.target) for name, control in self.controls.items()}
+        path = path or self.config_path
+        data = values if state is None else {**state, "backend": "window", "mixer": values}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, allow_nan=False) + "\n")
+        return str(path.resolve())
 
-    def load(self) -> None:
-        """Applies the saved values; entries the window no longer offers, or whose device fails to open, are skipped."""
-        if not self.config_path.exists():
+    def load(self, path: Path | None = None, strict: bool = False) -> None:
+        """Startup reports unavailable values; explicit loads report any partial application."""
+        path = path or self.config_path
+        if not path.exists() and not strict:
             return
-        for name, value in json.loads(self.config_path.read_text()).items():
+        data = json.loads(path.read_text())
+        if data.get("backend") == "standalone":
+            message = "This config belongs to the standalone graph, not the Qt runtime."
+            if strict:
+                raise ValueError(message)
+            print(f"deck config: {message} Runtime settings not applied.")
+            return
+        errors = []
+        for name, value in data.get("mixer", data).items():
             control = self.controls.get(name)
             if control is None:
                 continue
-            if control.choices and value not in control.choices:
-                value = next((c for c in control.choices if c.split(": ", 1)[-1] == str(value).split(": ", 1)[-1]), None)
             try:
-                if value is not None:
-                    control.set(self.target, value)
+                if hasattr(control, "selected"):
+                    values = value if isinstance(value, list) else ([] if value == "off" else str(value).split(", "))
+                    by_name = {c.split(": ", 1)[-1]: c for c in control.choices}
+                    selected = [v if v in control.choices else by_name.get(v.split(": ", 1)[-1]) for v in values]
+                    if None in selected:
+                        raise ValueError("saved device is unavailable")
+                    if selected or control.selected(self.target):
+                        control.select(self.target, selected)
+                    continue
+                if control.choices and value not in control.choices:
+                    value = next((c for c in control.choices if c.split(": ", 1)[-1] == str(value).split(": ", 1)[-1]), None)
+                if control.toggle and isinstance(value, str):
+                    if value not in ("on", "off"):
+                        raise ValueError("toggle value must be on/off or a boolean")
+                    value = value == "on"
+                if value is None:
+                    raise ValueError("saved choice is unavailable")
+                control.set(self.target, value)
             except Exception as error:  # an unplugged device must not stop the window starting
-                print(f"deck config: {name}={value!r} skipped: {error}")
+                message = f"{name}={value!r}: {error}"
+                if strict:
+                    errors.append(message)
+                else:
+                    print(f"deck config: {message}")
+        if errors:
+            raise ValueError("Config applied partially: " + "; ".join(errors))

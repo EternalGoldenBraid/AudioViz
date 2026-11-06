@@ -120,6 +120,11 @@ class RippleSourceControlBinding:
             ),
         )
 
+    def control_value(self, section_key: str, control_key: str) -> ControlValue:
+        """Section definitions carry the current values from their source/config."""
+        section = next(s for s in self.build_sections() if s.key == section_key)
+        return next(c.default for c in section.controls if c.key == control_key)
+
     def update_control(
         self,
         section_key: str,
