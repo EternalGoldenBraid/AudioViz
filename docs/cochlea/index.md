@@ -11,6 +11,27 @@ The blue route is synthesis. The red return is inference. The microphone
 constrains the sum, not sixteen independently measured oscillator responses.
 Position and quadrature remain signed.
 
+## Explore the dynamics
+
+<script setup>
+import CochleaExperiment from './CochleaExperiment.vue'
+</script>
+
+Change the input and inference parameters, then inspect any sample. The blue
+positions synthesize the prediction **before** that sample corrects them.
+
+<CochleaExperiment />
+
+The browser runs the same sample recurrence as the Python `Cochlea`; regression
+tests compare its predictions, residuals, intermediate states and RMS history
+against that implementation. All interactive plots share one computed
+trajectory. No audio device is opened.
+
+The synthetic tone has amplitude 0.35 and 2 ms linear onset/offset ramps.
+History bins summarize 32 samples. The experiment models local state inference,
+not graph-weight learning; changing Q changes the oscillator dynamics, while
+changing &eta; changes how strongly the raw error corrects them.
+
 ## Try it
 
 From the cochlea worktree, run the **standalone TUI**:
@@ -378,6 +399,16 @@ keeps its local graph idle; no microphone or oscillator bank is started by
 opening the remote view.
 
 ## Reproduce and inspect
+
+Check the browser simulator against the Python implementation (requires Node.js):
+
+```bash
+uv run --group dev python -m pytest -q tests/docs/test_cochlea_simulation.py
+```
+
+`tests/docs/cochlea.browser.mjs` exports `checkCochlea(page, url)` for Playwright.
+It exercises the native controls, verifies the displayed sample values, and
+checks playback, pause and mobile layout against a running reviewer.
 
 Render the actual Qt history window without opening audio devices:
 
