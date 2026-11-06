@@ -4,7 +4,7 @@
 
     [navigate]
     focus_left = "h"
-    next_tile = ["tab", "w"]
+    next_tile = "w"
 """
 
 import os
@@ -30,8 +30,8 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("navigate", "focus_down", ("j",), "focus the tile below"),
     Binding("navigate", "focus_up", ("k",), "focus the tile above"),
     Binding("navigate", "focus_right", ("l",), "focus the tile to the right"),
-    Binding("navigate", "next_tile", ("tab", "w"), "focus the next tile"),
-    Binding("navigate", "prev_tile", ("shift+tab",), "focus the previous tile"),
+    Binding("navigate", "next_tile", ("w",), "focus the next tile"),
+    Binding("navigate", "prev_tile", ("b",), "focus the previous tile"),
     Binding("navigate", "rise", ("escape",), "focus the whole group"),
     Binding("navigate", "dive", ("enter",), "enter a knob or log, or leave group focus"),
     Binding("arrange", "move_left", ("H",), "move the tile or group left"),
@@ -56,8 +56,8 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("group", "select_right", ("l",), "add the tile to the right", "visual"),
     Binding("group", "commit_group", ("g", "enter"), "group the selection", "visual"),
     Binding("group", "cancel_group", ("escape",), "cancel the selection", "visual"),
-    Binding("tabs", "tab_next", ("g t",), "next settings tab"),
-    Binding("tabs", "tab_prev", ("g T",), "previous settings tab"),
+    Binding("tabs", "tab_next", ("tab",), "next tab"),
+    Binding("tabs", "tab_prev", ("shift+tab",), "previous tab"),
     Binding("view", "zoom", ("z",), "zoom: resize the tile to the whole stage, again to restore"),
     Binding("view", "immersive", ("F",), "fullscreen"),
     Binding("view", "render", ("r",), "cycle the render mode"),

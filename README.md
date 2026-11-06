@@ -89,8 +89,8 @@ paths. Refresh any shells that still use the old directory or environment.
 ## 🎛️ Interactive Controls
 
 The TUI has **Overview, Audio, Wave, Inference, Learning, Sources and Interface**
-tabs. `gt` / `gT` switch tabs; `:tab audio` selects one directly. In settings
-tabs, h/j/k/l or Tab navigate, Enter enters a knob, h/l adjusts it, and Enter/Esc
+tabs. Tab / Shift-Tab switch tabs; `:tab audio` selects one directly. In settings
+tabs, h/j/k/l or w/b navigate, Enter enters a knob, h/l adjusts it, and Enter/Esc
 leaves it. n/p or Ctrl-f/b page through longer grids. The Qt sliders remain
 available with `--no-tui`.
 

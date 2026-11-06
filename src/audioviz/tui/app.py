@@ -340,7 +340,7 @@ class AudioVizApp(App):
                             yield ViewTile(name, self.runtime, self.deck if self.attached else None, id=name)
             for category in SETTING_TABS:
                 with TabPane(category.title(), id=category):
-                    yield Static("h/j/k/l navigate  Enter edit  gt/gT tabs  n/p page  :w save", classes="settings-help")
+                    yield Static("h/j/k/l navigate  Enter edit  Tab/S-Tab tabs  n/p page  :w save", classes="settings-help")
                     with VerticalScroll(), Grid(classes="settings-grid"):
                         for i, (_, context, control) in enumerate(self.knobs):
                             if control_category(control) == category:
@@ -750,12 +750,14 @@ class AudioVizApp(App):
         self.run_worker(apply, thread=True, group="deck-select")
 
     def set_editing(self, on: bool) -> None:
-        knob = self.focused
-        if isinstance(knob, KnobTile):
-            knob.editing = on
-            knob.set_class(on, "-editing")
-            knob.refresh_view()
-        self.set_mode("EDIT" if on and isinstance(knob, KnobTile) else "NORMAL")
+        """Leaving edit mode clears the entered widget even after focus has moved."""
+        knobs = [self.focused] if on else self.query(KnobTile).filter(".-editing")
+        for knob in knobs:
+            if isinstance(knob, KnobTile):
+                knob.editing = on
+                knob.set_class(on, "-editing")
+                knob.refresh_view()
+        self.set_mode("EDIT" if on and isinstance(self.focused, KnobTile) else "NORMAL")
 
     def stage_size(self) -> tuple[int, int]:
         header = 0 if self.immersive else (self.query_one(TabbedContent).query_one(Tabs).size.height or 2)
@@ -1082,8 +1084,10 @@ class AudioVizApp(App):
 
     def lookup(self, mode: str, key: str) -> str | None:
         action = self.keymap.get((mode, key))
-        if action is None and mode == "knob":
-            action = self.keymap.get(("normal", key))
+        if action is None and mode in ("knob", "edit", "log"):
+            normal = self.keymap.get(("normal", key))
+            if mode == "knob" or normal in ("tab_next", "tab_prev"):
+                action = normal
         return action
 
     def starts_sequence(self, mode: str, key: str) -> bool:

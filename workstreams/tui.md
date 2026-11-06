@@ -47,10 +47,10 @@ a screenshot, and `:record` defaults to the project's `recordings/` directory.
 Project configs are available for version control; device-specific
 `config/audio_devices.json` remains local.
 
-**Settings tabs.** `gt` / `gT` cycle Overview, Audio, Wave, Inference, Learning,
+**Settings tabs.** Tab / Shift-Tab cycle Overview, Audio, Wave, Inference, Learning,
 Sources and Interface; `:tab <name>` selects one directly. Overview retains
 floating tiles. Settings tabs use a scrollable two-column grid: h/j/k/l or
-Tab navigate, Enter enters a knob, h/l adjusts, and Enter/Esc leaves it. n/p or
+w/b navigate, Enter enters a knob, h/l adjusts, and Enter/Esc leaves it. n/p or
 Ctrl-f/b page through longer grids. These are views of the same live controls,
 so switching tabs never starts another graph or resets learned state.
 
