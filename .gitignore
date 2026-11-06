@@ -9,4 +9,5 @@ outputs/cochlea/
 recordings/
 config/audio_devices.json
 .tmux-workspace/
+/worktrees/
 __pycache__/

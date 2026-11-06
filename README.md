@@ -65,6 +65,23 @@ device setup. Quitting stops the window process it launched.
 `--no-tui` keeps the window-only path and its terminal prompts. The device file
 is ignored by Git; `config/audio_devices.example.json` documents its structure.
 
+### Worktree layout
+
+The primary checkout owns Git metadata and remains at the repository root.
+Keep linked checkouts as siblings beneath its `worktrees/` directory. From
+the primary checkout, for example:
+
+```bash
+git worktree add -b agent/example worktrees/example agent/integration
+```
+
+Each checkout owns its environment, local device configuration, named settings
+and outputs. Keep the parent checkout's `worktrees/` directory excluded from
+version control. Stop applications before relocating their checkout with
+`git worktree move`. Repair the moved environment before launching again:
+activation scripts, command entrypoints and editable installs contain absolute
+paths. Refresh any shells that still use the old directory or environment.
+
 ---
 
 ---
