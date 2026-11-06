@@ -302,6 +302,8 @@ class AudioVizApp(App):
         self.mixer_ids = [k for k, ctx, _ in self.knobs if ctx is self.mixer_context]
         self.settings_ids = [k for k, ctx, _ in self.knobs if ctx is self]
         self.layout_size: tuple[int, int] | None = None  # the stage size the placements were laid out for; set on mount
+        self._layout_reference: tuple[tuple[int, int], dict[str, Placement]] | None = None
+        self._fitted_layout: tuple[tuple[int, int], dict[str, Placement]] | None = None
         self.placements = default_layout(120, 36, self.mixer_ids, self.settings_ids)  # resized to the real stage on mount
         self.pages: dict[str, dict[str, int]] = {self.mixer_ids[0]: {"size": MIXER_PAGE, "index": 0}}  # by group's first member
         self.group_focus: list[str] = []  # non-empty while a whole group is the focused node
@@ -511,7 +513,6 @@ class AudioVizApp(App):
         # Textual can deliver a queued timer after shutdown has begun pruning widgets.
         if not self.is_running:
             return
-        self.fit_if_resized()
         pane = self.query_one(f"#{self.workspace}", TabPane)
         for tile in pane.query(ViewTile):
             if tile.display:
@@ -581,14 +582,14 @@ class AudioVizApp(App):
     def apply_layout(self) -> None:
         container = self.query_one("#stage")
         container.styles.layers = tuple(f"z{i}" for i in range(len(self.stack)))
-        stage = container.size
+        width, height = self.stage_size()
         for depth, name in enumerate(self.stack):
             placement = self.placements[name]
             widget = self.query_one(f"#{name}")
             styles = widget.styles
             if self.zoomed == name:  # zoom is only a resize: the tile takes the whole stage, whatever it is
                 placement.x = placement.y = 0
-                placement.width, placement.height = stage.width, stage.height
+                placement.width, placement.height = width, height
             widget.display = self.visible(name)
             styles.offset = (placement.x, placement.y)
             styles.width = placement.width
@@ -801,23 +802,38 @@ class AudioVizApp(App):
             self.open_devices()
 
     def refit(self) -> None:
-        """Scale placements from the size they were laid out for to the current terminal.
+        """Map shared edges from a stable layout so successive resizes do not lose cells.
 
-        Knob tiles keep their height and stay anchored to the bottom; every other tile scales
-        in both directions over the space above the knob strip.
+        Manual edits establish a new reference. Knobs keep their height and bottom
+        offset; zoom preserves the fitted underlying placement.
         """
-        (old_w, old_h), (new_w, new_h) = self.layout_size, self.stage_size()
-        knobs = [p for n, p in self.placements.items() if n.startswith("knob-")]
+        assert self.layout_size is not None, "A fitted layout needs its source viewport"
+        layout = self.layout_placements()
+        if self._layout_reference is None or (self.layout_size, layout) != self._fitted_layout:
+            self._layout_reference = (self.layout_size, layout)
+        (old_w, old_h), reference = self._layout_reference
+        new_w, new_h = self.stage_size()
+        knobs = [p for n, p in reference.items() if n.startswith("knob-")]
         strip = old_h - min((p.y for p in knobs), default=old_h)
         sx, sy = new_w / old_w, max(new_h - strip, 3) / max(old_h - strip, 3)
-        for name, p in self.placements.items():
-            p.x, p.width = round(p.x * sx), max(round(p.width * sx), 4)
+        for name, p in reference.items():
+            x = round(p.x * sx)
             if name.startswith("knob-"):
-                p.y += new_h - old_h
+                y, height = p.y + new_h - old_h, p.height
             else:
-                p.y, p.height = round(p.y * sy), max(round(p.height * sy), 3)
+                y = round(p.y * sy)
+                height = max(round((p.y + p.height) * sy) - y, 1)
+            fitted = replace(p, x=x, y=y, width=max(round((p.x + p.width) * sx) - x, 1), height=height)
+            self.placements[name] = fitted
+            if name == self.zoomed and self.before_zoom is not None:
+                self.before_zoom = (replace(fitted), self.before_zoom[1])
         self.layout_size = (new_w, new_h)
+        self._fitted_layout = (self.layout_size, self.layout_placements())
         self.apply_layout()
+
+    def on_resize(self, event: events.Resize) -> None:
+        if self.deck_ready and self.layout_size is not None:
+            self.call_after_refresh(self.fit_if_resized)
 
     def fit_if_resized(self) -> None:
         if self.layout_size and self.layout_size != self.stage_size():
@@ -858,7 +874,7 @@ class AudioVizApp(App):
         if self.immersive != bool(self.zoomed):
             self.toggle_zoom()
         self.set_class(self.immersive, "-immersive")
-        self.call_after_refresh(self.apply_layout)  # the stage grows once the status bar is gone
+        self.call_after_refresh(self.fit_if_resized)
         if os.environ.get("TMUX") and self._tmux_zoomed != self.immersive:
             subprocess.run(["tmux", "resize-pane", "-Z"], check=False)
             self._tmux_zoomed = self.immersive
@@ -1322,19 +1338,27 @@ class AudioVizApp(App):
             self.report_status(f"Error: {error!r}")
 
 
-    def snapshot(self) -> dict:
-        """Everything a restart needs to look and sound the same; sound output stays off for safety."""
-        placements = self.placements.copy()
-        stack = self.stack.copy()
+    def layout_placements(self) -> dict[str, Placement]:
+        """Cell geometry without the temporary zoom transform."""
+        placements = {name: replace(p) for name, p in self.placements.items()}
         if self.zoomed:
             if self.before_zoom is None:
                 raise RuntimeError("Zoomed tile has no saved placement and stack depth")
-            placement, depth = self.before_zoom
-            placements[self.zoomed] = placement
+            placements[self.zoomed] = replace(self.before_zoom[0])
+        return placements
+
+    def snapshot(self) -> dict:
+        """Everything a restart needs to look and sound the same; sound output stays off for safety."""
+        assert self.layout_size is not None, "A saved layout needs its source viewport"
+        placements = self.layout_placements()
+        stack = self.stack.copy()
+        if self.zoomed and self.before_zoom is not None:
+            _, depth = self.before_zoom
             stack.remove(self.zoomed)
             stack.insert(min(depth, len(stack)), self.zoomed)
         return {
             "placements": {k: vars(v) for k, v in placements.items()},
+            "size": list(self.layout_size),
             "stack": stack,
             "groups": self.groups,
             "pages": self.pages,
@@ -1351,6 +1375,9 @@ class AudioVizApp(App):
 
     def restore(self, data: dict) -> None:
         same_tiles = set(data.get("placements", {})) == set(self.placements)  # a changed tile set gets the default layout
+        if same_tiles:
+            self.zoomed = None
+            self.before_zoom = None
         for name, values in data.get("placements", {}).items():
             if same_tiles:
                 self.placements[name] = Placement(**values)
@@ -1420,7 +1447,7 @@ class AudioVizApp(App):
         except Exception as error:  # a stale or hand-edited file must not stop the app starting
             self.report_status(f"Could not load {path.resolve()}: {error!r}")
         else:
-            self.apply_layout()
+            self.refit()
             if apply_runtime:
                 self.config_path = path.resolve()
             if not quiet:

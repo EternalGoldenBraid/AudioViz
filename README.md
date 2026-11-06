@@ -108,7 +108,11 @@ available with `--no-tui`.
 
 Alt+h/j/k/l resize the focused tile or group. `z` expands a tile to the stage
 and restores it when pressed again; saved decks keep its pre-zoom placement
-and stacking order. `T` lists tiles; `/` filters rows, Enter keeps the filter,
+and stacking order. Terminal resize events fit the layout without window-manager
+integration. Views share scaled edges, knobs keep their height and bottom offset,
+and repeated shrinking/growing preserves the layout. Saves include the source
+viewport size so they fit correctly when reopened in a different terminal.
+`T` lists tiles; `/` filters rows, Enter keeps the filter,
 and Esc clears it before dismissing the list. `:q` quits; `?` shows bindings.
 Enter the log to browse with j/k, Ctrl-f/b and gg. New entries preserve the
 reading position; G returns to the latest entry and resumes following.

@@ -10,6 +10,13 @@
 **Essence.** A Vim-modal Textual app that works as a DJ deck: `main.py` renders in its
 standalone Qt window and serves a deck socket; the TUI attaches and turns the window's knobs.
 
+**Terminal resizing.** Textual resize events refit floating tiles independently of
+preview polling. Shared edges scale from a stable reference; manual edits rebase
+that reference. Knobs keep their height and bottom offset. Zoom fits the current
+viewport while retaining the scaled underlying placement and stack depth. Saved
+layouts include their viewport size; loading one refits it to the current terminal.
+No window-manager integration is needed.
+
 **Startup.** `main.py` opens one idle TUI first, before any Qt window or local
 graph. Usable saved audio devices auto-start the window; missing or invalid
 selections open the existing Vim checklists. Startup remains responsive while
