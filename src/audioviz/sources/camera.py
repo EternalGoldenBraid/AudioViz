@@ -7,6 +7,7 @@ import numpy as np
 from loguru import logger
 
 from audioviz.sources.virtual_camera import VIRTUAL_BASE, VirtualCapture
+from audioviz.sources.network_camera import NetworkCapture, is_network_camera, validate_camera_url
 from audioviz.utils.source_preview import SourceSceneMapping
 
 
@@ -68,6 +69,10 @@ class CameraFrameSource:
 
     def set_camera_index(self, index: int | str) -> None:
         """Moves capture to another camera; a camera that fails to open leaves the previous one running."""
+        if index == self.camera_index:
+            return
+        if is_network_camera(index):
+            validate_camera_url(index)
         previous = self.camera_index
         self.close()
         self.camera_index = index
@@ -81,6 +86,11 @@ class CameraFrameSource:
 
     def ensure_open(self) -> None:
         if self.capture is not None:
+            return
+        if is_network_camera(self.camera_index):
+            validate_camera_url(self.camera_index)
+            logger.info("Opening LAN camera source: {}", self.camera_index)
+            self.capture = NetworkCapture(self.camera_index, cv2_loader=self.cv2_loader)
             return
         logger.info("Opening camera source: {}", self.camera_index)
         if isinstance(self.camera_index, int) and self.camera_index >= VIRTUAL_BASE:
@@ -115,6 +125,15 @@ class CameraFrameSource:
         if self.capture is not None:
             self.capture.release()
             self.capture = None
+        self.observation = None
+
+    @property
+    def capture_status(self) -> str:
+        if not self.enabled:
+            return "off"
+        if isinstance(self.capture, NetworkCapture):
+            return self.capture.status
+        return "live" if self.capture is not None else "waiting"
 
     @staticmethod
     def frame_to_excitation_grid(
