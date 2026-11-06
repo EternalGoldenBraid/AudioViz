@@ -557,3 +557,53 @@ def test_path_suggester_completes_folders_and_recordings(tmp_path):
     assert suggest(f"{tmp_path}/ru") == f"{tmp_path}/run1.mp4" or suggest(f"{tmp_path}/ru") == f"{tmp_path}/runs/"
     assert suggest(f"{tmp_path}/no") is None
     assert suggest(f"{tmp_path}/") in {f"{tmp_path}/run1.mp4", f"{tmp_path}/runs/"}
+
+
+def test_alt_hjkl_resize_and_zoom_is_just_a_big_resize_that_restores(tmp_path):
+    async def scenario(app, pilot):
+        tile = app.query_one("#canvas")
+        tile.focus()
+        before = vars(app.placements["canvas"]).copy()
+        depth = app.stack.index("canvas")
+        await pilot.press("alt+l", "alt+k")
+        grown = app.placements["canvas"]
+        assert (grown.width, grown.height) == (before["width"] + 2, before["height"] + 1)
+        await pilot.press("alt+h", "alt+j")
+        assert vars(app.placements["canvas"]) == before
+        app.resize_tile(-500, -500)
+        assert (app.placements["canvas"].width, app.placements["canvas"].height) == (6, 3)
+        app.placements["canvas"].width, app.placements["canvas"].height = before["width"], before["height"]
+        await pilot.press("z")
+        stage = app.query_one("#stage").size
+        zoomed = app.placements["canvas"]
+        assert (zoomed.x, zoomed.y, zoomed.width, zoomed.height) == (0, 0, stage.width, stage.height)
+        assert app.stack[-1] == "canvas" and tile.region.width == stage.width
+        assert app.snapshot()["placements"]["canvas"] == before  # a save while zoomed keeps the real placement
+        await pilot.press("z")
+        assert vars(app.placements["canvas"]) == before and app.stack.index("canvas") == depth
+    _headless(tmp_path, scenario)
+
+
+def test_slash_in_the_tile_list_filters_rows_and_space_toggles_the_filtered_row(tmp_path):
+    from audioviz.tui.tile_list import TileList
+    from textual.widgets import OptionList
+
+    async def scenario(app, pilot):
+        await pilot.press("T")
+        assert isinstance(app.screen, TileList)
+        options = app.screen.query_one(OptionList)
+        total = options.option_count
+        await pilot.press("slash", "s", "p", "e", "e", "d")
+        await pilot.pause()
+        assert app.screen.query_one("#search").value == "speed" and 0 < options.option_count < total
+        await pilot.press("enter")  # keep the filter, back to the list
+        await pilot.press("j")  # past the section row to the tile
+        await pilot.press("space")
+        await pilot.pause()
+        assert "knob-speed" in app.screen.hidden and len(app.screen.hidden) == 1 + len(app.hidden)
+        await pilot.press("escape")  # clears the filter without leaving
+        await pilot.pause()
+        assert isinstance(app.screen, TileList) and options.option_count == total
+        await pilot.press("escape")
+        assert not isinstance(app.screen, TileList)
+    _headless(tmp_path, scenario)
