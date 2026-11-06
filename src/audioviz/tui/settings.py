@@ -15,6 +15,24 @@ def _set_theme(app, name: str) -> None:
 
 
 PREVIEW_PX = ("40", "80", "160", "320", "640")
+SETTING_TABS = ("audio", "wave", "inference", "learning", "sources", "interface")
+
+
+def control_category(control) -> str:
+    if getattr(control, "category", None):
+        return control.category
+    name = control.name
+    if name in ("audio in", "audio out", "audio model", "sound out", "volume", "evidence gain"):
+        return "audio"
+    if name in ("inference rate", "canvas rate", "inference steps", "hidden loop"):
+        return "inference"
+    if name == "learning" or name == "learning rate" or name.startswith("weight ") or name == "gradient clip":
+        return "learning"
+    if name.startswith("camera") or name == "canvas feed":
+        return "sources"
+    if name in ("theme", "tile background", "preview px") or name.endswith(" window"):
+        return "interface"
+    return "wave"
 
 
 def settings_controls() -> tuple[Control, ...]:

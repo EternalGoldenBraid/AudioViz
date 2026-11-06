@@ -46,7 +46,7 @@ class KeysScreen(ModalScreen):
                 haystack = f"{keys} {row.description} {section}".lower()
                 if not all(word in haystack for word in words):
                     continue
-                hint = {"visual": " (select)", "edit": " (entered)"}.get(row.mode, "")
+                hint = {"visual": " (select)", "edit": " (entered)", "log": " (entered log)"}.get(row.mode, "")
                 text.append(f"{keys:<12}", style="bold yellow")
                 text.append(f"{row.description}{hint}\n")
                 shown += 1

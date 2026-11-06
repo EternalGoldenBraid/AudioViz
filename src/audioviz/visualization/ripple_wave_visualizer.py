@@ -1,3 +1,4 @@
+import os
 from typing import Optional, Tuple
 
 import numpy as np
@@ -158,6 +159,7 @@ class RippleWaveVisualizer(VisualizerBase):
         layout.addWidget(self.renderer.widget)
 
         controls_button = QtWidgets.QPushButton("Show Controls")
+        controls_button.setVisible(os.environ.get("AUDIOVIZ_TUI") != "1")
         controls_button.clicked.connect(self.toggle_controls)
         layout.addWidget(controls_button)
         self.diagnostics_button = QtWidgets.QPushButton("Show Inference / Learning Plots")

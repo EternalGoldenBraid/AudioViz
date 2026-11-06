@@ -49,7 +49,8 @@ controller, and other normal runtime dependencies are installed by default.
 Testing tools live in the `dev` group (`uv run --group dev python -m pytest`).
 CuPy remains optional and requires an installation matching your CUDA setup.
 
-Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
+Use the TUI for runtime settings. Startup-only options such as plane size and
+optional GPU usage remain in `main.py`.
 
 The TUI opens before the Qt windows. For live streaming it checks
 `config/audio_devices.json` and automatically starts the windows when the saved
@@ -70,7 +71,11 @@ is ignored by Git; `config/audio_devices.example.json` documents its structure.
 
 ## 🎛️ Interactive Controls
 
-Accessible from GUI sliders:
+The TUI has **Overview, Audio, Wave, Inference, Learning, Sources and Interface**
+tabs. `gt` / `gT` switch tabs; `:tab audio` selects one directly. In settings
+tabs, h/j/k/l or Tab navigate, Enter enters a knob, h/l adjusts it, and Enter/Esc
+leaves it. n/p or Ctrl-f/b page through longer grids. The Qt sliders remain
+available with `--no-tui`.
 
 * **Damping**: Controls wave attenuation over time (physical energy loss)
 * **Decay α**: Sets spatial spread using distance normalized by the field diagonal
@@ -88,6 +93,21 @@ Alt+h/j/k/l resize the focused tile or group. `z` expands a tile to the stage
 and restores it when pressed again; saved decks keep its pre-zoom placement
 and stacking order. `T` lists tiles; `/` filters rows, Enter keeps the filter,
 and Esc clears it before dismissing the list. `:q` quits; `?` shows bindings.
+Enter the log to browse with j/k, Ctrl-f/b and gg. New entries preserve the
+reading position; G returns to the latest entry and resumes following.
+
+### Settings files
+
+`:w [name|path]` and `:save [name|path]` are the same action: save runtime
+settings and TUI layout/preferences as JSON. Bare names go in the application's
+`config/` directory, with `config/deck.json` as the initial default.
+`:e [name|path]` loads settings and applies them to the active runtime;
+Tab/Shift-Tab complete JSON paths and directories. Save/load destinations stay
+in the bottom status bar. Named configs can be committed; hardware-specific
+device selection remains local. Automatic UI cache restoration never applies
+settings to a live attached graph.
+
+`:w` does not create media. Use `:shot [name]` for a screenshot.
 
 ### Terminal recordings
 
@@ -96,6 +116,8 @@ In the TUI, `:record [path]` starts an MP4 recording of the visible image tiles;
 with Enter, and its path prompt completes folders with Tab. Recordings include
 tile names and stacking order, but not audio, knobs, or the log. The first
 frame fixes the video dimensions. Exiting the TUI finalizes an active recording.
+The default recording directory is `recordings/` in the application project.
+Image capture pauses while a settings tab is active.
 In the `?` key list, `/` filters bindings and Esc clears the filter.
 
 ## Predictive canvas

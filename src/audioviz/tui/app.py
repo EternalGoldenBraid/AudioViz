@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -18,9 +19,9 @@ import sounddevice as sd
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
-from textual.containers import Container
+from textual.containers import Container, Grid, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Input, RichLog, Static
+from textual.widgets import Button, Input, RichLog, Static, TabbedContent, TabPane, Tabs
 
 from audioviz.tui import control
 from audioviz.tui.audio_feed import BLOCK_SIZE, SAMPLE_RATE
@@ -35,20 +36,19 @@ from audioviz.tui.keys_overlay import KeysScreen
 from audioviz.tui.mixer import CONTROLS
 from audioviz.tui.record_tile import RecordPrompt, RecordTile
 from audioviz.tui.recorder import RecordedTile, Recorder
-from audioviz.tui.settings import settings_controls
+from audioviz.tui.settings import SETTING_TABS, control_category, settings_controls
 from audioviz.tui.startup import StartupPanel, WindowSession
 from audioviz.tui.themes import THEMES
 from audioviz.tui.tile_list import TileList
 from audioviz.tui import views as views_module
 
-MAX_LAYERS = 8
 MIN_TILE = (6, 3)  # smallest tile in cells: width, height
 BRAILLE_MIN_CELLS = 1200  # tiles at least this large render at braille density
 AUTOSAVE_SECONDS = 5
 RECORD_FPS = 15  # one frame per tile refresh
 SEQUENCE_SECONDS = 1.0  # how long the first key of a multi-key binding waits for the next
 CACHE_PATH = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "audioviz" / "state.json"
-SAVES_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "audioviz" / "saves"
+PROJECT_DIR = Path(__file__).resolve().parents[3]
 
 
 @dataclass
@@ -170,7 +170,8 @@ class KnobTile(Static, can_focus=True):
         super().__init__(**kwargs)
         self.context = context  # the object the control reads and writes: a runtime or the app
         self.control = control
-        self.border_title = control.name
+        self.border_title = getattr(control, "label", None) or control.name
+        self.tooltip = getattr(control, "description", "") or None
 
     def adjust(self, steps: int) -> None:
         try:
@@ -205,6 +206,20 @@ class LogTile(RichLog):
     LogTile:focus { border: heavy $accent; }
     """
 
+    def browse(self, action: str) -> None:
+        self.auto_scroll = action == "end"
+        self.border_title = "log / following" if self.auto_scroll else "log / paused"
+        if action in ("start", "end"):
+            scroll = self.scroll_home if action == "start" else self.scroll_end
+            scroll(animate=False, immediate=True, x_axis=False)
+        else:
+            distance = self.content_size.height if action.startswith("page_") else 1
+            self.scroll_relative(y=distance if action.endswith("down") else -distance, animate=False)
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self.auto_scroll = False
+        self.border_title = "log / paused"
+
 
 class AudioVizApp(App):
     """NORMAL moves/lifts tiles; ':' opens the command line.
@@ -214,14 +229,21 @@ class AudioVizApp(App):
     """
 
     CSS = f"""
-    #stage {{ background: $background; layers: {" ".join(f"z{i}" for i in range(MAX_LAYERS))}; }}
+    #stage {{ background: $background; }}
     .-immersive #mode {{ display: none; }}
+    .-immersive Tabs {{ display: none; }}
     .-immersive ViewTile {{ border: none !important; }}
     .-selected {{ border: double $warning !important; }}
     .-group-focus {{ border: heavy $accent !important; }}
     #command {{ dock: bottom; display: none; border: none; height: 1; margin-bottom: 1; padding: 0 1; }}
     #command.-active {{ display: block; }}
     #mode {{ dock: bottom; height: 1; background: $primary-darken-2; padding: 0 1; }}
+    #workspaces {{ height: 1fr; }}
+    TabPane {{ padding: 0; }}
+    .settings-grid {{ height: auto; grid-size: 2; grid-rows: 3; padding: 1; }}
+    .settings-grid KnobTile {{ position: relative; height: 3; }}
+    .settings-grid Button {{ width: 100%; height: 3; }}
+    .settings-help {{ height: 2; padding: 0 1; color: $text-muted; }}
     """
     SCREENSHOT_DIR = Path("outputs/tui")
     MOVE_STEP = (2, 1)
@@ -243,7 +265,12 @@ class AudioVizApp(App):
                         autosave: bool, hot_reload: bool, attach: bool,
                         deck: DeckClient | None = None) -> None:
         self.audio = audio
+        self.workspace = "overview"
         self.mode = "NORMAL"
+        self.status_message = ""
+        self._completion_values: list[str] = []
+        self._completion_index = 0
+        self._completion_last = ""
         self.attached = attach  # the mixer knobs drive a running main.py window; the local graph stays idle
         self.runtime = GraphRuntime(camera=camera and not attach)
         if attach:
@@ -253,7 +280,12 @@ class AudioVizApp(App):
             self.mixer_controls, self.mixer_context = CONTROLS, self.runtime
         name = "state-attached.json" if attach else "state.json"
         self.cache_path = state_dir / name if state_dir else CACHE_PATH.with_name(name)
-        self.saves_dir = state_dir / "saves" if state_dir else SAVES_DIR
+        self.project_dir = state_dir or PROJECT_DIR
+        self.saves_dir = self.project_dir / "config"
+        self.config_path = (
+            Path(os.environ["AUDIOVIZ_DECK_CONFIG"]) if state_dir is None and attach and os.environ.get("AUDIOVIZ_DECK_CONFIG")
+            else self.saves_dir / "deck.json"
+        )
         self.keys_path = state_dir / "keys.toml" if state_dir else keys_module.CONFIG_PATH
         self.load_keys()
         self.autosave = autosave
@@ -291,17 +323,30 @@ class AudioVizApp(App):
         if not self.deck_ready:
             yield StartupPanel(audio_setup=self.startup.config_file is not None, id="startup")
             return
-        with Container(id="stage"):
-            for name in self.placements:
-                if name == "log":
-                    yield LogTile(id="log", wrap=True)
-                elif name == "record":
-                    yield RecordTile(id="record")
-                elif name.startswith("knob-"):
-                    _, context, control = next(k for k in self.knobs if k[0] == name)
-                    yield KnobTile(context, control, id=name)
-                else:
-                    yield ViewTile(name, self.runtime, self.deck if self.attached else None, id=name)
+        with TabbedContent(initial="overview", id="workspaces"):
+            with TabPane("Overview", id="overview"):
+                with Container(id="stage"):
+                    for name in self.placements:
+                        if name == "log":
+                            yield LogTile(id="log", wrap=True)
+                        elif name == "record":
+                            yield RecordTile(id="record")
+                        elif name.startswith("knob-"):
+                            _, context, control = next(k for k in self.knobs if k[0] == name)
+                            yield KnobTile(context, control, id=name)
+                        else:
+                            yield ViewTile(name, self.runtime, self.deck if self.attached else None, id=name)
+            for category in SETTING_TABS:
+                with TabPane(category.title(), id=category):
+                    yield Static("h/j/k/l navigate  Enter edit  gt/gT tabs  n/p page  :w save", classes="settings-help")
+                    with VerticalScroll(), Grid(classes="settings-grid"):
+                        for i, (_, context, control) in enumerate(self.knobs):
+                            if control_category(control) == category:
+                                yield KnobTile(context, control, id=f"setting-{i}")
+                        if category == "wave":
+                            yield Button("Reset field", id="reset-field")
+                        elif category == "audio" and not self.attached:
+                            yield Button("Choose devices", id="settings-devices")
         yield Static("NORMAL", id="mode")
         yield Input(placeholder=":", id="command")
 
@@ -317,10 +362,12 @@ class AudioVizApp(App):
 
     def _mount_deck(self) -> None:
         self.query_one("#log", LogTile).border_title = "log"
-        for name, placement in default_layout(self.size.width, max(self.size.height - 1, 12), self.mixer_ids, self.settings_ids).items():
+        for name, placement in default_layout(*self.stage_size(), self.mixer_ids, self.settings_ids).items():
             self.placements[name] = placement
         self.layout_size = self.stage_size()
         self.load_state(self.cache_path, quiet=True)
+        if self.config_path.exists():
+            self.load_state(self.config_path, quiet=True)
         self.refit()
         if self.attached:
             self.set_interval(0.25, self.refresh_deck)
@@ -331,7 +378,11 @@ class AudioVizApp(App):
             self.set_interval(0.5, self.reload_code)
         if self.autosave:
             self.set_interval(AUTOSAVE_SECONDS, self.autosave_state)
-        self.query_one("#canvas").focus()
+        self.workspace = self.query_one(TabbedContent).active
+        if self.workspace == "overview":
+            self.query_one("#canvas").focus()
+        else:
+            self.focus_setting(0)
         if not self.attached:
             self.select_audio(self.audio)
 
@@ -409,6 +460,7 @@ class AudioVizApp(App):
             "focus": self._focused_name(),
             "group_focus": self.group_focus,
             "mode": self.mode,
+            "tab": self.workspace,
             "zoomed": self.zoomed,
             "immersive": self.immersive,
             "output_device": self.runtime.out.device,
@@ -460,20 +512,23 @@ class AudioVizApp(App):
         if not self.is_running:
             return
         self.fit_if_resized()
-        for tile in self.query(ViewTile):
+        pane = self.query_one(f"#{self.workspace}", TabPane)
+        for tile in pane.query(ViewTile):
             if tile.display:
                 tile.refresh_view()
         self.set_mode(self.mode)
-        for tile in self.query(KnobTile):
+        for tile in pane.query(KnobTile):
             if tile.display:
                 tile.refresh_view()
-        for tile in self.query(RecordTile):
+        for tile in pane.query(RecordTile):
             if tile.display:
                 tile.refresh_view()
         self.record_frame()
 
     def recorded_tiles(self) -> list[RecordedTile]:
         """The shown tiles that have an image, bottom to top as stacked, so the video matches the screen."""
+        if self.workspace != "overview":
+            return []
         tiles = []
         for name in self.stack:
             widget = self.query_one(f"#{name}")
@@ -495,7 +550,7 @@ class AudioVizApp(App):
             self.query_one("#log", LogTile).write(f"recording stopped: {error}")
 
     def recordings_dir(self) -> Path:
-        return self.saves_dir.parent / "recordings"
+        return self.project_dir / "recordings"
 
     def record_toggle_or_prompt(self) -> None:
         """Stops a running recording; otherwise asks where to write the next one."""
@@ -513,16 +568,20 @@ class AudioVizApp(App):
             return
         name = path or datetime.now().strftime("tui-%Y%m%d-%H%M%S.mp4")
         target = Path(name).expanduser()
-        if not path:
+        if not target.is_absolute() and "/" not in name:
             target = self.recordings_dir() / target
-        elif target.is_dir() or name.endswith("/"):
+        elif not target.is_absolute():
+            target = self.project_dir / target
+        if target.is_dir() or name.endswith("/"):
             target = target / datetime.now().strftime("tui-%Y%m%d-%H%M%S.mp4")
         self.recorder = Recorder(target.with_suffix(".mp4"), RECORD_FPS)
         self.query_one(RecordTile).started = time.monotonic()
         log.write(f"recording the shown tiles to {self.recorder.path}; :record again stops")
 
     def apply_layout(self) -> None:
-        stage = self.query_one("#stage").size
+        container = self.query_one("#stage")
+        container.styles.layers = tuple(f"z{i}" for i in range(len(self.stack)))
+        stage = container.size
         for depth, name in enumerate(self.stack):
             placement = self.placements[name]
             widget = self.query_one(f"#{name}")
@@ -623,6 +682,9 @@ class AudioVizApp(App):
 
     def turn_page(self, delta: int) -> None:
         """Show the group's next page: its members take over the slots of the page being left."""
+        if self.workspace != "overview":
+            self.focus_setting(delta * max(1, self.stage_size()[1] // KNOB_HEIGHT - 1) * 2, wrap=False)
+            return
         name = self._focused_name()
         paged = self.page_of(name)
         if paged is None:
@@ -645,19 +707,25 @@ class AudioVizApp(App):
 
     def rise(self) -> None:
         """Focus the whole group of the focused tile: navigation then steps between top-level nodes."""
+        if self.workspace != "overview":
+            return
         members = self.members(self._focused_name())
         if len(members) > 1 and not self.zoomed:
             self.group_focus = members
             self.mark_group_focus()
 
     def dive(self) -> None:
-        if self.group_focus:
+        if isinstance(self.focused, Button):
+            self.focused.press()
+        elif self.group_focus:
             self.group_focus = []
             self.mark_group_focus()
         elif isinstance(self.focused, KnobTile) and getattr(self.focused.control, "is_picker", False):
             self.open_checklist(self.focused)
         elif isinstance(self.focused, KnobTile):
             self.set_editing(True)
+        elif isinstance(self.focused, LogTile):
+            self.set_mode("LOG")
 
     def open_checklist(self, knob: "KnobTile") -> None:
         control = knob.control
@@ -689,7 +757,48 @@ class AudioVizApp(App):
         self.set_mode("EDIT" if on and isinstance(knob, KnobTile) else "NORMAL")
 
     def stage_size(self) -> tuple[int, int]:
-        return self.size.width, max(self.size.height - 1, 12)
+        header = 0 if self.immersive else (self.query_one(TabbedContent).query_one(Tabs).size.height or 2)
+        # Command entry does not change the layout saved for the workspaces.
+        return self.size.width, max(self.size.height - header - (0 if self.immersive else 1), 12)
+
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        active = event.tabbed_content.active
+        if active == self.workspace:
+            return
+        self.set_editing(False)
+        if self.zoomed:
+            self.toggle_zoom()
+        self.workspace = active
+        self.group_focus = []
+        self.mark_group_focus()
+        if active == "overview":
+            self.query_one("#canvas").focus()
+        else:
+            self.focus_setting(0)
+
+    def select_workspace(self, name: str) -> None:
+        if name not in ("overview", *SETTING_TABS):
+            raise ValueError(f"Unknown tab {name!r}; choose overview, " + ", ".join(SETTING_TABS))
+        self.query_one(TabbedContent).active = name
+
+    def turn_tab(self, delta: int) -> None:
+        names = ("overview", *SETTING_TABS)
+        self.select_workspace(names[(names.index(self.workspace) + delta) % len(names)])
+
+    def focus_setting(self, delta: int, wrap: bool = True) -> None:
+        widgets = list(self.query_one(f"#{self.workspace}", TabPane).query("KnobTile, Button"))
+        if widgets:
+            index = widgets.index(self.focused) if self.focused in widgets else 0
+            target = (index + delta) % len(widgets) if wrap else min(max(index + delta, 0), len(widgets) - 1)
+            widgets[target].focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "reset-field":
+            event.stop()
+            self.run_command("reset", [])
+        elif event.button.id == "settings-devices":
+            event.stop()
+            self.open_devices()
 
     def refit(self) -> None:
         """Scale placements from the size they were laid out for to the current terminal.
@@ -715,6 +824,9 @@ class AudioVizApp(App):
             self.refit()
 
     def open_devices(self) -> None:
+        if self.attached:
+            self.select_workspace("audio")
+            return
         try:
             inputs, outputs = list_devices()
         except Exception as error:  # no audio backend should not take down the shell
@@ -886,6 +998,14 @@ class AudioVizApp(App):
         return best
 
     def focus_toward(self, dx: int, dy: int) -> None:
+        if self.workspace != "overview":
+            widgets = list(self.query_one(f"#{self.workspace}", TabPane).query("KnobTile, Button"))
+            if self.focused in widgets:
+                index = widgets.index(self.focused)
+                if dx and (index + dx) // 2 != index // 2:
+                    return
+            self.focus_setting(dx + 2 * dy, wrap=False)
+            return
         if self.zoomed:
             return
         target = self.neighbour(self._focused_name(), dx, dy, outer=bool(self.group_focus))
@@ -896,6 +1016,9 @@ class AudioVizApp(App):
         self.query_one(f"#{target}").focus()
 
     def _move_focus(self, step: int) -> None:
+        if self.workspace != "overview":
+            self.focus_setting(step)
+            return
         names = [name for name in self.placements if self.visible(name)]
         current = names.index(self._focused_name())
         self.query_one(f"#{names[(current + step) % len(names)]}").focus()
@@ -915,8 +1038,14 @@ class AudioVizApp(App):
             if event.key == "escape":
                 self._close_command()
                 event.stop()
+            elif event.key in ("tab", "shift+tab"):
+                self.complete_command_path(backwards=event.key == "shift+tab")
+                event.prevent_default()
+                event.stop()
             return
         mode = "visual" if self.mode == "VISUAL" else "normal"
+        if self.mode == "LOG" and isinstance(self.focused, LogTile):
+            mode = "log"
         knob = self.focused if isinstance(self.focused, KnobTile) else None
         if mode == "normal" and knob is not None and knob.editing:
             mode = "edit"
@@ -932,7 +1061,7 @@ class AudioVizApp(App):
             self.set_timer(SEQUENCE_SECONDS, self.clear_pending)
             event.stop()
             return
-        if (action is not None and self.perform(action)) or mode in ("visual", "edit"):
+        if (action is not None and self.perform(action)) or mode in ("visual", "edit", "log"):
             event.stop()  # selecting and entered knobs swallow every key
 
     def lookup(self, mode: str, key: str) -> str | None:
@@ -950,6 +1079,13 @@ class AudioVizApp(App):
 
     def perform(self, action: str) -> bool:
         """False when the action does not apply to the focused tile, so the key stays unhandled."""
+        if self.workspace != "overview" and action not in (
+            "focus_left", "focus_right", "focus_up", "focus_down", "next_tile", "prev_tile",
+            "rise", "dive", "exit_edit", "slide_up", "slide_down", "turn_up", "turn_down",
+            "page_next", "page_prev", "tab_next", "tab_prev", "command", "help", "devices",
+        ):
+            self.report_status("Tile arrangement is available in Overview.")
+            return True
         dx, dy = self.MOVE_STEP
         knob = self.focused
         actions = {
@@ -968,6 +1104,7 @@ class AudioVizApp(App):
             "visual": self.start_visual,
             "ungroup": lambda: self.make_group(self.members(self._focused_name())[:1]),
             "page_next": lambda: self.turn_page(1), "page_prev": lambda: self.turn_page(-1),
+            "tab_next": lambda: self.turn_tab(1), "tab_prev": lambda: self.turn_tab(-1),
             "select_left": lambda: self.extend_selection(-1, 0), "select_right": lambda: self.extend_selection(1, 0),
             "select_up": lambda: self.extend_selection(0, -1), "select_down": lambda: self.extend_selection(0, 1),
             "commit_group": lambda: self.end_visual(True), "cancel_group": lambda: self.end_visual(False),
@@ -976,6 +1113,10 @@ class AudioVizApp(App):
             "hide": self.hide, "unhide": self.unhide, "tiles": self.open_tiles,
             "turn_down": lambda: knob.adjust(-1), "turn_up": lambda: knob.adjust(1),
             "command": self._open_command, "help": self.show_keys,
+            "log_down": lambda: knob.browse("down"), "log_up": lambda: knob.browse("up"),
+            "log_page_down": lambda: knob.browse("page_down"), "log_page_up": lambda: knob.browse("page_up"),
+            "log_start": lambda: knob.browse("start"), "log_end": lambda: knob.browse("end"),
+            "log_exit": lambda: self.set_mode("NORMAL"),
         }
         actions[action]()
         return True
@@ -1006,6 +1147,8 @@ class AudioVizApp(App):
         self.push_screen(KeysScreen(self.bindings, self.key_problems))
 
     def _open_command(self) -> None:
+        self.status_message = ""
+        self._completion_last = ""
         self._return_focus = self.focused
         command = self.query_one("#command", Input)
         command.add_class("-active")
@@ -1020,7 +1163,11 @@ class AudioVizApp(App):
         (self._return_focus or self.query_one("#canvas")).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        line = event.value.lstrip(":").split()
+        try:
+            line = shlex.split(event.value.lstrip(":"))
+        except ValueError as error:
+            self.report_status(f"Command error: {error}")
+            return
         self._close_command()
         if line:
             self.run_command(line[0], line[1:])
@@ -1043,18 +1190,31 @@ class AudioVizApp(App):
             if name in ("help", "h"):
                 log.write("damping|speed <v>  opacity <v>  raise|lower")
                 log.write("move <dx> <dy>  view <name>  views")
-                log.write("audio list|synthetic|default|<index>  gain <v>")
+                log.write("devices  gain <v>  tab overview|audio|wave|inference|learning|sources|interface")
                 log.write("theme [name]  bg <color|theme>  group <tiles>  ungroup")
-                log.write(":w [name] save state+screenshot  :e [name] load   ? key bindings  :keys [write|reload]")
-                log.write("out off|prediction|error|input|evidence  volume <v>  audio tone <hz>")
+                log.write(":w|:save [name|path] save config  :e [name|path] load  ? bindings  :keys [write|reload]")
+                if not self.attached:
+                    log.write("audio list|synthetic|default|<index>|tone <hz>  out off|prediction|error|input|evidence  volume <v>")
                 log.write("resolution <n|RxC>  render half|quad|braille|auto  zoom")
-                log.write("screenshot [name]  record [file]  q   save  rescan (attached: re-list audio devices)  (attached: window knobs -> config/deck.json, loaded by main.py)")
+                log.write("shot [name]  record [file]  reset  q  rescan (attached devices)")
             elif name == "keys":
                 self.run_keys_command(args)
-            elif name == "save":
-                if not self.attached:
-                    raise ValueError("save writes the main.py window's knobs; start with --attach")
-                log.write(f"saved {self.deck.save()}")
+            elif name in ("save", "w", "write"):
+                self.write_session(args[0] if args else None)
+            elif name == "tab":
+                self.select_workspace(args[0].lower())
+            elif name in ("tabnext", "tn"):
+                self.turn_tab(1)
+            elif name in ("tabprevious", "tp"):
+                self.turn_tab(-1)
+            elif name == "reset":
+                if self.attached:
+                    self.deck.reset()
+                else:
+                    with self.runtime.lock:
+                        self.runtime.engine.reset()
+                        self.runtime.orchestrator.reset_readouts()
+                self.report_status("Field and belief states reset; learned weights retained.")
             elif name in ("record", "rec"):
                 self.toggle_recording(args[0] if args else None)
             elif name == "rescan":
@@ -1071,14 +1231,17 @@ class AudioVizApp(App):
 
                 self.run_worker(rescan, thread=True, group="deck-select")
             elif name == "damping":
-                self.runtime.engine.set_damping(float(args[0]))
+                self.deck.set("damping", float(args[0])) if self.attached else self.runtime.engine.set_damping(float(args[0]))
             elif name == "speed":
-                self.runtime.engine.set_speed(float(args[0]))
+                self.deck.set("speed", float(args[0])) if self.attached else self.runtime.engine.set_speed(float(args[0]))
             elif name == "gain":
                 gain = float(args[0])
                 if gain < 0:
                     raise ValueError("gain must be non-negative")
-                self.runtime.orchestrator.audio_source.observation_gain = gain
+                if self.attached:
+                    self.deck.set("evidence gain", gain)
+                else:
+                    self.runtime.orchestrator.audio_source.observation_gain = gain
             elif name == "theme":
                 if not args:
                     log.write("themes: " + " ".join(sorted(self.available_themes)))
@@ -1095,26 +1258,36 @@ class AudioVizApp(App):
                 self.make_group(args)
             elif name == "ungroup":
                 self.make_group(self.members(self._focused_name())[:1])
-            elif name in ("w", "write"):
-                self.write_session(args[0] if args else "state")
             elif name in ("e", "edit"):
-                self.load_state(self.saves_dir / f"{args[0] if args else 'state'}.json")
+                self.load_state(self.session_path(args[0]) if args else self.config_path, apply_runtime=True)
             elif name == "out":
+                if self.attached:
+                    raise ValueError("The Qt runtime plays input audio; output mode selection currently belongs to standalone mode.")
                 self.runtime.out.set_mode(args[0], speakers=len(args) < 2 or args[1] != "silent")
                 log.write(f"output: {self.runtime.out.mode}")
             elif name == "volume":
+                if self.attached:
+                    raise ValueError("Qt output volume is controlled by the system mixer.")
                 self.runtime.out.volume = float(args[0])
             elif name == "resolution":
-                self.runtime.rebuild(args[0])
-                log.write(f"grid {format_resolution(self.runtime.resolution)}")
+                if self.attached:
+                    self.deck.set("grid at launch", args[0])
+                    self.report_status("Grid selected for the next launch; :w persists it.")
+                else:
+                    self.runtime.rebuild(args[0])
+                    log.write(f"grid {format_resolution(self.runtime.resolution)}")
             elif name == "render":
                 tile = self.focused
                 if not isinstance(tile, ViewTile) or args[0] not in (*RENDER_MODES, "auto"):
                     raise ValueError("focus a view tile; mode is half|quad|braille|auto")
                 self.set_render(tile, None if args[0] == "auto" else args[0])
             elif name == "zoom":
+                if self.workspace != "overview":
+                    raise ValueError("Zoom is available in Overview.")
                 self.toggle_zoom()
             elif name in ("fullscreen", "fs"):
+                if self.workspace != "overview":
+                    raise ValueError("Fullscreen is available in Overview.")
                 self.toggle_immersive()
             elif name == "devices":
                 self.open_devices()
@@ -1128,6 +1301,8 @@ class AudioVizApp(App):
                     raise ValueError("focus a view tile first")
                 focused.set_view(args[0])
             elif name == "audio":
+                if self.attached:
+                    raise ValueError("Choose the input and audio model in the Audio tab.")
                 self._run_audio_command(args, log)
             elif name == "opacity":
                 self.set_opacity(float(args[0]))
@@ -1137,14 +1312,14 @@ class AudioVizApp(App):
                 self.lift_tile(-1)
             elif name == "move":
                 self.move_tile(int(args[0]), int(args[1]))
-            elif name in ("screenshot", "ss"):
+            elif name in ("screenshot", "ss", "shot"):
                 self.call_after_refresh(lambda: log.write(f"saved {self.screenshot(*args[:1])}"))
             elif name in ("q", "quit"):
                 self.exit()
             else:
                 log.write(f"unknown command: {name}")
         except Exception as error:  # a bad command must not take down the shell
-            log.write(f"error: {error!r}")
+            self.report_status(f"Error: {error!r}")
 
 
     def snapshot(self) -> dict:
@@ -1170,6 +1345,8 @@ class AudioVizApp(App):
             "render": {t.id: t.render_mode for t in self.query(ViewTile)},
             "mixer": {c.name: c.get(self.mixer_context) for c in self.mixer_controls},
             "settings": {c.name: c.get(self) for c in self.settings if c.name != "sound out"},
+            "backend": "window" if self.attached else "standalone",
+            "tab": self.workspace,
         }
 
     def restore(self, data: dict) -> None:
@@ -1203,6 +1380,8 @@ class AudioVizApp(App):
         if data.get("theme") in self.available_themes:
             self.theme = data["theme"]
         self.set_tile_background(data.get("tile_background"))
+        if data.get("tab") in ("overview", *SETTING_TABS):
+            self.call_after_refresh(self.select_workspace, data["tab"])
 
     def reload_code(self) -> None:
         log = self.query_one("#log", LogTile)
@@ -1219,37 +1398,116 @@ class AudioVizApp(App):
             self.cache_path.write_text(json.dumps(data, indent=1))
             self._saved = data
 
-    def load_state(self, path: Path, quiet: bool = False) -> None:
+    def load_state(self, path: Path, quiet: bool = False, apply_runtime: bool = False) -> None:
         try:
-            self.restore(json.loads(path.read_text()))
+            data = json.loads(path.read_text())
+            backend = "window" if self.attached else "standalone"
+            same_backend = data.get("backend", backend) == backend
+            if apply_runtime and not same_backend:
+                raise ValueError(f"This config belongs to the {data['backend']} runtime, not {backend}.")
+            if apply_runtime and self.attached:
+                self.deck.load(path.resolve())
+            if not same_backend:
+                data = {**data, "mixer": {}, "settings": {
+                    name: value for name, value in data.get("settings", {}).items()
+                    if name in ("theme", "tile background", "preview px")
+                }}
+                self.report_status(f"Loaded UI only: {path.resolve()} belongs to the {data['backend']} runtime.")
+            self.restore(data)
         except FileNotFoundError:
             if not quiet:
-                self.query_one("#log", LogTile).write(f"no saved state at {path}")
+                self.report_status(f"No saved config: {path.resolve()}")
         except Exception as error:  # a stale or hand-edited file must not stop the app starting
-            self.query_one("#log", LogTile).write(f"could not load {path}: {error!r}")
+            self.report_status(f"Could not load {path.resolve()}: {error!r}")
         else:
             self.apply_layout()
+            if apply_runtime:
+                self.config_path = path.resolve()
+            if not quiet:
+                self.report_status(f"Loaded config: {path.resolve()}")
 
-    def write_session(self, name: str) -> None:
-        """Write the state and a screenshot side by side."""
-        self.saves_dir.mkdir(parents=True, exist_ok=True)
-        path = self.saves_dir / f"{name}.json"
-        path.write_text(json.dumps(self.snapshot(), indent=1))
-        self.call_after_refresh(
-            lambda: self.query_one("#log", LogTile).write(f"wrote {path} and {self.screenshot(name, self.saves_dir)}")
-        )
+    def session_path(self, name: str) -> Path:
+        path = Path(name).expanduser()
+        if not path.is_absolute() and "/" not in name:
+            path = self.saves_dir / path
+        elif not path.is_absolute():
+            path = self.project_dir / path
+        if path.suffix != ".json":
+            path = path.with_name(path.name + ".json")
+        return path
+
+    def complete_command_path(self, backwards: bool = False) -> None:
+        command = self.query_one("#command", Input)
+        if command.value != self._completion_last:
+            head, _, prefix = command.value.lstrip(":").partition(" ")
+            if head not in ("e", "edit", "w", "write", "save"):
+                return
+            try:
+                words = shlex.split(prefix)
+            except ValueError:
+                return
+            if len(words) > 1:
+                return
+            prefix = words[0] if words else ""
+            path = Path(prefix).expanduser()
+            if "/" in prefix and not path.is_absolute():
+                path = self.project_dir / path
+            if "/" not in prefix and not path.is_absolute():
+                directory, partial = self.saves_dir, prefix
+            elif prefix.endswith("/"):
+                directory, partial = path, ""
+            else:
+                directory, partial = path.parent, path.name
+            try:
+                matches = sorted(p for p in directory.iterdir()
+                                 if p.name.startswith(partial) and (p.is_dir() or p.suffix == ".json"))
+            except OSError as error:
+                self.report_status(f"Path completion: {error}")
+                return
+            self._completion_values = [
+                f"{head} {shlex.quote(str(p.resolve()) + ('/' if p.is_dir() else ''))}" for p in matches
+            ]
+            self._completion_index = -1 if not backwards else 0
+        if self._completion_values:
+            self._completion_index = (self._completion_index + (-1 if backwards else 1)) % len(self._completion_values)
+            command.value = self._completion_values[self._completion_index]
+            command.cursor_position = len(command.value)
+            self._completion_last = command.value
+
+    def report_status(self, message: str) -> None:
+        self.status_message = message
+        self.query_one("#log", LogTile).write(message)
+        self.set_mode(self.mode)
+
+    def write_session(self, name: str | None = None) -> None:
+        """Save runtime settings and the TUI layout; images and recordings are separate actions."""
+        path = self.session_path(name) if name else self.config_path
+        state = self.snapshot()
+        if self.attached:
+            path = Path(self.deck.save(path.resolve(), state))
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(state, indent=2, allow_nan=False) + "\n")
+        self.config_path = path.resolve()
+        self.report_status(f"Wrote config: {self.config_path}")
 
     def set_mode(self, mode: str) -> None:
         if mode == "EDIT" and not isinstance(self.focused, KnobTile):
             mode = "NORMAL"
+        if mode != self.mode:
+            self.status_message = ""
         self.mode = mode
         zoom = f"   zoom: {self.zoomed}" if self.zoomed else ""
         if mode == "EDIT":
             mode = f"EDIT {self.focused.control.name}   h/l slide, Enter/Esc leave"
+        elif mode == "LOG":
+            mode = "LOG   j/k scroll, gg start, G follow, Enter/Esc leave"
         graph = "attached to main.py" if self.attached else (
             f"audio: {self.runtime.feed.source}   grid: {format_resolution(self.runtime.resolution)}"
             f" ({self.runtime.step_ms:.0f} ms)")
-        self.query_one("#mode", Static).update(f"{mode}   {graph}{zoom}")
+        status = self.query_one("#mode", Static)
+        status.update(self.status_message or f"{mode}   {graph}{zoom}")
+        status.tooltip = self.status_message or None
 
     def select_audio(self, choice: str) -> None:
         """Switch audio source; a device that fails to open leaves the previous source running."""

@@ -21,13 +21,52 @@ Window-only `--no-tui` retains terminal-based setup.
 process. Deck exchanges publish their state in request order. A timed-out or
 closed connection is discarded; the next poll reconnects and reads current
 state. Edits with an unknown outcome are not replayed.
+
+**Logs and files.** Enter the log with Enter: j/k scroll, Ctrl-f/b page, gg goes
+to the start, and G returns to the tail and follows new entries. Browsing keeps
+the viewport fixed while messages arrive; Enter/Esc leaves log navigation.
+`:w [name|path]` and `:save [name|path]` write one configuration: runtime values
+and TUI layout/settings. Bare names resolve in the application's `config/`
+directory; the default is `config/deck.json`. Explicit paths and quoted spaces
+are supported. `:e [name|path]` applies that configuration, including live
+attached runtime values. Automatic UI cache restoration never writes to the
+attached runtime. Tab/Shift-Tab cycle matching JSON paths and directories;
+save/load results remain in the bottom status bar.
+
+Configurations are JSON, with typed runtime values under `mixer`. They record
+their backend because standalone and Qt wave-speed units differ. Existing flat
+deck configs still load. `:w` does not create images or recordings: `:shot` takes
+a screenshot, and `:record` defaults to the project's `recordings/` directory.
+Project configs are available for version control; device-specific
+`config/audio_devices.json` remains local.
+
+**Settings tabs.** `gt` / `gT` cycle Overview, Audio, Wave, Inference, Learning,
+Sources and Interface; `:tab <name>` selects one directly. Overview retains
+floating tiles. Settings tabs use a scrollable two-column grid: h/j/k/l or
+Tab navigate, Enter enters a knob, h/l adjusts, and Enter/Esc leaves it. n/p or
+Ctrl-f/b page through longer grids. These are views of the same live controls,
+so switching tabs never starts another graph or resets learned state.
+
+The attached settings include every writable Ripple Controls section:
+source parameters, synthetic frequencies, inference steps/rates, learning and
+clipping, excitation physics, canvas color scaling and conductance overlays.
+The source metadata supplies ranges, steps, labels and tooltips; existing
+callbacks remain responsible for updating the window's graph. `:reset` clears
+field/belief state while retaining weights. Changing the standalone resolution
+rebuilds the graph; reloading an unchanged resolution does not.
+
+Terminal-owned launches hide the legacy Qt controls button. `--no-tui` retains
+that panel. Plot/scene interaction remains in the visual windows. In attached
+mode, device and audio-model selection are in Audio; Qt plays input audio and
+its output volume belongs to the system mixer. Standalone mode retains the
+input/prediction/error listening controls.
 There is one renderer. The TUI shows only low-res previews, and terminal pixel protocols and
 window-manager tiling are out of scope.
 
 **Present.**
 - Launch: `main.py` starts the window as a child and attaches the TUI; quitting the TUI closes the window.
 - Tiles: subgraph views, mixer and settings knobs, log. They layer, move, zoom and group (`v`), and refit to the terminal size. `Esc` rises to a group, `Enter` dives back; the mixer group pages with `n`/`p`.
-- Devices: Enter on a device knob opens a checklist (capacity 1 today; protocol and UI are list-shaped). `:save` writes the knobs by name to `config/deck.json`.
+- Devices: Enter opens a checklist: one audio device per direction, up to two cameras. Configs store selections as lists and match device names across changed indices. `:w` / `:save` persist runtime controls and TUI preferences together.
 - Hiding: `dd` hides the focused tile or group, `u` undoes, `T` lists tiles by group. Hidden tiles keep their placement and persist in `~/.cache/audioviz/state.json`.
 - Keys are data in `src/audioviz/tui/keys.py`; `?` shows them and `~/.config/audioviz/keys.toml` rebinds them.
 - Verified by pilot tests (`tests/tui`) and live tmux screenshots. Hiding has pilot coverage only.

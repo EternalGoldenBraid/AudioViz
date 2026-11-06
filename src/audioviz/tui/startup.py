@@ -158,7 +158,7 @@ class WindowSession:
             self.process = subprocess.Popen(
                 self.command, stdin=subprocess.DEVNULL, stdout=self._log,
                 stderr=subprocess.STDOUT, start_new_session=True,
-                env={**os.environ, "AUDIOVIZ_DECK_SOCKET": str(self.socket_path)},
+                env={**os.environ, "AUDIOVIZ_DECK_SOCKET": str(self.socket_path), "AUDIOVIZ_TUI": "1"},
             )
             async with asyncio.timeout(self.timeout):
                 while not self.socket_path.exists():

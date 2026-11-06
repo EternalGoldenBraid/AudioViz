@@ -33,7 +33,7 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("navigate", "next_tile", ("tab", "w"), "focus the next tile"),
     Binding("navigate", "prev_tile", ("shift+tab",), "focus the previous tile"),
     Binding("navigate", "rise", ("escape",), "focus the whole group"),
-    Binding("navigate", "dive", ("enter",), "enter a knob, or leave group focus"),
+    Binding("navigate", "dive", ("enter",), "enter a knob or log, or leave group focus"),
     Binding("arrange", "move_left", ("H",), "move the tile or group left"),
     Binding("arrange", "move_down", ("J",), "move down"),
     Binding("arrange", "move_up", ("K",), "move up"),
@@ -48,14 +48,16 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("arrange", "opacity_down", ("comma",), "more transparent"),
     Binding("group", "visual", ("v",), "start selecting tiles to group"),
     Binding("group", "ungroup", ("U",), "ungroup the focused group"),
-    Binding("group", "page_next", ("n",), "next page of the group"),
-    Binding("group", "page_prev", ("p",), "previous page of the group"),
+    Binding("group", "page_next", ("n", "ctrl+f"), "next page of the group or settings"),
+    Binding("group", "page_prev", ("p", "ctrl+b"), "previous page of the group or settings"),
     Binding("group", "select_left", ("h",), "add the tile to the left", "visual"),
     Binding("group", "select_down", ("j",), "add the tile below", "visual"),
     Binding("group", "select_up", ("k",), "add the tile above", "visual"),
     Binding("group", "select_right", ("l",), "add the tile to the right", "visual"),
     Binding("group", "commit_group", ("g", "enter"), "group the selection", "visual"),
     Binding("group", "cancel_group", ("escape",), "cancel the selection", "visual"),
+    Binding("tabs", "tab_next", ("g t",), "next settings tab"),
+    Binding("tabs", "tab_prev", ("g T",), "previous settings tab"),
     Binding("view", "zoom", ("z",), "zoom: resize the tile to the whole stage, again to restore"),
     Binding("view", "immersive", ("F",), "fullscreen"),
     Binding("view", "render", ("r",), "cycle the render mode"),
@@ -68,6 +70,13 @@ DEFAULTS: tuple[Binding, ...] = (
     Binding("knob", "slide_down", ("h",), "slide down while entered", "edit"),
     Binding("knob", "slide_up", ("l",), "slide up while entered", "edit"),
     Binding("knob", "exit_edit", ("enter", "escape"), "leave the knob", "edit"),
+    Binding("log", "log_down", ("j", "down"), "scroll down one line", "log"),
+    Binding("log", "log_up", ("k", "up"), "scroll up one line", "log"),
+    Binding("log", "log_page_down", ("ctrl+f", "pagedown"), "scroll down one page", "log"),
+    Binding("log", "log_page_up", ("ctrl+b", "pageup"), "scroll up one page", "log"),
+    Binding("log", "log_start", ("g g", "home"), "go to the first log entry", "log"),
+    Binding("log", "log_end", ("G", "end"), "go to latest entry and follow new entries", "log"),
+    Binding("log", "log_exit", ("enter", "escape"), "leave log navigation", "log"),
     Binding("app", "command", ("colon",), "open the command line (:q quits)"),
     Binding("app", "help", ("question_mark",), "show these bindings"),
 )
@@ -131,6 +140,6 @@ def default_toml() -> str:
         if b.section != section:
             section = b.section
             lines += ["", f"[{section}]"]
-        suffix = {"visual": " (selection mode)", "edit": " (entered knob)"}.get(b.mode, "")
+        suffix = {"visual": " (selection mode)", "edit": " (entered knob)", "log": " (entered log)"}.get(b.mode, "")
         lines.append(f"{b.action} = {list(b.keys)!r}".replace("'", '"') + f"  # {b.description}{suffix}")
     return "\n".join(lines) + "\n"

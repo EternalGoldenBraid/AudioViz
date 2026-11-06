@@ -188,7 +188,7 @@ def test_state_round_trips_through_write_and_load(tmp_path):
         app.placements["log"].x = 7
         app.run_command("w", ["t"])
         await pilot.pause(0.5)
-        assert (tmp_path / "saves" / "t.json").exists()
+        assert (tmp_path / "config" / "t.json").exists()
         app.run_command("ungroup", [])
         app.run_command("theme", ["black"])
         app.placements["log"].x = 0
@@ -352,7 +352,7 @@ def test_layout_refits_to_the_terminal_keeping_knob_height_and_the_bottom_edge(t
         knob, view = "knob-damping", "canvas"
         before = {n: vars(p).copy() for n, p in app.placements.items()}
         old_w, old_h = app.layout_size
-        await pilot.resize_terminal(old_w * 2, old_h + 21)  # one row is the mode bar
+        await pilot.resize_terminal(old_w * 2, app.size.height + 20)
         await pilot.pause(0.2)
         new_w, new_h = app.layout_size
         assert (new_w, new_h) == (old_w * 2, old_h + 20)
@@ -464,12 +464,13 @@ def test_record_writes_the_shown_tiles_and_stops_on_the_second_command(tmp_path)
 
     async def scenario(app, pilot):
         await pilot.pause(0.5)
-        before = len(app.recorded_tiles())
+        assert "spectrogram" in {t.name for t in app.recorded_tiles()}
         app.hide_tiles(["spectrogram"])
         target = tmp_path / "clip.mp4"
         app.run_command("record", [str(target)])
         await pilot.pause(0.8)
-        assert 0 < len(app.recorded_tiles()) == before - 1
+        names = {t.name for t in app.recorded_tiles()}
+        assert "canvas" in names and "spectrogram" not in names
         app.run_command("record", [])
         assert target.exists()
         video = cv2.VideoCapture(str(target))
