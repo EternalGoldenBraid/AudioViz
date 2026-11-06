@@ -33,6 +33,8 @@ from audioviz.utils.guitar_profiles import GuitarProfile
 
 
 # --- App config ---
+AUDIO_DEVICE_CONFIG = Path("config/audio_devices.json")
+
 APP_CONFIG = {
     "is_streaming": True,
     "windows": {
@@ -240,7 +242,7 @@ def main():
     if is_streaming:
         data = None
         device_enum = AudioDeviceDesktop
-        config = select_devices(config_file=Path("config/audio_devices.json"))
+        config = select_devices(config_file=AUDIO_DEVICE_CONFIG)
         sr: Union[int, float] = config["samplerate"]
     else:
         data, sr = lr.load(audio_file, sr=None)
@@ -419,5 +421,8 @@ if __name__ == "__main__":
         except ImportError as error:
             logger.warning("terminal controller unavailable ({}); run `uv sync`; starting the window only", error)
         else:
+            # Finish terminal input before launching the window without stdin.
+            if APP_CONFIG["is_streaming"]:
+                select_devices(config_file=AUDIO_DEVICE_CONFIG)
             sys.exit(run_with_tui([sys.executable, __file__, "--no-tui"]))
     main()
