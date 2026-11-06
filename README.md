@@ -62,8 +62,12 @@ Device choices are saved locally; new selections also store names to detect
 renumbered devices. Startup errors remain visible in the TUI, with retry and
 quit actions. Live streaming also offers device selection; file playback skips
 device setup. Quitting stops the window process it launched.
-`--no-tui` keeps the window-only path and its terminal prompts. The device file
-is ignored by Git; `config/audio_devices.example.json` documents its structure.
+`--no-tui` runs the windows without interactive configuration. It uses saved
+devices from `config/audio_devices.json` and the runtime preset in
+`config/deck.json`, with application defaults for settings not saved there.
+Missing or unusable saved devices stop startup with instructions to use the TUI.
+Set `AUDIOVIZ_DECK_CONFIG` to another preset path when needed. The device file is
+ignored by Git; `config/audio_devices.example.json` documents its structure.
 
 ### Worktree layout
 
@@ -91,8 +95,11 @@ paths. Refresh any shells that still use the old directory or environment.
 The TUI has **Overview, Audio, Wave, Inference, Learning, Sources and Interface**
 tabs. Tab / Shift-Tab switch tabs; `:tab audio` selects one directly. In settings
 tabs, h/j/k/l or w/b navigate, Enter enters a knob, h/l adjusts it, and Enter/Esc
-leaves it. n/p or Ctrl-f/b page through longer grids. The Qt sliders remain
-available with `--no-tui`.
+leaves it. n/p or Ctrl-f/b page through longer grids. Shared audio, source,
+physics, inference and learning settings live in the TUI. Qt windows retain
+their own display controls: canvas colors and conductance overlays, plot/view
+selection and 3D camera reset. The canvas's **Display Settings** button opens
+only those local display controls, including in `--no-tui` mode.
 
 * **Damping**: Controls wave attenuation over time (physical energy loss)
 * **Decay α**: Sets spatial spread using distance normalized by the field diagonal

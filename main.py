@@ -27,8 +27,7 @@ from audioviz.transforms.prediction_error import (
     PredictionErrorTransformConfig,
 )
 from audioviz.readouts import PredictiveCodingConfig
-from audioviz.utils.audio_devices import select_devices
-from audioviz.utils.audio_devices import AudioDeviceDesktop 
+from audioviz.utils.audio_devices import load_device_config
 from audioviz.utils.guitar_profiles import GuitarProfile  
 
 
@@ -241,8 +240,15 @@ def main():
     
     if is_streaming:
         data = None
-        device_enum = AudioDeviceDesktop
-        config = select_devices(config_file=AUDIO_DEVICE_CONFIG)
+        try:
+            config = load_device_config(AUDIO_DEVICE_CONFIG)
+        except (OSError, ValueError) as error:
+            logger.error(
+                "Cannot use saved audio setup {}: {}. "
+                "Run without --no-tui to choose devices in the TUI.",
+                AUDIO_DEVICE_CONFIG, error,
+            )
+            return 1
         sr: Union[int, float] = config["samplerate"]
     else:
         data, sr = lr.load(audio_file, sr=None)
@@ -390,13 +396,12 @@ def main():
         deck = DeckServer(ripple_window, windows=windows)  # keeps the deck socket alive for the window's lifetime
         if visualizer is not None and not ripple_window.use_shader:
             visualizer.set_canvas_provider(ripple_window.engine.get_field_preview)
-            visualizer.set_audio_model_controller(ripple_window.source_orchestrator)
     
     # Start audio
     processor_success = processor.start()
     if not processor_success:
         logger.error("Failed to start audio processing. Exiting.")
-        return
+        return 1
     
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     app.aboutToQuit.connect(processor.stop)
@@ -410,7 +415,10 @@ def main():
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AudioViz")
-    parser.add_argument("--no-tui", action="store_true", help="show only the window, without the terminal controller")
+    parser.add_argument(
+        "--no-tui", action="store_true",
+        help="run windows from saved settings, without interactive configuration",
+    )
     return parser.parse_args()
 
 
@@ -419,10 +427,11 @@ if __name__ == "__main__":
         try:
             from audioviz.tui.launcher import run_with_tui
         except ImportError as error:
-            logger.warning("terminal controller unavailable ({}); run `uv sync`; starting the window only", error)
+            logger.error("terminal controller unavailable ({}); run `uv sync`", error)
+            sys.exit(1)
         else:
             sys.exit(run_with_tui(
                 [sys.executable, __file__, "--no-tui"],
                 config_file=AUDIO_DEVICE_CONFIG if APP_CONFIG["is_streaming"] else None,
             ))
-    main()
+    sys.exit(main())

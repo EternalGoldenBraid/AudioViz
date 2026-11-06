@@ -198,8 +198,9 @@ def test_ripple_source_binding_updates_learning_dynamics_config(qapp):
     assert sections["learning-overlay"].title == "Substrate Conductances (Fixed)"
 
 
-def test_disabling_pathway_learning_keeps_inference_controls_visible(qapp):
+def test_disabling_pathway_learning_keeps_inference_controls_in_the_tui(qapp):
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+    from audioviz.tui.window_settings import window_settings
 
     visualizer = RippleWaveVisualizer(
         resolution=(2, 2),
@@ -213,11 +214,12 @@ def test_disabling_pathway_learning_keeps_inference_controls_visible(qapp):
     visualizer.timer.stop()
     visualizer.toggle_controls()
     panel = visualizer.control_panel
-    checkbox = panel.source_control_widgets[("learning-dynamics", "learning_enabled")]
-    checkbox.click()
+    controls = window_settings(visualizer)
+    controls["learning"].set(None, False)
 
     assert not visualizer.source_orchestrator.visual_readout.config.learning_enabled
-    assert panel.section_widgets["learning-dynamics"].is_expanded()
+    assert "inference steps" in controls
+    assert "learning-dynamics" not in panel.section_widgets
     visualizer.close()
 
 

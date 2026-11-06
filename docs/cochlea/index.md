@@ -40,9 +40,8 @@ From the cochlea worktree, run the **standalone TUI**:
 uv run python -m audioviz.tui.app --audio synthetic --no-camera
 ```
 
-In settings, select **audio model: cochlea**. In the attached TUI, the same
-control is in the window's mixer and changes the window process's model.
-Selection is owned by the shared source orchestrator: the audio readout and its
+In the **Audio** tab, select **audio model: cochlea**. Selection is owned by
+the shared source orchestrator: the audio readout and its
 cross-modal connections are rebuilt, while the canvas and camera branch stay
 intact. Local TUI playback is muted on a model change. The spectral model
 remains the default.
@@ -344,8 +343,8 @@ It demonstrates causal tracking, not general audio reconstruction quality.
 
 ![Process-owned audio and graph exchange feed the projector and attached tablet](cochlea-shared-views.png)
 
-The Qt audio window includes an **oscillator-index / time** row. Its model
-selector and the attached TUI's mixer address the same orchestrator. The
+The Qt audio window includes an **oscillator-index / time** row. Audio model
+selection lives in the TUI's **Audio** tab and updates the shared orchestrator. The
 terminal's **cochlea** tile is a lower-resolution projection of that history,
 with low indices at the bottom and time moving right. Both use a fixed
 $[-80,0]$ dB state-amplitude scale (reference amplitude 1), so fading remains

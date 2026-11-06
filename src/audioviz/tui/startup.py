@@ -18,7 +18,7 @@ from textual.widgets.option_list import Option
 from audioviz.tui.deck_client import DeckClient
 from audioviz.tui.deck_server import SOCKET
 from audioviz.tui.device_checklist import DeviceChecklist
-from audioviz.utils.audio_devices import make_device_config
+from audioviz.utils.audio_devices import load_device_config, make_device_config, validate_device_config
 
 
 class StartupPanel(Vertical):
@@ -84,42 +84,11 @@ class WindowSession:
         self._log = None
 
     def load_config(self) -> dict:
-        config = json.loads(self.config_file.read_text())
-        self.validate_config(config)
-        return config
+        return load_device_config(self.config_file)
 
     @staticmethod
     def validate_config(config: dict) -> None:
-        if not isinstance(config, dict):
-            raise ValueError("Audio configuration must be an object.")
-        for name in ("input_device_index", "output_device_index", "input_channels", "output_channels", "samplerate"):
-            if type(config.get(name)) is not int:
-                raise ValueError(f"Audio configuration needs an integer {name}.")
-        if config["samplerate"] <= 0:
-            raise ValueError("Audio sample rate must be positive.")
-        devices = sd.query_devices()
-        for kind in ("input", "output"):
-            index, channels = config[f"{kind}_device_index"], config[f"{kind}_channels"]
-            if channels < 0:
-                raise ValueError(f"Audio {kind} channels cannot be negative.")
-            if index == -1:
-                continue
-            if not 0 <= index < len(devices):
-                raise ValueError(f"Saved {kind} device {index} is no longer available.")
-            device = devices[index]
-            saved_name = config.get(f"{kind}_device_name")
-            if saved_name is not None and saved_name != device["name"]:
-                raise ValueError(f"Saved {kind} device {saved_name!r} has changed; select it again.")
-            if not 0 < channels <= device[f"max_{kind}_channels"]:
-                raise ValueError(f"{device['name']} cannot provide {channels} {kind} channels.")
-            check = sd.check_input_settings if kind == "input" else sd.check_output_settings
-            try:
-                check(device=index, channels=channels, dtype="float32", samplerate=config["samplerate"])
-            except sd.PortAudioError as error:
-                raise ValueError(
-                    f"{kind}: {device['name']} cannot use {config['samplerate']} Hz: {error}\n"
-                    "Choose compatible devices; the system default route can provide sample-rate conversion."
-                ) from error
+        validate_device_config(config)
 
     async def choose_devices(self, app) -> dict | None:
         devices = await asyncio.to_thread(sd.query_devices)

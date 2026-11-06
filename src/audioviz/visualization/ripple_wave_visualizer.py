@@ -1,4 +1,3 @@
-import os
 from typing import Optional, Tuple
 
 import numpy as np
@@ -158,8 +157,7 @@ class RippleWaveVisualizer(VisualizerBase):
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.renderer.widget)
 
-        controls_button = QtWidgets.QPushButton("Show Controls")
-        controls_button.setVisible(os.environ.get("AUDIOVIZ_TUI") != "1")
+        controls_button = QtWidgets.QPushButton("Display Settings")
         controls_button.clicked.connect(self.toggle_controls)
         layout.addWidget(controls_button)
         self.diagnostics_button = QtWidgets.QPushButton("Show Inference / Learning Plots")
@@ -192,10 +190,6 @@ class RippleWaveVisualizer(VisualizerBase):
         if self.control_panel is None:
             self.control_panel = RippleControlPanel(
                 self.engine,
-                on_speed_changed=self._update_speed,
-                on_amplitude_changed=self._update_amplitude,
-                on_decay_alpha_changed=self._update_decay_alpha,
-                on_damping_changed=self._update_damping,
                 rgb_canvas_enabled=self.rgb_canvas_enabled,
                 on_rgb_canvas_changed=self._update_rgb_canvas,
                 rgb_canvas_available=callable(
@@ -207,14 +201,15 @@ class RippleWaveVisualizer(VisualizerBase):
                 on_auto_color_activation_threshold_changed=self._update_auto_color_activation_threshold,
                 auto_color_floor=self.auto_color_floor,
                 on_auto_color_floor_changed=self._update_auto_color_floor,
-                source_toggles=self.source_control_binding.build_toggles(),
-                source_sections=self.source_control_binding.build_sections(),
+                source_sections=tuple(
+                    section for section in self.source_control_binding.build_sections()
+                    if section.key == "learning-overlay"
+                ),
                 on_source_control_changed=self.source_control_binding.update_control,
-                on_source_toggle_changed=self.source_control_binding.update_toggle,
-                before_reset=self.renderer.prepare_frame,
-                on_reset=self._sync_after_reset,
+                display_only=True,
             )
             self.control_panel.resize(360, 520)
+        self._sync_display_controls()
         self.control_panel.show()
         self.control_panel.raise_()
         self.control_panel.activateWindow()
@@ -283,24 +278,43 @@ class RippleWaveVisualizer(VisualizerBase):
         set_auto_levels = getattr(self.renderer, "set_auto_percentile_levels", None)
         if callable(set_auto_levels):
             set_auto_levels(self.auto_color_levels_enabled)
+        self._sync_display_controls()
 
     def _update_rgb_canvas(self, enabled: bool) -> None:
         self.rgb_canvas_enabled = bool(enabled)
         setter = getattr(self.renderer, "set_rgb_canvas_enabled", None)
         if callable(setter):
             setter(self.rgb_canvas_enabled)
+        self._sync_display_controls()
 
     def _update_auto_color_activation_threshold(self, val: float) -> None:
         self.auto_color_activation_threshold = float(val)
         setter = getattr(self.renderer, "set_auto_level_activation_threshold", None)
         if callable(setter):
             setter(self.auto_color_activation_threshold)
+        self._sync_display_controls()
 
     def _update_auto_color_floor(self, val: float) -> None:
         self.auto_color_floor = float(val)
         set_auto_level_floor = getattr(self.renderer, "set_auto_level_floor", None)
         if callable(set_auto_level_floor):
             set_auto_level_floor(self.auto_color_floor)
+        self._sync_display_controls()
+
+    def _sync_display_controls(self) -> None:
+        if self.control_panel is not None:
+            self.control_panel.sync_display_values(
+                rgb_canvas_enabled=self.rgb_canvas_enabled,
+                auto_color_levels_enabled=self.auto_color_levels_enabled,
+                auto_color_activation_threshold=self.auto_color_activation_threshold,
+                auto_color_floor=self.auto_color_floor,
+                overlay_values={
+                    "show_learning_overlay": self.show_learning_overlay,
+                    "overlay_stride": self.learning_overlay_stride,
+                    "overlay_threshold": self.learning_overlay_threshold,
+                    "overlay_scale": self.learning_overlay_scale,
+                },
+            )
 
     def update_visualization(self):
         source_frame = self.source_orchestrator.resolve()
@@ -312,10 +326,6 @@ class RippleWaveVisualizer(VisualizerBase):
         self._advance_canvas(source_frame.drive_grid)
         self.time = self.engine.time
         self._render_scene()
-        self.source_control_binding.sync_audio_panel(
-            self.control_panel,
-            source_frame.audio_frequencies,
-        )
 
     def _advance_canvas(self, drive_grid: np.ndarray | None) -> None:
         readout = self.source_orchestrator.visual_readout
@@ -433,15 +443,19 @@ class RippleWaveVisualizer(VisualizerBase):
 
     def set_learning_overlay_enabled(self, enabled: bool) -> None:
         self.show_learning_overlay = bool(enabled)
+        self._sync_display_controls()
 
     def set_learning_overlay_stride(self, stride: int) -> None:
         self.learning_overlay_stride = max(int(stride), 1)
+        self._sync_display_controls()
 
     def set_learning_overlay_threshold(self, threshold: float) -> None:
         self.learning_overlay_threshold = max(float(threshold), 0.0)
+        self._sync_display_controls()
 
     def set_learning_overlay_scale(self, scale: float) -> None:
         self.learning_overlay_scale = max(float(scale), 0.1)
+        self._sync_display_controls()
 
     def close_camera_source(self) -> None:
         self.camera_source.close()

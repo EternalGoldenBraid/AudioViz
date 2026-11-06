@@ -13,6 +13,48 @@ NULL_DEVICE = {
 }
 
 
+def validate_device_config(config: dict) -> None:
+    if not isinstance(config, dict):
+        raise ValueError("Audio configuration must be an object.")
+    for name in ("input_device_index", "output_device_index", "input_channels", "output_channels", "samplerate"):
+        if type(config.get(name)) is not int:
+            raise ValueError(f"Audio configuration needs an integer {name}.")
+    if config["samplerate"] <= 0:
+        raise ValueError("Audio sample rate must be positive.")
+    try:
+        devices = sd.query_devices()
+    except sd.PortAudioError as error:
+        raise ValueError(f"Audio devices are unavailable: {error}") from error
+    for kind in ("input", "output"):
+        index, channels = config[f"{kind}_device_index"], config[f"{kind}_channels"]
+        if channels < 0:
+            raise ValueError(f"Audio {kind} channels cannot be negative.")
+        if index == -1:
+            continue
+        if not 0 <= index < len(devices):
+            raise ValueError(f"Saved {kind} device {index} is no longer available.")
+        device = devices[index]
+        saved_name = config.get(f"{kind}_device_name")
+        if saved_name is not None and saved_name != device["name"]:
+            raise ValueError(f"Saved {kind} device {saved_name!r} has changed; select it again.")
+        if not 0 < channels <= device[f"max_{kind}_channels"]:
+            raise ValueError(f"{device['name']} cannot provide {channels} {kind} channels.")
+        check = sd.check_input_settings if kind == "input" else sd.check_output_settings
+        try:
+            check(device=index, channels=channels, dtype="float32", samplerate=config["samplerate"])
+        except sd.PortAudioError as error:
+            raise ValueError(
+                f"{kind}: {device['name']} cannot use {config['samplerate']} Hz: {error}\n"
+                "Choose compatible devices in the TUI; the system default route can provide sample-rate conversion."
+            ) from error
+
+
+def load_device_config(config_file: Path) -> dict:
+    config = loads(config_file.read_text())
+    validate_device_config(config)
+    return config
+
+
 def make_device_config(devices, input_index: int, output_index: int) -> dict:
     input_dev = NULL_DEVICE if input_index == -1 else devices[input_index]
     output_dev = NULL_DEVICE if output_index == -1 else devices[output_index]

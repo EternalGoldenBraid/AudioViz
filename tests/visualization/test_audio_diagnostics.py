@@ -171,6 +171,7 @@ def test_multimodal_scene_does_not_change_inference_learning_or_wave_state(
 def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
     qapp, layer_view_stub
 ):
+    from audioviz.tui.window_settings import window_settings
     processor = SimpleNamespace(frame_counter=0, current_top_k_frequencies=[], current_signal_level=0)
     visualizer = RippleWaveVisualizer(
         processor=processor, resolution=(6, 8), plane_size_m=(1, 1), speed=1,
@@ -182,9 +183,9 @@ def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
     visualizer.set_prediction_diagnostics_visible(True)
     visualizer.set_prediction_scene_visible(True)
     visualizer.toggle_controls()
-    checkbox = visualizer.control_panel.source_control_widgets[("learning-dynamics", "cross_modal_enabled")]
-    assert not checkbox.isChecked()
-    checkbox.click()
+    control = window_settings(visualizer)["hidden loop"]
+    assert not control.get(None)
+    control.set(None, True)
     assert visualizer.source_orchestrator.visual_readout.config.cross_modal_enabled
     assert visualizer.source_orchestrator.audio_readout.config.cross_modal_enabled
     visualizer.update_visualization()
@@ -202,7 +203,7 @@ def test_cross_modal_control_keeps_missing_evidence_diagnostics_and_scene_links(
     assert sources["audio"].recurrent_parent == "camera"
     assert sources["camera"].observation is None
     assert sources["camera"].prediction is not None
-    checkbox.click()
+    control.set(None, False)
     assert not visualizer.source_orchestrator.visual_readout.config.cross_modal_enabled
     visualizer.control_panel.close()
     visualizer.close()

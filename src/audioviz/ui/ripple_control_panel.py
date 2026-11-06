@@ -6,7 +6,7 @@ from typing import Callable, Optional, Sequence
 
 from loguru import logger
 from PyQt5 import QtWidgets
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -170,6 +170,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         on_source_toggle_changed: Optional[Callable[[str, bool], None]] = None,
         before_reset: Optional[Callable[[], bool]] = None,
         on_reset: Optional[Callable[[], None]] = None,
+        display_only: bool = False,
     ):
         super().__init__()
         self.engine = engine
@@ -194,7 +195,7 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.section_widgets: dict[str, CollapsibleSection] = {}
         self.section_toggle_keys: dict[str, str | None] = {}
 
-        self.setWindowTitle("Ripple Controls")
+        self.setWindowTitle("Canvas Display" if display_only else "Ripple Controls")
         layout = QtWidgets.QVBoxLayout(self)
 
         scroll_area = QScrollArea()
@@ -204,14 +205,34 @@ class RippleControlPanel(QtWidgets.QWidget):
         scroll_area.setWidget(content)
         layout.addWidget(scroll_area)
 
-        info_label = QLabel("Wave physics controls for the ripple field.")
+        info_label = QLabel(
+            "Display settings for this canvas. Change the running graph in the TUI."
+            if display_only else "Wave physics controls for the ripple field."
+        )
+        info_label.setWordWrap(True)
         content_layout.addWidget(info_label)
 
-        wave_section = CollapsibleSection("Wave Physics", expanded=True)
-        self.section_widgets["wave-physics"] = wave_section
-        self.section_toggle_keys["wave-physics"] = None
+        section_key = "canvas-display" if display_only else "wave-physics"
+        wave_section = CollapsibleSection(
+            "Canvas Display" if display_only else "Wave Physics", expanded=True,
+        )
+        self.section_widgets[section_key] = wave_section
+        self.section_toggle_keys[section_key] = None
         group_layout = wave_section.content_layout
+        if not display_only:
+            self._add_wave_controls(group_layout)
 
+        self._add_color_controls(
+            group_layout, rgb_canvas_enabled, rgb_canvas_available,
+            auto_color_levels_enabled, auto_color_activation_threshold, auto_color_floor,
+        )
+        content_layout.addWidget(wave_section)
+
+        if self.source_sections or self.source_toggles or not display_only:
+            self._add_source_sections(content_layout, display_only)
+        content_layout.addStretch(1)
+
+    def _add_wave_controls(self, group_layout: QtWidgets.QVBoxLayout) -> None:
         reset_button = QtWidgets.QPushButton("Reset Field")
         reset_button.setToolTip(self._tooltip_text(
             "Clear the field and belief states, retaining learned sensory-pathway weights."
@@ -271,6 +292,12 @@ class RippleControlPanel(QtWidgets.QWidget):
             on_change=lambda raw: self.update_amplitude(raw / 100.0),
         )
 
+    def _add_color_controls(
+        self, group_layout: QtWidgets.QVBoxLayout,
+        rgb_canvas_enabled: bool, rgb_canvas_available: bool,
+        auto_color_levels_enabled: bool, auto_color_activation_threshold: float,
+        auto_color_floor: float,
+    ) -> None:
         self.rgb_canvas_checkbox = QCheckBox("RGB Canvas")
         self.rgb_canvas_checkbox.setToolTip(self._tooltip_text(
             "Display the three canvas-state channels directly as red, green, and blue. "
@@ -333,9 +360,12 @@ class RippleControlPanel(QtWidgets.QWidget):
             on_change=lambda raw: self.update_auto_color_floor(raw / 100.0),
         )
 
-        content_layout.addWidget(wave_section)
-
-        source_controls_group = QtWidgets.QGroupBox("Source Controls")
+    def _add_source_sections(
+        self, content_layout: QtWidgets.QVBoxLayout, display_only: bool,
+    ) -> None:
+        source_controls_group = QtWidgets.QGroupBox(
+            "Display Overlays" if display_only else "Source Controls"
+        )
         source_controls_layout = QtWidgets.QVBoxLayout(source_controls_group)
         if self.source_toggles:
             self._add_source_toggle_controls(source_controls_layout)
@@ -375,8 +405,6 @@ class RippleControlPanel(QtWidgets.QWidget):
                 )
             )
         content_layout.addWidget(source_controls_group)
-
-        content_layout.addStretch(1)
 
     @staticmethod
     def _tooltip_text(text: str) -> str:
@@ -460,6 +488,33 @@ class RippleControlPanel(QtWidgets.QWidget):
         self.auto_color_floor_label.setText(f"Reference Scale: {val:.2f}")
         if self.on_auto_color_floor_changed is not None:
             self.on_auto_color_floor_changed(val)
+
+    def sync_display_values(
+        self, *, rgb_canvas_enabled: bool, auto_color_levels_enabled: bool,
+        auto_color_activation_threshold: float, auto_color_floor: float,
+        overlay_values: dict[str, ControlValue],
+    ) -> None:
+        """Publish display readback without replaying control callbacks."""
+        for widget, value in (
+            (self.rgb_canvas_checkbox, rgb_canvas_enabled),
+            (self.auto_color_levels_checkbox, auto_color_levels_enabled),
+        ):
+            with QSignalBlocker(widget):
+                widget.setChecked(value)
+        for widget, value in (
+            (self.auto_color_threshold_slider, auto_color_activation_threshold),
+            (self.auto_color_floor_slider, auto_color_floor),
+        ):
+            with QSignalBlocker(widget):
+                widget.setValue(round(value * 100))
+        self.auto_color_threshold_label.setText(f"Auto Scale Threshold: {auto_color_activation_threshold:.2f}")
+        self.auto_color_floor_label.setText(f"Reference Scale: {auto_color_floor:.2f}")
+        for key, value in overlay_values.items():
+            widget = self.source_control_widgets.get(("learning-overlay", key))
+            if widget is not None:
+                if isinstance(widget, QCheckBox) and widget.isChecked() != bool(value):
+                    self.section_widgets["learning-overlay"].set_expanded(bool(value))
+                self.set_source_control_value("learning-overlay", key, value)
 
     def _create_source_control_widget(
         self,

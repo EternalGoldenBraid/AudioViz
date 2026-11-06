@@ -22,7 +22,8 @@ graph. Usable saved audio devices auto-start the window; missing or invalid
 selections open the existing Vim checklists. Startup remains responsive while
 the child initializes, and errors leave device selection and retry available.
 The same TUI then attaches to the window; quitting terminates its owned child.
-Window-only `--no-tui` retains terminal-based setup.
+Window-only `--no-tui` uses saved device configuration and the runtime preset
+without prompting. Missing or invalid devices fail with TUI setup instructions.
 
 **Live readback.** Device and window tiles display state reported by the Qt
 process. Deck exchanges publish their state in request order. A timed-out or
@@ -62,9 +63,10 @@ callbacks remain responsible for updating the window's graph. `:reset` clears
 field/belief state while retaining weights. Changing the standalone resolution
 rebuilds the graph; reloading an unchanged resolution does not.
 
-Terminal-owned launches hide the legacy Qt controls button. `--no-tui` retains
-that panel. Plot/scene interaction remains in the visual windows. In attached
-mode, device and audio-model selection are in Audio; Qt plays input audio and
+Qt exposes only window-local display settings in both launch modes. Canvas
+colors/overlays, plot/view selection and 3D camera interaction remain in their
+visual windows; shared source/physics/inference/learning controls live in the TUI.
+In attached mode, device and audio-model selection are in Audio; Qt plays input audio and
 its output volume belongs to the system mixer. Standalone mode retains the
 input/prediction/error listening controls.
 There is one renderer. The TUI shows only low-res previews, and terminal pixel protocols and

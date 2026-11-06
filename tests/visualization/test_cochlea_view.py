@@ -28,9 +28,8 @@ def test_qt_and_attached_thumbnail_project_the_same_process_without_advancing_it
     runtime = GraphRuntime(resolution=8, camera=False)
     view = SpectrogramVisualizer(runtime.processor, colormaps["viridis"], Normalize(-80, 0), .1)
     view.timer.stop()
-    view.set_audio_model_controller(runtime.orchestrator)
     try:
-        view.audio_model_selector.activated[str].emit("cochlea")
+        runtime.orchestrator.set_audio_model("cochlea")
         runtime.step()
         bank = runtime.processor.cochlea
         state = bank.state.copy()
@@ -64,7 +63,8 @@ def test_qt_and_attached_thumbnail_project_the_same_process_without_advancing_it
         assert runtime.processor.samples_processed == sample_end
         runtime.orchestrator.set_audio_model("spectral")
         view.update_visualization()
-        assert view.audio_model_selector.currentText() == "spectral"
+        assert not view.findChildren(QtWidgets.QComboBox)
+        assert "TUI" in view.cochlea_plot.titleLabel.text
         assert view.cochlea_image.image is None
         assert VIEWS["cochlea"](target, 16, 80) is None
     finally:

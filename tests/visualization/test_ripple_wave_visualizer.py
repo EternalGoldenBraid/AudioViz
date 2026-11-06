@@ -385,6 +385,53 @@ def test_3d_preview_uses_corrected_canvas_one_observation_and_bounded_sampling(
     visualizer.close()
 
 
+@pytest.mark.parametrize("terminal_owned", [False, True])
+def test_qt_settings_are_window_local_and_track_terminal_changes(qapp, monkeypatch, terminal_owned):
+    from PyQt5 import QtWidgets
+    from audioviz.tui.window_settings import window_settings
+    from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer
+
+    if terminal_owned:
+        monkeypatch.setenv("AUDIOVIZ_TUI", "1")
+    else:
+        monkeypatch.delenv("AUDIOVIZ_TUI", raising=False)
+    window = RippleWaveVisualizer(
+        resolution=(8, 8), plane_size_m=(1, 1), speed=1,
+        source_orchestrator_config=_source_config(),
+    )
+    window.timer.stop()
+    try:
+        assert any(
+            button.text() == "Display Settings" and not button.isHidden()
+            for button in window.findChildren(QtWidgets.QPushButton)
+        )
+        window.toggle_controls()
+        panel = window.control_panel
+        assert set(panel.section_widgets) == {"canvas-display", "learning-overlay"}
+        assert not panel.source_toggle_checkboxes
+        assert not hasattr(panel, "speed_slider")
+        assert not any(button.text() == "Reset Field" for button in panel.findChildren(QtWidgets.QPushButton))
+        physics = (window.engine.speed, window.engine.damping, window.engine.amplitude)
+        inference = window.source_orchestrator.visual_readout.config
+        state = window.engine.Z.copy()
+        panel.auto_color_floor_slider.setValue(25)
+        panel.rgb_canvas_checkbox.setChecked(True)
+        assert window.auto_color_floor == 0.25
+        assert window.rgb_canvas_enabled
+        controls = window_settings(window)
+        controls["reference scale"].set(None, 0.35)
+        controls["RGB canvas"].set(None, False)
+        controls["learning-overlay overlay_stride"].set(None, 10)
+        assert panel.auto_color_floor_slider.value() == 35
+        assert not panel.rgb_canvas_checkbox.isChecked()
+        assert panel.source_control_widgets[("learning-overlay", "overlay_stride")].value() == 10
+        assert (window.engine.speed, window.engine.damping, window.engine.amplitude) == physics
+        assert window.source_orchestrator.visual_readout.config == inference
+        np.testing.assert_array_equal(window.engine.Z, state)
+    finally:
+        window.close()
+
+
 def test_ripple_visualizer_auto_color_controls_take_effect_on_next_render(qapp):
     from audioviz.visualization.ripple_renderers import NumpyImageRenderer
     from audioviz.visualization.ripple_wave_visualizer import RippleWaveVisualizer

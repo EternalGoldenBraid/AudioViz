@@ -28,7 +28,6 @@ def main() -> None:
     processor = runtime.processor
     view = SpectrogramVisualizer(processor, colormaps["viridis"], Normalize(-80, 0), .1)
     view.timer.stop()
-    view.set_audio_model_controller(runtime.orchestrator)
     try:
         t = np.arange(91 * 1024) / processor.sr
         frequencies = processor.cochlea.frequencies
