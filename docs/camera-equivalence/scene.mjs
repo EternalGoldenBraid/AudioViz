@@ -44,10 +44,29 @@ export function project(cam, point) {
   return { uv, point: filmPoint(cam, uv), depth };
 }
 export function planeHit(origin, direction, z) {
-  if (Math.abs(direction[2]) < 1e-12) throw new RangeError("Ray is parallel to the reference plane.");
-  const distance = (z - origin[2]) / direction[2];
+  return intersectPlane(origin, direction, [0, 0, 1], [0, 0, z]);
+}
+export function intersectPlane(origin, direction, normal, anchor) {
+  const denominator = dot(direction, normal);
+  if (Math.abs(denominator) < 1e-12) throw new RangeError("Ray is parallel to the reference plane.");
+  const distance = dot(sub(anchor, origin), normal) / denominator;
   if (distance <= 0) throw new RangeError("Reference plane is behind the ray.");
   return add(origin, scale(direction, distance));
+}
+export function cameraGeometry(c1, c2, planeNormal, planeAnchor) {
+  const R = mm([c2.u, c2.v, c2.n], transpose([c1.u, c1.v, c1.n]));
+  const t = mv([c2.u, c2.v, c2.n], sub(c1.origin, c2.origin));
+  const K2 = diagonal([c2.focal, c2.focal, 1]);
+  const inverseK1 = diagonal([1/c1.focal, 1/c1.focal, 1]);
+  const inverseK2 = diagonal([1/c2.focal, 1/c2.focal, 1]);
+  const normalInCamera1 = mv([c1.u, c1.v, c1.n], planeNormal);
+  const distance = dot(planeNormal, sub(planeAnchor, c1.origin));
+  if (Math.abs(distance) < 1e-12) throw new RangeError("The reference plane must not contain camera 1.");
+  const E = mm(skew(t), R);
+  return {
+    R, t, E, F: mm(mm(inverseK2, E), inverseK1),
+    H: mm(mm(K2, matrixAdd(R, outer(t, scale(normalInCamera1, 1/distance)))), inverseK1),
+  };
 }
 export function filmCorners(cam) {
   return [[-1,-1], [1,-1], [1,1], [-1,1]].map(([u, v]) =>
@@ -98,36 +117,33 @@ export function createWorld({ baseline = DEFAULTS.baseline, height = DEFAULTS.he
   const c2 = camera([-3 + baseline, 0, 0], [-0.3, 0, Math.sqrt(0.91)]);
   const planeZ = 6, feature = [0.2, 0.7, planeZ - height];
   const planePoint = planeHit(c1.origin, sub(feature, c1.origin), planeZ);
-  // Rows of each camera basis map world vectors into camera coordinates.
-  const R = mm([c2.u, c2.v, c2.n], transpose([c1.u, c1.v, c1.n]));
-  const t = mv([c2.u, c2.v, c2.n], sub(c1.origin, c2.origin));
-  const K = diagonal([c1.focal, c1.focal, 1]), inverseK = diagonal([1/c1.focal, 1/c1.focal, 1]);
-  const E = mm(skew(t), R), F = mm(mm(inverseK, E), inverseK);
-  const normalInCamera1 = mv([c1.u, c1.v, c1.n], [0, 0, 1]);
-  const H = mm(mm(K, matrixAdd(R, outer(t, scale(normalInCamera1, 1 / planeZ)))), inverseK);
+  const geometry = cameraGeometry(c1, c2, [0, 0, 1], [0, 0, planeZ]);
   const observations = [project(c1, feature), project(c2, feature)];
   const epipoles = baseline === 0 ? null : [project(c1, c2.origin), project(c2, c1.origin)];
   const planeNormal = baseline === 0 ? null : unit(cross(sub(c2.origin, c1.origin), sub(feature, c1.origin)));
   const world = {
     baseline, height, c1, c2, planeZ, feature, planePoint, observations, epipoles,
-    planeNormal, R, t, E, F, H, predicted: project(c2, planePoint),
+    planeNormal, ...geometry, predicted: project(c2, planePoint),
     planeCorners: [[-2.8,-1.7,planeZ], [2.8,-1.7,planeZ], [2.8,1.7,planeZ], [-2.8,1.7,planeZ]],
     planeFeatures: [[-1,-0.8,planeZ], [1.2,-0.4,planeZ], [-0.3,1.1,planeZ]],
   };
   world.flow = sampleFlow(world);
   return world;
 }
-export function readerView({ azimuth = DEFAULTS.azimuth, elevation = DEFAULTS.elevation } = {}) {
+export function readerView({
+  azimuth = DEFAULTS.azimuth, elevation = DEFAULTS.elevation,
+  bounds = [[-5.5,5.5], [-2,2], [-0.1,6]],
+} = {}) {
   bounded(azimuth, -READER_LIMITS.azimuth, READER_LIMITS.azimuth, "Reader azimuth");
   bounded(elevation, -READER_LIMITS.elevation, READER_LIMITS.elevation, "Reader elevation");
   const a = azimuth * Math.PI / 180, e = elevation * Math.PI / 180;
   const target = [0, 0, 2.5];
   const origin = add(target, [18*Math.sin(a)*Math.cos(e), 18*Math.sin(e), -18*Math.cos(a)*Math.cos(e)]);
   const observer = camera(origin, sub(target, origin), 1);
-  const bounds = [];
-  for (const x of [-5.5,5.5]) for (const y of [-2,2]) for (const z of [-0.1,6]) bounds.push(project(observer, [x,y,z]).uv);
-  const low = [0,1].map(i => Math.min(...bounds.map(p => p[i])));
-  const high = [0,1].map(i => Math.max(...bounds.map(p => p[i])));
+  const corners = [];
+  for (const x of bounds[0]) for (const y of bounds[1]) for (const z of bounds[2]) corners.push(project(observer, [x,y,z]).uv);
+  const low = [0,1].map(i => Math.min(...corners.map(p => p[i])));
+  const high = [0,1].map(i => Math.max(...corners.map(p => p[i])));
   const zoom = Math.min((SIZE.width-120)/(high[0]-low[0]), (SIZE.height-90)/(high[1]-low[1]));
   const centre = low.map((x, i) => (x + high[i]) / 2);
   return {

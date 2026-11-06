@@ -19,7 +19,10 @@ export default async function checkReaderOrbit(page) {
     await page.mouse.up();
   };
   await figure("world").locator("svg").waitFor();
-  check(await page.getByRole("button",{name:"Reset view",exact:true}).count() === 4,"Only 3D figures have orbit controls");
+  for (const mode of spatial) check(await figure(mode).getByRole("button",{name:"Reset view",exact:true}).count() === 1,
+    `${mode} has reader orbit controls`);
+  for (const mode of ["flow","predictions"]) check(await figure(mode).getByRole("button",{name:"Reset view",exact:true}).count() === 0,
+    `${mode} has no reader orbit controls`);
   const initial = await Promise.all(spatial.map(points));
   const plots = await Promise.all(["flow","predictions"].map(mode => figure(mode).locator("svg").innerHTML()));
   const sceneValues = await Promise.all(["#scene-baseline","#scene-height"].map(id => page.locator(id).inputValue()));

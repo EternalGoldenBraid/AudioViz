@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from "vue";
 import SceneFigure from "./SceneFigure.vue";
+import TransformProgression from "./TransformProgression.vue";
 import { DEFAULTS, READER_LIMITS, createWorld, readerView } from "./scene.mjs";
 const baseline = ref(DEFAULTS.baseline);
 const height = ref(DEFAULTS.height);
@@ -27,9 +28,9 @@ $$x_{kj} = \pi_k\!\left(T_k^{-1} X_j\right)$$
 
 $x_{kj}$ is feature $j$'s image position in camera $k$; $\pi_k$ projects a point from that camera's coordinates into its image.
 
-The figures share one synthetic 3D scene. Their camera parameters are known for illustration; they are not estimates from the learned canvas. The reader is a third perspective observer: changing your viewpoint changes the drawing, not the cameras' observations.
+The main figures share one synthetic 3D scene. Their camera parameters are known for illustration; they are not estimates from the learned canvas. The reader is a third perspective observer: changing your viewpoint changes the drawing, not the cameras' observations.
 
-Mouse or pen drag rotates any 3D figure through a full orbit. All four 3D views share that viewpoint; **Reset view** restores the static framing. On touch screens, the figures remain horizontally pannable and the sliders rotate the view.
+Mouse or pen drag rotates any 3D figure through a full orbit. All 3D views share that viewpoint; **Reset view** restores the static framing. On touch screens, the figures remain horizontally pannable and the sliders rotate the view.
 
 <div class="scene-controls">
   <label for="reader-azimuth">reader azimuth</label><input id="reader-azimuth" type="range" :min="-READER_LIMITS.azimuth" :max="READER_LIMITS.azimuth" step="1" v-model.number="azimuth" /><output for="reader-azimuth">{{ azimuth }}°</output>
@@ -82,6 +83,35 @@ Later, the correspondences can be compared against several transforms. The solid
 
 **Symbols:** $H$ is a plane's image mapping; $E,F$ constrain matches to epipolar lines; $\rho$ is scalar parallax along epipole $e'$; $u(x)$ is a displacement at image position $x$.
 
+### From similarity to plane + parallax
+
+Uniform scale, rotation and translation form a **similarity**. Unequal scale or shear needs an **affine** map. A **homography** adds a perspective divide, so parallel lines can converge. These three families of 2D mappings are nested; plane-plus-parallax adds depth:
+
+| Model | Mapping | What it preserves |
+|---|---|---|
+| Similarity · 4 degrees of freedom | $x_2=sR_{\mathrm{2D}}x_1+t_{\mathrm{2D}}$ | Angles and length ratios |
+| Affine · 6 degrees of freedom | $x_2=Ax_1+t_{\mathrm{2D}}$ | Straight lines and parallelism |
+| Homography · 8 degrees of freedom | $\widetilde x_2\sim H\widetilde x_1$ | Straight lines, not necessarily parallelism |
+| Plane + parallax | $\widetilde x_2\sim H\widetilde x_1+\rho e'$ | A rigid scene's epipolar constraint |
+
+Here $s$ is a uniform scale, $R_{\mathrm{2D}}$ a planar rotation, $t_{\mathrm{2D}}$ a 2D translation, and $A$ an invertible $2\times2$ matrix. $\widetilde x=[x^\top,1]^\top$ lifts an image position into homogeneous coordinates; $\sim$ means equality up to scale. Uniform scale alone stays within similarity. Plane-plus-parallax is a description of 3D structure under camera translation, not another single 2D matrix.
+
+Move either slider continuously or select a milestone. The experiment first zooms and rolls camera 2, then tilts the reference plane, then turns camera 2, and finally lifts interior samples off the plane. Each stage retains the earlier changes.
+
+#### Image matches (2D)
+
+<TransformProgression :reader="reader" />
+
+The image-1 grid defines fixed viewing rays. Their intersections with $\Pi$ construct the plane samples in 3D; the final stage moves interior samples toward camera 1 along those rays. Parallel optical axes at equal camera depth give an exact affine mapping of the tilted plane.
+
+#### Scene construction (3D)
+
+This view has its own progression slider. At matching slider values, the 2D and 3D views use identical points and pinhole cameras.
+
+<TransformProgression view="3d" :reader="reader" @orbit="orbit" @reset-view="resetView" />
+
+The experiment has its own controlled geometry and fixed framing; its reader orientation is shared with the main scene. The baseline and off-plane controls below still belong to the main scene. Parallax needs camera translation and off-plane structure; it vanishes for a plane or coincident camera centres.
+
 ### Homography $H$
 
 The homography $H$ maps reference-plane points between images. Under pure rotation, it is exact at every depth.
@@ -107,7 +137,7 @@ Here $n,d$ are expressed in camera 1's coordinates. The same convention is used 
 
 <SceneFigure mode="parallax" :world="world" :reader="reader" @orbit="orbit" @reset-view="resetView" />
 
-These controls update the scene used by every figure. Distances are arbitrary scene units; the offset is perpendicular to $\Pi$. Camera orientations and intrinsics stay fixed. Purple $e'$ is $C_1$ projected into image 2; $Hx_1$ and $x_2$ lie on its line.
+These controls update every main-scene figure. Distances are arbitrary scene units; the offset is perpendicular to $\Pi$. Camera orientations and intrinsics stay fixed. Purple $e'$ is $C_1$ projected into image 2; $Hx_1$ and $x_2$ lie on its line.
 
 $x_1,x_2$ are the feature's positions in the two images; $H$ is the reference plane's mapping. In $x_2\sim Hx_1+\rho(x_1)\,e'$, $\rho$ is a scalar parallax coefficient and $e'$ the epipole. Without calibration, this constrains projective structure, not depth in metres.
 
@@ -146,18 +176,18 @@ $H$ predicts a matching point, $F$ a line through epipole $e'$, and $u(x)$ a dis
 
 ## Figure sources
 
-`scene.mjs` owns the world and camera mathematics. `figures.mjs` projects it into shared drawing primitives. `SceneFigure.vue` displays those primitives; `render-figures.mjs` writes the same default scene as TikZ and outlined SVG. All 3D views share the reader camera and framing; sensor-coordinate plots have their own explicitly labelled frames. Correspondence and transform-hierarchy diagrams are schematic.
+`scene.mjs` owns the world and camera mathematics. `figures.mjs` projects it into shared drawing primitives. `SceneFigure.vue` displays those primitives; `render-figures.mjs` writes the same default scene as TikZ and outlined SVG. `progression.mjs` builds the controlled transform experiment and fits its lower-order models; `TransformProgression.vue` projects its samples into both images. Reader orientation is shared; each experiment keeps fixed framing as its geometry changes. Sensor-coordinate plots have their own explicitly labelled frames. Correspondence and transform-hierarchy diagrams are schematic.
 
 From the repository root:
 
 ```sh
-node --test docs/camera-equivalence/scene.test.mjs
+node --test docs/camera-equivalence/*.test.mjs
 node docs/camera-equivalence/render-figures.mjs
 ```
 
 The renderer requires LaTeX with TikZ/standalone and `dvisvgm`. Generated `.tex` and `.svg` files are committed together; geometry edits belong in the shared modules.
 
-`scene.browser.mjs` exports a browser regression fixture taking a Playwright page open on this document. It checks drag orbit, shared/reset viewpoints, unchanged sensor plots and click-to-comment labels.
+`scene.browser.mjs` and `progression.browser.mjs` export browser regression fixtures taking a Playwright page open on this document. They check drag orbit, shared/reset viewpoints, unchanged sensor plots, click-to-comment labels, transform milestones and keyboard operation.
 
 <style>
 .scene-controls {

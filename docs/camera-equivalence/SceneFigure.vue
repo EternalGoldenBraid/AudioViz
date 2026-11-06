@@ -7,6 +7,7 @@ const props = defineProps({
   mode: { type: String, required: true },
   world: { type: Object, required: true },
   reader: { type: Object, required: true },
+  sceneId: { type: String, default: null },
 });
 const figure = computed(() => buildFigure(props.mode, props.world, props.reader));
 const emit = defineEmits(["orbit", "reset-view"]);
@@ -56,7 +57,7 @@ const residual = computed(() => Math.hypot(
 </script>
 
 <template>
-  <figure class="scene-figure" :data-scene-mode="mode">
+  <figure class="scene-figure" :data-scene-mode="sceneId || mode">
     <div v-if="spatial" class="scene-orbit-controls">
       <span>Mouse drag to rotate</span>
       <button type="button" @click="emit('reset-view')">Reset view</button>

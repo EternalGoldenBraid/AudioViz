@@ -44,6 +44,7 @@ export function buildFigure(mode, world, reader) {
     if (edges) points.forEach((p,i) => line3(p,points[(i+1)%points.length],color));
   };
   const { c1, c2, feature, planePoint, observations, epipoles } = world;
+  const construction = mode === "world" && Boolean(world.samples);
 
   if (["world", "homography", "parallax", "epipolar"].includes(mode)) {
     if (mode === "epipolar" && world.baseline > 0) surface3([c1.origin,c2.origin,feature], COLORS.epipolar,0.12,false);
@@ -52,7 +53,7 @@ export function buildFigure(mode, world, reader) {
     for (const [i, cam] of [c1,c2].entries()) {
       const color = COLORS[i ? "c2" : "c1"];
       surface3(filmCorners(cam), color);
-      label3(filmPoint(cam, [i ? 1.5 : -1.5, 0.45]), i ? "I₂" : "I₁", `$I_${i+1}$`, color);
+      label3(filmPoint(cam, [(i ? 1 : -1)*cam.halfWidth*0.75, cam.halfHeight*(0.45/0.7)]), i ? "I₂" : "I₁", `$I_${i+1}$`, color);
       point3(cam.origin, color, `camera-${i+1}`, 3.5);
       if (world.baseline || i === 1) label3(cam.origin, !world.baseline ? "C₁ = C₂" : `C${i ? "₂" : "₁"}`,
         !world.baseline ? "$C_1=C_2$" : `$C_${i+1}$`, color, [i ? 12 : 0,26], i ? "start" : "middle");
@@ -60,11 +61,11 @@ export function buildFigure(mode, world, reader) {
     line3(c1.origin,c2.origin,COLORS.dim,true);
     const selected = mode === "homography" ? planePoint : feature;
     const imagePoints = [c1,c2].map(cam => project(cam, selected).point);
-    line3(c1.origin, mode === "parallax" ? planePoint : selected, COLORS.dim, true);
+    line3(c1.origin, mode === "parallax" || construction ? planePoint : selected, COLORS.dim, true);
     line3(c2.origin, selected, COLORS.dim, true);
     point3(selected,COLORS.observed,mode === "homography" ? "plane-point" : "feature",4);
-    label3(selected, mode === "homography" ? "Xπ" : mode === "parallax" && !world.height ? "X = Xπ" : "X",
-      mode === "homography" ? String.raw`$X_\pi$` : mode === "parallax" && !world.height ? String.raw`$X=X_\pi$` : "$X$", COLORS.observed);
+    label3(selected, mode === "homography" ? "Xπ" : (mode === "parallax" || construction) && !world.height ? "X = Xπ" : "X",
+      mode === "homography" ? String.raw`$X_\pi$` : (mode === "parallax" || construction) && !world.height ? String.raw`$X=X_\pi$` : "$X$", COLORS.observed);
     for (const [i, point] of imagePoints.entries()) {
       const coincident = mode === "parallax" && i === 1 && (!world.baseline || !world.height);
       if (mode === "homography" && i === 1) {
@@ -77,7 +78,19 @@ export function buildFigure(mode, world, reader) {
         coincident ? "$Hx_1=x_2$" : `$x_${i+1}$`, COLORS.observed,
         [i ? -12 : 12, -14], i ? "end" : "start");
     }
-    if (mode === "world") {
+    if (construction) {
+      for (const [a,b] of world.edges) {
+        const color = world.samples[a].offset || world.samples[b].offset ? COLORS.observed : COLORS.prediction;
+        line3(world.samples[a].point,world.samples[b].point,color);
+      }
+      for (const sample of world.samples) point3(sample.point,
+        sample.offset ? COLORS.observed : COLORS.prediction, `construction-${sample.id}`,1.5);
+      if (world.height) {
+        line3(c2.origin,planePoint,COLORS.prediction,true);
+        point3(planePoint,COLORS.prediction,"plane-point");
+        label3(planePoint,"Xπ",String.raw`$X_\pi$`,COLORS.prediction,[12,-10],"start");
+      }
+    } else if (mode === "world") {
       for (const [i,cam] of [c1,c2].entries()) {
         const origin = filmPoint(cam,[0,0]), p = p3(origin);
         line(add(p,[-3,0]),add(p,[3,0]),COLORS.dim);
