@@ -36,10 +36,10 @@ class DeviceChecklist(ModalScreen):
         Binding("escape,q", "dismiss(None)", show=False),
     ]
 
-    def __init__(self, title: str, choices: list[str], checked: list[str], capacity: int, *, live: bool = True) -> None:
+    def __init__(self, title: str, choices: list[str], checked: list[str], capacity: int, *, live: bool | list[str] = True) -> None:
         super().__init__()
         self.title_text, self.choices, self.capacity = title, choices, capacity
-        self.opened = list(checked) if live else []  # only running devices are labelled live
+        self.opened = list(live) if isinstance(live, list) else list(checked) if live else []
         self.checked = list(checked)
 
     def compose(self) -> ComposeResult:

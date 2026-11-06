@@ -225,6 +225,41 @@ def test_short_names_complete_in_save_directory_and_missing_files_report_failure
     asyncio.run(run())
 
 
+def test_phone_camera_command_keeps_local_camera_and_reports_invalid_or_full_selections(app):
+    async def run():
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.attached = True
+            local = "0: Laptop camera"
+            state = {"camera": {"selected": [local], "text": local}}
+            calls = []
+
+            def select(name, values):
+                calls.append((name, values))
+                state[name] = {"selected": values, "text": ", ".join(values) or "off"}
+
+            app.deck = SimpleNamespace(state=state, select=select)
+            url = "http://192.168.1.20:8080/video"
+            await pilot.press("colon")
+            app.query_one("#command", Input).value = "camera " + url
+            await pilot.press("enter")
+            assert calls == [("camera", [local, "net: " + url])]
+            assert "Use :w to save" in app.status_message
+            app.run_command("camera", ["file:///tmp/video"])
+            assert "Camera URL must be" in app.status_message
+            assert len(calls) == 1
+            app.run_command("camera", ["off"])
+            assert calls[-1] == ("camera", [local])
+            state["camera"]["selected"] = [local, "2: External camera"]
+            app.run_command("camera", [url])
+            assert "Both camera slots" in app.status_message
+            assert len(calls) == 2
+            app.attached = False
+            app.run_command("camera", [url])
+            assert "requires the attached Qt runtime" in app.status_message
+
+    asyncio.run(run())
+
+
 def test_window_config_save_persists_and_reloads_actual_control_values(app, tmp_path):
     def engine():
         result = SimpleNamespace(damping=0.98, speed=1.0)

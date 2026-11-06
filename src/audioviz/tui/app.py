@@ -34,6 +34,8 @@ from audioviz.tui import keys as keys_module
 from audioviz.tui.hot_reload import HotReload
 from audioviz.tui.keys_overlay import KeysScreen
 from audioviz.tui.mixer import CONTROLS
+from audioviz.sources.network_camera import validate_camera_url
+from audioviz.tui.deck_devices import NETWORK_PREFIX
 from audioviz.tui.preset_picker import PresetPicker
 from audioviz.tui.record_tile import RecordPrompt, RecordTile
 from audioviz.tui.recorder import RecordedTile, Recorder
@@ -342,6 +344,8 @@ class AudioVizApp(App):
             for category in SETTING_TABS:
                 with TabPane(category.title(), id=category):
                     yield Static("h/j/k/l move  Enter edit  Tab/S-Tab tabs  n/p page  :w save  :load", classes="settings-help")
+                    if category == "sources":
+                        yield Static(":camera <URL> connect phone  :camera off disconnect", classes="settings-help")
                     with VerticalScroll(), Grid(classes="settings-grid"):
                         for i, (_, context, control) in enumerate(self.knobs):
                             if control_category(control) == category:
@@ -731,7 +735,7 @@ class AudioVizApp(App):
 
     def open_checklist(self, knob: "KnobTile") -> None:
         control = knob.control
-        screen = DeviceChecklist(control.name, control.choices, control.selected, control.capacity)
+        screen = DeviceChecklist(control.name, control.choices, control.selected, control.capacity, live=control.live)
         # Pushed after the opening Enter has been fully handled, so the modal's own Enter binding never sees it.
         self.call_later(self.push_screen, screen, lambda values: self.apply_checklist(knob, values))
 
@@ -1212,6 +1216,7 @@ class AudioVizApp(App):
                 log.write("damping|speed <v>  opacity <v>  raise|lower")
                 log.write("move <dx> <dy>  view <name>  views")
                 log.write("devices  gain <v>  tab overview|audio|wave|inference|learning|sources|interface")
+                log.write("camera <http://.../video|rtsp://...> connect phone  camera off disconnect (attached)")
                 log.write("theme [name]  bg <color|theme>  group <tiles>  ungroup")
                 log.write(":w|:save [name|path] save config  :load [name|path] pick/load  :e [name|path] reload")
                 log.write("? bindings  :keys [write|reload]")
@@ -1318,6 +1323,8 @@ class AudioVizApp(App):
                 self.toggle_immersive()
             elif name == "devices":
                 self.open_devices()
+            elif name == "camera":
+                self._run_camera_command(args)
             elif name == "views":
                 log.write(" ".join(views_module.VIEWS))
             elif name == "view":
@@ -1575,6 +1582,25 @@ class AudioVizApp(App):
         except Exception as error:  # a missing or busy device must not take down the shell
             log.write(f"audio {choice!r} failed: {error}; keeping {feed.source}")
         self.set_mode(self.mode)
+
+    def _run_camera_command(self, args: list[str]) -> None:
+        if not self.attached:
+            raise ValueError("LAN camera selection requires the attached Qt runtime; launch with uv run python main.py.")
+        if not args:
+            self.report_status(f"Camera: {self.deck.state['camera']['text']}. Use :camera <URL> or :camera off.")
+            return
+        if len(args) != 1:
+            raise ValueError("Use :camera <stream URL> or :camera off.")
+        local = [value for value in self.deck.state["camera"]["selected"] if not value.startswith(NETWORK_PREFIX)]
+        if args[0] == "off":
+            selected = local
+        else:
+            url = validate_camera_url(args[0])
+            if len(local) == 2:
+                raise ValueError("Both camera slots are in use. Uncheck one in Sources before adding the phone.")
+            selected = [*local, NETWORK_PREFIX + url]
+        self.deck.select("camera", selected)
+        self.report_status("Camera: " + self.deck.state["camera"]["text"] + ". Use :w to save.")
 
     def _run_audio_command(self, args: list[str], log: LogTile) -> None:
         choice = args[0] if args else "list"

@@ -79,6 +79,13 @@ window-manager tiling are out of scope.
 - Launch: `main.py` starts the window as a child and attaches the TUI; quitting the TUI closes the window.
 - Tiles: subgraph views, mixer and settings knobs, log. They layer, move, zoom and group (`v`), and refit to the terminal size. `Esc` rises to a group, `Enter` dives back; the mixer group pages with `n`/`p`.
 - Devices: Enter opens a checklist: one audio device per direction, up to two cameras. Configs store selections as lists and match device names across changed indices. `:w` / `:save` persist runtime controls and TUI preferences together.
+- LAN phone camera (attached): `:camera <http(s)://...|rtsp://...>` connects a
+  network camera while retaining one local camera; `:camera off` disconnects
+  network cameras. Sources shows connecting/live/reconnecting state. Presets
+  retain stream URLs, including on laptops with no local capture devices.
+  Decoding/retries run off the Qt loop; a one-frame handoff expires old frames.
+  Android setup is documented in README; Jetson and standalone selection are
+  outside this slice.
 - Hiding: `dd` hides the focused tile or group, `u` undoes, `T` lists tiles by group. Hidden tiles keep their placement and persist in `~/.cache/audioviz/state.json`.
 - Keys are data in `src/audioviz/tui/keys.py`; `?` shows them and `~/.config/audioviz/keys.toml` rebinds them.
 - Verified by pilot tests (`tests/tui`) and live tmux screenshots. Hiding has pilot coverage only.

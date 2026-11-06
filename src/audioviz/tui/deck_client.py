@@ -179,6 +179,10 @@ class RemoteControl:
     def capacity(self) -> int:
         return self.client.state[self.name]["capacity"]
 
+    @property
+    def live(self) -> list[str]:
+        return self.client.state[self.name].get("live", self.selected)
+
     def select(self, values: list[str]) -> None:
         self.client.select(self.name, values)
 

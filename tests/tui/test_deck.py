@@ -319,6 +319,53 @@ def test_enter_on_a_device_knob_opens_a_checklist_that_replaces_the_selection(tm
     asyncio.run(run())
 
 
+def test_connecting_phone_is_selected_but_not_labelled_live_in_the_camera_checklist(tmp_path, monkeypatch):
+    import asyncio
+    from audioviz.tui import app as app_module, control
+    from audioviz.tui.deck_client import RemoteControl
+    from audioviz.tui.device_checklist import DeviceChecklist
+    from audioviz.tui.graph_runtime import GraphRuntime
+
+    local, phone = "0: Laptop camera", "net: http://192.168.1.20:8080/video"
+
+    class CameraDeck(StubDeck):
+        @property
+        def state(self):
+            return {"camera": {
+                "name": "camera", "position": 0, "text": "1 live | 2 connecting",
+                "toggle": False, "choices": [local, phone], "selected": [local, phone],
+                "capacity": 2, "live": [local], "category": "sources",
+            }}
+
+        def controls(self):
+            return [RemoteControl("camera", self)]
+
+    monkeypatch.setattr(control, "SOCKET", tmp_path / "control.sock")
+    monkeypatch.setattr(app_module, "DeckClient", CameraDeck)
+    monkeypatch.setattr(app_module, "GraphRuntime", lambda **kw: GraphRuntime(resolution=16, **kw))
+
+    async def run():
+        app = app_module.AudioVizApp(
+            audio="synthetic", camera=False, state_dir=tmp_path,
+            autosave=False, hot_reload=False, attach=True,
+        )
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            app.select_workspace("sources")
+            await pilot.pause()
+            app.refresh_tiles()
+            assert "1 live | 2 connecting" in str(app.focused.render())
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, DeviceChecklist)
+            assert app.screen.checked == [local, phone]
+            assert app.screen.opened == [local]
+            assert "live" not in app.screen._row(phone).plain
+            await pilot.press("escape")
+
+    asyncio.run(run())
+
+
 def test_window_knobs_show_and_hide_windows_and_a_saved_hidden_window_starts_hidden(tmp_path):
     class Widget:
         visible = True

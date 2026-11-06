@@ -140,6 +140,43 @@ settings to a live attached graph.
 
 `:w` does not create media. Use `:shot [name]` for a screenshot.
 
+### Android camera over local Wi-Fi
+
+Run the normal attached application with `uv run python main.py`. On Android,
+install a camera-streaming app such as
+[IP Webcam](https://play.google.com/store/apps/details?id=com.pas.webcam).
+Connect the phone and laptop to the same trusted LAN, allow camera access,
+and start the app's local server. Cloud broadcasting and phone audio are not
+needed. Start with 640x480 at 10-15 fps.
+
+Open the address shown by the phone in the laptop browser to verify connectivity.
+Use the **video stream URL**, not the HTML viewer page. IP Webcam commonly serves
+MJPEG at `/video`; for example, enter this in AudioViz's command line:
+
+```
+:camera http://192.168.1.20:8080/video
+```
+
+Replace the example address with the phone's address. HTTP(S) MJPEG and RTSP
+streams are accepted through OpenCV's FFmpeg backend. URLs with embedded
+credentials are not supported; use this feature only on a trusted LAN.
+
+The **Sources** tab's camera selector summarizes camera 1/2 connection states;
+Enter shows their full device names/URLs. It supports up to two cameras.
+Connecting a phone preserves one selected local camera;
+if both slots hold local cameras, uncheck one first. `:camera off` disconnects
+network cameras and retains local cameras. `:w phone` saves the selected URL
+with the preset; `:load phone` reconnects it. Connection state and decoded frames
+are not saved. A stable/reserved phone address makes saved presets reusable.
+
+Network decoding runs on its own worker, with one latest frame, one-second frame
+expiry, finite open/read timeouts and automatic retries. A stalled stream supplies
+no observation, so it cannot block the graph/UI or replay stale evidence.
+Frame age is measured after decoding on the laptop; cameras are not clock-synchronized.
+Guest Wi-Fi/client isolation can prevent phone-to-laptop connections even on the
+same SSID. This first slice covers the attached Qt runtime, video only; standalone
+TUI camera selection and Jetson deployment are separate.
+
 ### Terminal recordings
 
 In the TUI, `:record [path]` starts an MP4 recording of the visible image tiles;

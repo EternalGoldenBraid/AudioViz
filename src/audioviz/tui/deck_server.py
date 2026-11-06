@@ -138,6 +138,8 @@ def describe_control(control, target) -> dict:
     }
     if hasattr(control, "selected"):  # a device list: the checked entries and how many may be checked
         description.update(selected=control.selected(target), capacity=control.capacity)
+        if hasattr(control, "live"):
+            description["live"] = control.live(target)
     return description
 
 
@@ -268,10 +270,7 @@ class DeckServer:
             try:
                 if hasattr(control, "selected"):
                     values = value if isinstance(value, list) else ([] if value == "off" else str(value).split(", "))
-                    by_name = {c.split(": ", 1)[-1]: c for c in control.choices}
-                    selected = [v if v in control.choices else by_name.get(v.split(": ", 1)[-1]) for v in values]
-                    if None in selected:
-                        raise ValueError("saved device is unavailable")
+                    selected = control.resolve_selection(values)
                     if selected or control.selected(self.target):
                         control.select(self.target, selected)
                     continue

@@ -9,6 +9,9 @@ import re
 from pathlib import Path
 
 from audioviz.sources.virtual_camera import virtual_choices
+from audioviz.sources.network_camera import is_network_camera, validate_camera_url
+
+NETWORK_PREFIX = "net: "
 
 
 def label(index: int, name: str) -> str:
@@ -34,7 +37,9 @@ def camera_choices() -> tuple[str, ...]:
     return tuple(text for _, text in sorted(choices)) + virtual
 
 
-def _index(choice: str) -> int:
+def _index(choice: str) -> int | str:
+    if choice.startswith(NETWORK_PREFIX):
+        return validate_camera_url(choice.removeprefix(NETWORK_PREFIX))
     return int(choice.split(":", 1)[0])
 
 
@@ -56,6 +61,17 @@ class DeviceControl:
     def selected(self, context=None) -> list[str]:
         label_ = _current(self.choices, self._current())
         return [] if label_ == "off" else [label_]
+
+    def resolve_selection(self, values: list[str]) -> list[str]:
+        choices = self.choices
+        by_name = {c.split(": ", 1)[-1]: c for c in choices}
+        selected = []
+        for value in values:
+            resolved = value if value in choices else by_name.get(value.split(": ", 1)[-1])
+            if resolved is None:
+                raise ValueError("saved device is unavailable")
+            selected.append(resolved)
+        return selected
 
     def select(self, context, values: list[str]) -> None:
         values = [v for v in values if v in self.choices][-self.capacity:]
@@ -86,16 +102,23 @@ class CameraDevices(DeviceControl):
 
     The list is read from the system on every access, so a camera plugged in or renumbered after start is offered
     under its current index; a choice made from an older list is matched by name. A selection that fails to open
-    leaves the previous cameras running."""
+    leaves the previous local cameras running. Network cameras connect and retry asynchronously."""
+
+    category = "sources"
+    description = "Up to two cameras. :camera <URL> connects a phone on the LAN; :camera off disconnects it."
 
     def __init__(self, choices, primary, secondary) -> None:
         self._choices = choices if callable(choices) else (lambda: choices)
-        super().__init__("camera", self._choices(), lambda: _camera_number(primary.camera_index), primary.set_camera_index, capacity=2)
         self.primary, self.secondary = primary, secondary
+        super().__init__("camera", self._choices(), lambda: _camera_number(primary.camera_index), primary.set_camera_index, capacity=2)
 
     @property
     def choices(self) -> tuple[str, ...]:
-        return self._choices()
+        network = tuple(dict.fromkeys(
+            NETWORK_PREFIX + source.camera_index for source in (self.primary, self.secondary)
+            if is_network_camera(source.camera_index)
+        ))
+        return self._choices() + network
 
     @choices.setter
     def choices(self, _value) -> None:
@@ -105,16 +128,33 @@ class CameraDevices(DeviceControl):
         chosen = [_current(self.choices, _camera_number(source.camera_index)) for source in (self.primary, self.secondary) if source.enabled]
         return [c for c in chosen if c != "off"]
 
-    def _resolve(self, values: list[str]) -> list[str]:
-        choices = self.choices
-        by_name = {c.split(": ", 1)[-1]: c for c in choices}
-        resolved = (v if v in choices else by_name.get(v.split(": ", 1)[-1]) for v in values)
-        return list(dict.fromkeys(v for v in resolved if v))[-self.capacity:]
+    def resolve_selection(self, values: list[str]) -> list[str]:
+        resolved = []
+        for value in values:
+            if is_network_camera(value):
+                resolved.append(NETWORK_PREFIX + validate_camera_url(value.removeprefix(NETWORK_PREFIX)))
+            else:
+                resolved.extend(super().resolve_selection([value]))
+        return list(dict.fromkeys(resolved))[-self.capacity:]
+
+    def live(self, context=None) -> list[str]:
+        return [
+            _current(self.choices, _camera_number(source.camera_index))
+            for source in (self.primary, self.secondary)
+            if source.enabled and source.capture_status == "live"
+        ]
+
+    def format(self, context=None) -> str:
+        sources = [(number, source) for number, source in enumerate((self.primary, self.secondary), 1) if source.enabled]
+        if any(is_network_camera(source.camera_index) for _, source in sources):
+            return " | ".join(f"{number} {source.capture_status}" for number, source in sources)
+        return super().format(context)
 
     def select(self, context, values: list[str]) -> None:
+        resolved = self.resolve_selection(values)
         previous = self.selected()
         try:
-            self._open(self._resolve(values))
+            self._open(resolved)
         except RuntimeError:
             try:
                 self._open(previous)
@@ -134,8 +174,10 @@ class CameraDevices(DeviceControl):
             self.secondary.set_enabled_closing(True)
 
 
-def _camera_number(camera_index) -> int | None:
-    """The config may name the camera by index or by device path."""
+def _camera_number(camera_index) -> int | str | None:
+    """The config may name a local device or a network stream."""
+    if is_network_camera(camera_index):
+        return camera_index
     digits = re.sub(r"\D", "", str(camera_index))
     return int(digits) if digits else None
 
@@ -144,7 +186,7 @@ def device_controls(window, devices: list[dict]) -> dict[str, DeviceControl]:
     """Controls for the devices the window has: audio in/out per the processor's channel counts, and the cameras."""
     orchestrator = window.source_orchestrator
     controls = audio_controls(window.processor, devices)
-    if camera_choices():  # only decides whether the control exists; its list is refreshed on use
+    if all(hasattr(orchestrator, name) for name in ("camera_source", "secondary_camera_source")):
         controls["camera"] = CameraDevices(camera_choices, orchestrator.camera_source, orchestrator.secondary_camera_source)
     return controls
 
