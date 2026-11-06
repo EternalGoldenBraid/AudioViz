@@ -31,17 +31,23 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 
 ## 🔧 Installation
 
-If `pixi.sh` install from `pyproject.toml`
+Use Python 3.13+ and [uv](https://docs.astral.sh/uv/). From the repository or
+worktree you want to run:
+
 ```bash
-pixi update
+uv sync
+uv run python main.py
 ```
-or
-```bash
-pip install -r requirements.txt (get from `pyproject.toml`)
-```
-```
-python main.py
-```
+
+Each worktree has its own `.venv`. Run `uv sync` after merging dependency changes;
+`uv run` also synchronizes it automatically. Bare `python` only uses this
+environment after `source .venv/bin/activate`; otherwise it may use system Python
+and report missing packages such as PyQt5.
+
+`pyproject.toml` and `uv.lock` define the supported environment. Qt, the terminal
+controller, and other normal runtime dependencies are installed by default.
+Testing tools live in the `dev` group (`uv run --group dev python -m pytest`).
+CuPy remains optional and requires an installation matching your CUDA setup.
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 

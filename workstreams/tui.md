@@ -5,7 +5,7 @@
 > **Next:** serve low-res previews over the deck socket (attached tiles show "waiting for data"), then paged knobs from `main.py` config sections.
 > **Blocked:** none. Integration with `main` is deferred: `main` has moved to active-inference rendering that changes the canvas dynamics.
 > **Resume:** `copilot --resume efa7117b-d1b5-4bdb-bf79-7d9c8036c52e`
-> **Run:** `uv run --group tui --with-editable . python main.py` (`--no-tui`: window only)
+> **Run:** `uv run python main.py` (`--no-tui`: window only)
 
 **Essence.** A Vim-modal Textual app that works as a DJ deck: `main.py` renders in its
 standalone Qt window and serves a deck socket; the TUI attaches and turns the window's knobs.
@@ -34,5 +34,5 @@ window-manager tiling are out of scope.
 - Deck protocol: JSON lines (`controls`, `nudge`, `set`, `select`, `save`), served on the Qt thread.
 - `describe()["grid"]` is an `"RxC"` string.
 - Drive it live: `python -m audioviz.tui.control keys <names> | run "<cmd>" | state | screenshot` (colleague's tool; `XDG_RUNTIME_DIR=/run/user/1000`).
-- Tests: `uv run --group tui --group dev --with-editable . pytest tests/tui -q`.
+- Tests: `uv run --group dev python -m pytest tests/tui -q`.
 - Live-edit `views.py` or `halfblock.py` while running; a syntax error keeps the old code.

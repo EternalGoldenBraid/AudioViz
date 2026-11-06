@@ -416,8 +416,8 @@ if __name__ == "__main__":
     if not parse_args().no_tui:
         try:
             from audioviz.tui.launcher import run_with_tui
-        except ImportError:
-            logger.warning("terminal controller needs the tui group (textual); starting the window only")
+        except ImportError as error:
+            logger.warning("terminal controller unavailable ({}); run `uv sync`; starting the window only", error)
         else:
             sys.exit(run_with_tui([sys.executable, __file__, "--no-tui"]))
     main()

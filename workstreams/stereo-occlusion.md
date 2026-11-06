@@ -5,7 +5,7 @@
 > **Next:** define the occlusion readout: cover one camera, compare its prediction with what it would have seen.
 > **Blocked:** none
 > **Resume:** `copilot --resume efa7117b-d1b5-4bdb-bf79-7d9c8036c52e`
-> **Run:** `uv run --group tui --with-editable . python main.py`, then check both cameras in the `camera` device knob.
+> **Run:** `uv run python main.py`, then check both cameras in the `camera` device knob.
 
 **Essence.** Two simultaneous cameras give the model a stereo-like pair of observations.
 After the feed has run for a while, covering one camera should leave the model still able

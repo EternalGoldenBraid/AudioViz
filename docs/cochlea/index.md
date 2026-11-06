@@ -37,7 +37,7 @@ changing &eta; changes how strongly the raw error corrects them.
 From the cochlea worktree, run the **standalone TUI**:
 
 ```bash
-PYTHONPATH=src uv run --group tui python -m audioviz.tui.app --audio synthetic --no-camera
+uv run python -m audioviz.tui.app --audio synthetic --no-camera
 ```
 
 In settings, select **audio model: cochlea**. In the attached TUI, the same

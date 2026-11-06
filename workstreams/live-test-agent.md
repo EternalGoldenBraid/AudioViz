@@ -5,7 +5,7 @@
 > **Next:** run `python -m audioviz.tui.agent`, check its verdict matches the scripted runner, compare `qwen3:4b` and `granite4`.
 > **Blocked:** none (start `ollama serve` first).
 > **Resume:** session `a31abe7e-332a-46ed-b841-eedde6bc468f` (`copilot --resume a31abe7e-332a-46ed-b841-eedde6bc468f`)
-> **Run:** `uv run --group tui --with-editable . python -m audioviz.tui.checks`
+> **Run:** `uv run python -m audioviz.tui.checks`
 
 **Essence.** A lightweight local model (Ollama) that runs live checks against the running
 AudioViz TUI through its control socket and reports pass/fail with evidence. It frees the
@@ -18,7 +18,7 @@ judge appearance or discover new bugs.
 (`mixer` and `settings` maps).
 
 **Launch the app under test.**
-`tmux split-window -d -h -c "$PWD" -P -F '#{pane_id}' "uv run --group tui --with-editable . python -m audioviz.tui.app; read" > /tmp/av.pane`
+`tmux split-window -d -h -c "$PWD" -P -F '#{pane_id}' "uv run python -m audioviz.tui.app; read" > /tmp/av.pane`
 Never redirect the app's stderr. Stop it with `tmux kill-pane -t $(cat /tmp/av.pane)`.
 Use the real mic and camera unless a check is about a wave pattern.
 

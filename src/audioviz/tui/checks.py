@@ -18,7 +18,7 @@ from pathlib import Path
 
 from audioviz.tui import control
 
-LAUNCH = "uv run --group tui --with-editable . python -m audioviz.tui.app; read"
+LAUNCH = "uv run python -m audioviz.tui.app; read"
 TRACES = Path("outputs/traces")
 FOCUS_TRIES = 60
 WALK_BEFORE_PAGE = 12

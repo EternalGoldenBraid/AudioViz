@@ -79,20 +79,21 @@ dependencies = [
     { name = "librosa" },
     { name = "loguru" },
     { name = "matplotlib" },
+    { name = "numpy" },
     { name = "opencv-python" },
+    { name = "pillow" },
     { name = "pyopengl" },
     { name = "pyqt5" },
     { name = "pyqtgraph" },
     { name = "qdarkstyle" },
+    { name = "rich" },
     { name = "sounddevice" },
+    { name = "textual" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
-]
-tui = [
-    { name = "textual" },
 ]
 
 [package.metadata]
@@ -100,17 +101,20 @@ requires-dist = [
     { name = "librosa", specifier = ">=0.11.0" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "numpy", specifier = ">=2.3.5" },
     { name = "opencv-python", specifier = ">=4.12.0.88" },
+    { name = "pillow", specifier = ">=12.1.1" },
     { name = "pyopengl", specifier = ">=3.1.9" },
     { name = "pyqt5", specifier = ">=5.15.11" },
     { name = "pyqtgraph", specifier = ">=0.14.0" },
     { name = "qdarkstyle", specifier = ">=3.2.3" },
+    { name = "rich", specifier = ">=15.0.0" },
     { name = "sounddevice", specifier = ">=0.5.5" },
+    { name = "textual", specifier = ">=0.80.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.2" }]
-tui = [{ name = "textual", specifier = ">=0.80.0" }]
 
 [[package]]
 name = "certifi"

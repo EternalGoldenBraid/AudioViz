@@ -5,7 +5,7 @@
 > **Next:** review the equations and listen to input, prediction, and residual before tuning the model.
 > **Blocked:** none.
 > **Resume:** `copilot --resume 405c9084-e5f0-490d-a823-aaa010083ca4`
-> **Run:** `PYTHONPATH=src uv run --group tui python -m audioviz.tui.app --audio synthetic --no-camera`; select **audio model: cochlea**.
+> **Run:** `uv run python -m audioviz.tui.app --audio synthetic --no-camera`; select **audio model: cochlea**.
 
 **Essence.** Sixteen fixed damped oscillators generate a one-sample-ahead raw
 waveform prediction by summing their positions. The scalar raw-audio residual
