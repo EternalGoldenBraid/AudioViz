@@ -16,6 +16,11 @@ selections open the existing Vim checklists. Startup remains responsive while
 the child initializes, and errors leave device selection and retry available.
 The same TUI then attaches to the window; quitting terminates its owned child.
 Window-only `--no-tui` retains terminal-based setup.
+
+**Live readback.** Device and window tiles display state reported by the Qt
+process. Deck exchanges publish their state in request order. A timed-out or
+closed connection is discarded; the next poll reconnects and reads current
+state. Edits with an unknown outcome are not replayed.
 There is one renderer. The TUI shows only low-res previews, and terminal pixel protocols and
 window-manager tiling are out of scope.
 

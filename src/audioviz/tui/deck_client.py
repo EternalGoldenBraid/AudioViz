@@ -21,35 +21,70 @@ STARTUP_TIMEOUT_S = 60.0  # the first answer waits for the window to finish buil
 class DeckClient:
     def __init__(self, path: Path = SOCKET) -> None:
         self._lock = threading.Lock()
-        self._socket = socket.socket(socket.AF_UNIX)
-        self._socket.settimeout(STARTUP_TIMEOUT_S)  # the window listens before its event loop runs
-        self._socket.connect(str(path))
-        self._reader = self._socket.makefile("rb")
+        self.path = path
+        self._socket = None
+        self._reader = None
         self.state: dict[str, dict] = {}
         self.sensors: dict[str, dict] = {}  # sensor id -> {id, kind, enabled}
         self.max_px = 160  # longest side of the images the window sends
         self.previews: dict[str, np.ndarray] = {}
         self.wanted: dict[str, tuple[int, int]] = {}
-        self.refresh()
+        self._connect(STARTUP_TIMEOUT_S)
+        try:
+            self.refresh()
+        except (OSError, RuntimeError, ValueError):
+            self.close()
+            raise
         self._socket.settimeout(TIMEOUT_S)
 
+    def _connect(self, timeout: float = TIMEOUT_S) -> None:
+        connection = socket.socket(socket.AF_UNIX)
+        connection.settimeout(timeout)
+        try:
+            connection.connect(str(self.path))
+        except OSError:
+            connection.close()
+            raise
+        self._socket = connection
+        self._reader = connection.makefile("rb")
+
+    def _disconnect(self) -> None:
+        if self._reader is not None:
+            self._reader.close()
+            self._reader = None
+        if self._socket is not None:
+            self._socket.close()
+            self._socket = None
+
     def _call(self, request: dict) -> dict:
-        with self._lock:  # one request in flight; the poller thread and key handlers share the stream
-            self._socket.sendall(json.dumps(request).encode() + b"\n")
-            reply = json.loads(self._reader.readline())
-        if "error" in reply:
-            raise RuntimeError(reply["error"])
-        if "controls" in reply:
-            self.state = {c["name"]: c for c in reply["controls"]}
-            self.sensors = {s["id"]: s for s in reply.get("sensors", [])}
-        return reply
+        # Serialize both the exchange and publication so old polls cannot replace newer edits.
+        with self._lock:
+            if self._socket is None:
+                self._connect()
+            try:
+                self._socket.sendall(json.dumps(request).encode() + b"\n")
+                line = self._reader.readline()
+                if not line:
+                    raise ConnectionError("The window closed its deck connection.")
+                reply = json.loads(line)
+            except (OSError, ValueError):
+                # A timed-out buffered reader cannot be reused. Reconnect on the next request;
+                # never replay an edit whose outcome is unknown.
+                self._disconnect()
+                raise
+            if "error" in reply:
+                raise RuntimeError(reply["error"])
+            if "controls" in reply:
+                self.state = {c["name"]: c for c in reply["controls"]}
+                self.sensors = {s["id"]: s for s in reply.get("sensors", [])}
+            return reply
 
     def refresh(self) -> None:
         self._call({"op": "controls"})
 
     def close(self) -> None:
-        self._reader.close()
-        self._socket.close()
+        with self._lock:
+            self._disconnect()
 
     def preview(self, name: str, rows: int, cols: int) -> "np.ndarray | None":
         """The last image fetched for a view; asking for it also schedules it for the next fetch_previews."""

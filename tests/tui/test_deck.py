@@ -1,4 +1,6 @@
 import threading
+import json
+import socket
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +21,121 @@ class FakeEngine:
 
     def set_speed(self, value):
         self.speed = value
+
+
+def test_poll_reply_cannot_overwrite_a_newer_window_toggle():
+    poll_released = threading.Event()
+    finish_poll = threading.Event()
+    lock = threading.Lock()
+
+    class ReplyLock:
+        def __enter__(self):
+            lock.acquire()
+
+        def __exit__(self, *_):
+            lock.release()
+            if threading.current_thread().name == "deck-poll":
+                poll_released.set()
+                assert finish_poll.wait(5)
+
+    class Transport:
+        def sendall(self, data):
+            self.request = json.loads(data)
+
+        def readline(self):
+            on = self.request["op"] == "controls"
+            return json.dumps({
+                "controls": [{
+                    "name": "spectrogram window", "text": "on" if on else "off",
+                    "position": int(on), "toggle": True, "choices": None,
+                }],
+                "sensors": [{"id": "camera 1", "enabled": on}],
+            }).encode() + b"\n"
+
+    client = DeckClient.__new__(DeckClient)
+    client._lock = ReplyLock()
+    client._socket = client._reader = Transport()
+    client.state, client.sensors = {}, {}
+    poll = threading.Thread(target=client.refresh, name="deck-poll")
+    poll.start()
+    try:
+        assert poll_released.wait(5)
+        client.nudge("spectrogram window", -1)
+        control = client.controls()[0]
+        finish_poll.set()
+        poll.join(5)
+        assert not poll.is_alive()
+        assert client.state["spectrogram window"]["text"] == "off"
+        assert client.state["spectrogram window"]["position"] == 0
+        assert client.sensors["camera 1"]["enabled"] is False
+        assert control.format() == "off"
+    finally:
+        finish_poll.set()
+        poll.join(5)
+
+
+def test_timed_out_edit_reconnects_and_refreshes_without_replaying_it(tmp_path, monkeypatch):
+    from audioviz.tui import deck_client
+
+    monkeypatch.setattr(deck_client, "TIMEOUT_S", 0.05)
+    path = tmp_path / "deck.sock"
+    requests = []
+    release_delayed_reply = threading.Event()
+    errors = []
+    ready = threading.Event()
+
+    def backend():
+        try:
+            with socket.socket(socket.AF_UNIX) as server:
+                server.bind(str(path))
+                server.listen()
+                server.settimeout(5)
+                ready.set()
+                for attempt in range(2):
+                    connection, _ = server.accept()
+                    connection.settimeout(5)
+                    with connection, connection.makefile("rb") as reader:
+                        for line in reader:
+                            request = json.loads(line)
+                            requests.append(request)
+                            on = attempt == 0 and request["op"] == "controls"
+                            reply = json.dumps({"controls": [{
+                                "name": "spectrogram window", "text": "on" if on else "off",
+                                "position": int(on), "toggle": True, "choices": None,
+                            }]}).encode() + b"\n"
+                            if request["op"] == "nudge":
+                                assert release_delayed_reply.wait(5)
+                                # The edit happened, but the client did not receive its reply in time.
+                                break
+                            connection.sendall(reply)
+                            if attempt == 1:
+                                return
+        except Exception as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=backend)
+    thread.start()
+    client = None
+    try:
+        assert ready.wait(5)
+        client = DeckClient(path)
+        knob = client.controls()[0]
+        assert knob.format() == "on"
+        with pytest.raises(TimeoutError):
+            knob.nudge(client, -1)
+        assert client._socket is None
+        release_delayed_reply.set()
+        client.refresh()
+        assert knob.format() == "off"
+        assert knob.position() == 0
+        assert [r["op"] for r in requests] == ["controls", "nudge", "controls"]
+    finally:
+        release_delayed_reply.set()
+        if client is not None:
+            client.close()
+        thread.join(5)
+    assert not thread.is_alive()
+    assert not errors
 
 
 def test_client_knobs_turn_the_window_engine_over_the_socket(tmp_path):
