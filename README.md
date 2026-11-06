@@ -68,6 +68,13 @@ Accessible from GUI sliders:
 * **Show Inference / Learning Plots**: Opens the energy / 2D weight plot catalogue
 * **Show Multimodal 3D Scene**: Opens an independent, rotatable view of the shared canvas and every source
 
+### Terminal layout
+
+Alt+h/j/k/l resize the focused tile or group. `z` expands a tile to the stage
+and restores it when pressed again; saved decks keep its pre-zoom placement
+and stacking order. `T` lists tiles; `/` filters rows, Enter keeps the filter,
+and Esc clears it before dismissing the list. `:q` quits; `?` shows bindings.
+
 ### Terminal recordings
 
 In the TUI, `:record [path]` starts an MP4 recording of the visible image tiles;

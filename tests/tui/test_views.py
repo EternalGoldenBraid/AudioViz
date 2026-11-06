@@ -564,7 +564,7 @@ def test_alt_hjkl_resize_and_zoom_is_just_a_big_resize_that_restores(tmp_path):
         tile = app.query_one("#canvas")
         tile.focus()
         before = vars(app.placements["canvas"]).copy()
-        depth = app.stack.index("canvas")
+        stack = app.stack.copy()
         await pilot.press("alt+l", "alt+k")
         grown = app.placements["canvas"]
         assert (grown.width, grown.height) == (before["width"] + 2, before["height"] + 1)
@@ -579,8 +579,9 @@ def test_alt_hjkl_resize_and_zoom_is_just_a_big_resize_that_restores(tmp_path):
         assert (zoomed.x, zoomed.y, zoomed.width, zoomed.height) == (0, 0, stage.width, stage.height)
         assert app.stack[-1] == "canvas" and tile.region.width == stage.width
         assert app.snapshot()["placements"]["canvas"] == before  # a save while zoomed keeps the real placement
+        assert app.snapshot()["stack"] == stack
         await pilot.press("z")
-        assert vars(app.placements["canvas"]) == before and app.stack.index("canvas") == depth
+        assert vars(app.placements["canvas"]) == before and app.stack == stack
     _headless(tmp_path, scenario)
 
 

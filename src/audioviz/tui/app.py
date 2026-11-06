@@ -1049,9 +1049,18 @@ class AudioVizApp(App):
 
     def snapshot(self) -> dict:
         """Everything a restart needs to look and sound the same; sound output stays off for safety."""
+        placements = self.placements.copy()
+        stack = self.stack.copy()
+        if self.zoomed:
+            if self.before_zoom is None:
+                raise RuntimeError("Zoomed tile has no saved placement and stack depth")
+            placement, depth = self.before_zoom
+            placements[self.zoomed] = placement
+            stack.remove(self.zoomed)
+            stack.insert(min(depth, len(stack)), self.zoomed)
         return {
-            "placements": {k: vars(self.before_zoom[0] if k == self.zoomed else v) for k, v in self.placements.items()},
-            "stack": self.stack,
+            "placements": {k: vars(v) for k, v in placements.items()},
+            "stack": stack,
             "groups": self.groups,
             "pages": self.pages,
             "theme": self.theme,
