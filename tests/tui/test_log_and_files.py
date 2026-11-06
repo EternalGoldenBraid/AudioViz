@@ -5,13 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Input, OptionList, Static
 
 from audioviz.tui import app as app_module, control
 from audioviz.tui.app import AudioVizApp, LogTile
 from audioviz.tui.graph_runtime import GraphRuntime
 from audioviz.tui.deck_server import DeckServer
 from audioviz.tui.deck_client import RemoteControl
+from audioviz.tui.preset_picker import PresetPicker
 
 
 @pytest.fixture
@@ -71,7 +72,7 @@ def test_log_navigation_keeps_position_while_entries_arrive_and_g_resumes_follow
     asyncio.run(run())
 
 
-def test_attached_cache_restore_never_applies_runtime_but_explicit_edit_does(app, tmp_path):
+def test_attached_cache_restore_never_applies_runtime_but_explicit_load_does(app, tmp_path):
     async def run():
         async with app.run_test(size=(100, 36)) as pilot:
             path = tmp_path / "attached.json"
@@ -87,7 +88,7 @@ def test_attached_cache_restore_never_applies_runtime_but_explicit_edit_does(app
             app.mixer_context = client
             app.load_state(path, quiet=True)
             assert calls == [] and app.mixer_controls[0].get() == 0.95
-            app.run_command("e", [str(path)])
+            app.run_command("load", [str(path)])
             assert calls == [path.resolve()]
 
     asyncio.run(run())
@@ -114,14 +115,84 @@ def test_write_and_load_roundtrip_has_persistent_status_and_quoted_path_completi
             app.runtime.engine.set_damping(0.99)
             app.set_tile_background(None)
             await pilot.press("colon")
-            command.value = "e " + shlex.quote(str(target.parent / "te"))
+            command.value = "load " + shlex.quote(str(target.parent / "te"))
             await pilot.press("tab")
-            assert shlex.split(command.value) == ["e", str(target)]
+            assert shlex.split(command.value) == ["load", str(target)]
             await pilot.press("enter")
             await pilot.pause()
             assert app.runtime.engine.damping == 0.94
             assert app.tile_background == "#10202a"
             assert "Loaded config" in str(app.query_one("#mode", Static).render())
+
+    asyncio.run(run())
+
+
+def test_load_picker_discovers_only_project_presets_and_cancel_keeps_settings(app, tmp_path):
+    async def run():
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.runtime.engine.set_damping(0.94)
+            app.set_tile_background("#10202a")
+            app.run_command("w", ["alpha"])
+            alpha = app.config_path
+            app.runtime.engine.set_damping(0.99)
+            app.set_tile_background(None)
+            app.run_command("w", ["config/nested/beta"])
+            beta = app.config_path
+            for name in ("audio_devices.json", "audio_devices.example.json"):
+                (app.saves_dir / name).write_text("{}")
+            (tmp_path / "outside.json").write_text("{}")
+            await pilot.press("colon")
+            app.query_one("#command", Input).value = "load"
+            await pilot.press("enter")
+            await pilot.pause()
+            picker = app.screen
+            assert isinstance(picker, PresetPicker)
+            assert picker.paths == [alpha, beta]
+            assert picker.query_one(OptionList).highlighted == 1
+            await pilot.press("k", "enter")
+            await pilot.pause()
+            assert not isinstance(app.screen, PresetPicker)
+            assert app.config_path == alpha
+            assert app.runtime.engine.damping == 0.94
+            assert app.tile_background == "#10202a"
+            assert f"Loaded config: {alpha}" in app.status_message
+            app.run_command("load", [])
+            await pilot.pause()
+            await pilot.press("j", "escape")
+            await pilot.pause()
+            assert app.config_path == alpha
+            assert app.runtime.engine.damping == 0.94
+            assert app.tile_background == "#10202a"
+
+    asyncio.run(run())
+
+
+def test_load_picker_empty_and_invalid_presets_report_errors_without_changing_runtime(app):
+    async def run():
+        async with app.run_test(size=(80, 24)) as pilot:
+            app.run_command("load", [])
+            assert "No saved settings" in app.status_message
+            assert not isinstance(app.screen, PresetPicker)
+            assert not app.saves_dir.exists()
+            before = app.runtime.engine.damping
+            original = app.config_path
+            app.saves_dir.mkdir()
+            (app.saves_dir / "broken.json").write_text("{")
+            app.run_command("load", [])
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert "Could not load" in app.status_message
+            assert "broken.json" in app.status_message
+            assert app.config_path == original
+            assert app.runtime.engine.damping == before
+            (app.saves_dir / "window.json").write_text(json.dumps({
+                "backend": "window", "mixer": {"damping": 0.8},
+            }))
+            app.run_command("load", ["window"])
+            assert "not standalone" in app.status_message
+            assert app.config_path == original
+            assert app.runtime.engine.damping == before
 
     asyncio.run(run())
 

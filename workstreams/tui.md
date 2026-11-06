@@ -36,8 +36,11 @@ the viewport fixed while messages arrive; Enter/Esc leaves log navigation.
 `:w [name|path]` and `:save [name|path]` write one configuration: runtime values
 and TUI layout/settings. Bare names resolve in the application's `config/`
 directory; the default is `config/deck.json`. Explicit paths and quoted spaces
-are supported. `:e [name|path]` applies that configuration, including live
-attached runtime values. Automatic UI cache restoration never writes to the
+are supported. `:load` lists presets in `config/` and its subdirectories,
+excluding audio-device setup files; j/k or arrows select, Enter loads and Esc
+cancels. `:load name|path` and `:e name|path` apply that configuration, including
+live attached runtime values; bare `:e` reloads the current preset.
+Automatic UI cache restoration never writes to the
 attached runtime. Tab/Shift-Tab cycle matching JSON paths and directories;
 save/load results remain in the bottom status bar.
 

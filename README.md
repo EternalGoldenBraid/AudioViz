@@ -129,9 +129,12 @@ reading position; G returns to the latest entry and resumes following.
 `:w [name|path]` and `:save [name|path]` are the same action: save runtime
 settings and TUI layout/preferences as JSON. Bare names go in the application's
 `config/` directory, with `config/deck.json` as the initial default.
-`:e [name|path]` loads settings and applies them to the active runtime;
-Tab/Shift-Tab complete JSON paths and directories. Save/load destinations stay
-in the bottom status bar. Named configs can be committed; hardware-specific
+`:load` opens a picker of saved presets in this checkout's `config/`, including
+subdirectories. Select with j/k or arrows, Enter to load, Esc to cancel.
+Audio-device setup files are excluded. `:load name|path` and `:e name|path`
+load directly and apply settings to the active runtime. Bare `:e` reloads the
+current preset. Tab/Shift-Tab complete JSON paths and directories. Save/load
+destinations stay in the bottom status bar. Named configs can be committed; hardware-specific
 device selection remains local. Automatic UI cache restoration never applies
 settings to a live attached graph.
 

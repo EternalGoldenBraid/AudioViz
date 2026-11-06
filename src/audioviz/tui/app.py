@@ -34,6 +34,7 @@ from audioviz.tui import keys as keys_module
 from audioviz.tui.hot_reload import HotReload
 from audioviz.tui.keys_overlay import KeysScreen
 from audioviz.tui.mixer import CONTROLS
+from audioviz.tui.preset_picker import PresetPicker
 from audioviz.tui.record_tile import RecordPrompt, RecordTile
 from audioviz.tui.recorder import RecordedTile, Recorder
 from audioviz.tui.settings import SETTING_TABS, control_category, settings_controls
@@ -340,7 +341,7 @@ class AudioVizApp(App):
                             yield ViewTile(name, self.runtime, self.deck if self.attached else None, id=name)
             for category in SETTING_TABS:
                 with TabPane(category.title(), id=category):
-                    yield Static("h/j/k/l navigate  Enter edit  Tab/S-Tab tabs  n/p page  :w save", classes="settings-help")
+                    yield Static("h/j/k/l move  Enter edit  Tab/S-Tab tabs  n/p page  :w save  :load", classes="settings-help")
                     with VerticalScroll(), Grid(classes="settings-grid"):
                         for i, (_, context, control) in enumerate(self.knobs):
                             if control_category(control) == category:
@@ -1212,7 +1213,8 @@ class AudioVizApp(App):
                 log.write("move <dx> <dy>  view <name>  views")
                 log.write("devices  gain <v>  tab overview|audio|wave|inference|learning|sources|interface")
                 log.write("theme [name]  bg <color|theme>  group <tiles>  ungroup")
-                log.write(":w|:save [name|path] save config  :e [name|path] load  ? bindings  :keys [write|reload]")
+                log.write(":w|:save [name|path] save config  :load [name|path] pick/load  :e [name|path] reload")
+                log.write("? bindings  :keys [write|reload]")
                 if not self.attached:
                     log.write("audio list|synthetic|default|<index>|tone <hz>  out off|prediction|error|input|evidence  volume <v>")
                 log.write("resolution <n|RxC>  render half|quad|braille|auto  zoom")
@@ -1221,6 +1223,11 @@ class AudioVizApp(App):
                 self.run_keys_command(args)
             elif name in ("save", "w", "write"):
                 self.write_session(args[0] if args else None)
+            elif name == "load":
+                if args:
+                    self.load_state(self.session_path(args[0]), apply_runtime=True)
+                else:
+                    self.open_saved_settings()
             elif name == "tab":
                 self.select_workspace(args[0].lower())
             elif name in ("tabnext", "tn"):
@@ -1467,11 +1474,26 @@ class AudioVizApp(App):
             path = path.with_name(path.name + ".json")
         return path
 
+    def open_saved_settings(self) -> None:
+        paths = sorted(
+            path for path in self.saves_dir.rglob("*.json")
+            if path.is_file() and path.name not in ("audio_devices.json", "audio_devices.example.json")
+        )
+        if not paths:
+            self.report_status(f"No saved settings in {self.saves_dir}. Use :w <name> to save a preset.")
+            return
+
+        def selected(path: Path | None) -> None:
+            if path is not None:
+                self.load_state(path, apply_runtime=True)
+
+        self.push_screen(PresetPicker(self.saves_dir, paths, self.config_path), selected)
+
     def complete_command_path(self, backwards: bool = False) -> None:
         command = self.query_one("#command", Input)
         if command.value != self._completion_last:
             head, _, prefix = command.value.lstrip(":").partition(" ")
-            if head not in ("e", "edit", "w", "write", "save"):
+            if head not in ("load", "e", "edit", "w", "write", "save"):
                 return
             try:
                 words = shlex.split(prefix)
