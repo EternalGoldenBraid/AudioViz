@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createWorld, readerView, filmCorners, filmPoint, project, epipolarSegment, warp, mv, homogeneous, dot, sub, cross } from "./scene.mjs";
+import { createWorld, readerView, filmCorners, project, epipolarSegment, warp, mv, homogeneous, dot, sub, cross, strokeFragments, add, scale } from "./scene.mjs";
+import { buildFigure, MODES } from "./figures.mjs";
 
 const near = (a, b, tolerance = 1e-10) => assert.ok(Math.abs(a-b) < tolerance, `${a} != ${b}`);
 const same = (a, b) => a.forEach((x, i) => near(x, b[i]));
@@ -77,4 +78,47 @@ test("the reader is a perspective observer with fixed scene bounds, independent 
   assert.throws(() => project(w.c1, sub(w.c1.origin, w.c1.n)), /in front/);
   assert.throws(() => createWorld({ height: 6 }), /Feature height/);
   assert.throws(() => readerView({ elevation: 90 }), /Reader elevation/);
+});
+
+test("renderers share finite bounded primitives; reader motion leaves sensor-coordinate plots unchanged", () => {
+  for (const baseline of [0,6]) for (const height of [0,2.5]) {
+    const w = createWorld({baseline,height});
+    for (const azimuth of [-40,25,40]) for (const elevation of [8,22,45]) {
+      const reader = readerView({azimuth,elevation});
+      for (const mode of Object.keys(MODES)) {
+        const figure = buildFigure(mode,w,reader);
+        for (const shape of figure.shapes) for (const [x,y] of shape.points || [shape.p]) {
+          assert.ok(Number.isFinite(x) && Number.isFinite(y));
+          assert.ok(x >= 0 && x <= figure.width && y >= 0 && y <= figure.height,
+            `${mode}: (${x}, ${y}) leaves the canvas`);
+        }
+      }
+      const h = buildFigure("homography",w,reader), p = buildFigure("parallax",w,reader);
+      same(h.shapes.find(s => s.id==="plane-point").p, p.shapes.find(s => s.id==="plane-point").p);
+      same(h.shapes.find(s => s.id==="predicted").p, reader.project(w.predicted.point));
+    }
+    for (const mode of ["flow","predictions"]) {
+      assert.deepEqual(buildFigure(mode,w,readerView()), buildFigure(mode,w,readerView({azimuth:-30})));
+    }
+  }
+});
+
+test("projected crossings gap the farther stroke; a true 3D intersection stays connected", () => {
+  const reader = readerView(), cam = reader.observer;
+  const horizontal = [-2,2].map(x => add(add(cam.origin,scale(cam.n,8)),scale(cam.u,x)));
+  const vertical = depth => [-2,2].map(y => add(add(cam.origin,scale(cam.n,depth)),scale(cam.v,y)));
+  for (const segments of [[horizontal,vertical(12)], [vertical(12),horizontal]]) {
+    const fragments = strokeFragments(segments,reader);
+    const far = segments.indexOf(horizontal) === 0 ? 1 : 0;
+    assert.equal(fragments.filter(p => p.index === far).length,2);
+    assert.equal(fragments.filter(p => p.index !== far).length,1);
+    const [before,after] = fragments.filter(p => p.index === far);
+    assert.ok(before.range[1] < 0.5 && after.range[0] > 0.5);
+  }
+  assert.equal(strokeFragments([horizontal,vertical(8)],reader).length,2);
+  const world = createWorld(), corners = filmCorners(world.c1);
+  const lowerEdge = [corners[0],corners[1]], baseline = [world.c1.origin,world.c2.origin];
+  const actual = strokeFragments([lowerEdge,baseline],readerView({elevation:45}));
+  assert.equal(actual.filter(p => p.index===0).length,2);
+  assert.equal(actual.filter(p => p.index===1).length,1);
 });

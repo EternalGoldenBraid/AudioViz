@@ -137,3 +137,40 @@ export function readerView({ azimuth = DEFAULTS.azimuth, elevation = DEFAULTS.el
     },
   };
 }
+
+export function strokeFragments(segments, reader) {
+  const cross2 = (a,b) => a[0]*b[1]-a[1]*b[0];
+  const projected = segments.map(points => ({
+    points: points.map(reader.project),
+    depths: points.map(p => project(reader.observer,p).depth),
+    cuts: [],
+  }));
+  for (let i = 0; i < projected.length; i++) for (let j = i+1; j < projected.length; j++) {
+    const a = projected[i], b = projected[j];
+    const da = sub(a.points[1],a.points[0]), db = sub(b.points[1],b.points[0]);
+    const determinant = cross2(da,db);
+    if (Math.abs(determinant) < 1e-10) continue;
+    const delta = sub(b.points[0],a.points[0]);
+    const ta = cross2(delta,db)/determinant, tb = cross2(delta,da)/determinant;
+    if (ta < 0 || ta > 1 || tb < 0 || tb > 1) continue;
+    // Screen interpolation is linear in inverse depth, not world-space distance.
+    const za = 1/((1-ta)/a.depths[0]+ta/a.depths[1]);
+    const zb = 1/((1-tb)/b.depths[0]+tb/b.depths[1]);
+    if (Math.abs(za-zb) < 1e-7) continue;
+    const [far,t,direction] = za > zb ? [a,ta,da] : [b,tb,db];
+    const gap = 3.5/Math.hypot(...direction);
+    far.cuts.push([Math.max(0,t-gap),Math.min(1,t+gap)]);
+  }
+  return projected.flatMap((segment,index) => {
+    const ranges = [], direction = sub(segment.points[1],segment.points[0]);
+    let cursor = 0;
+    for (const [start,end] of segment.cuts.sort((a,b) => a[0]-b[0])) {
+      if (start > cursor) ranges.push([cursor,start]);
+      cursor = Math.max(cursor,end);
+    }
+    if (cursor < 1) ranges.push([cursor,1]);
+    return ranges.map(range => ({
+      index, range, points: range.map(t => add(segment.points[0],scale(direction,t))),
+    }));
+  });
+}

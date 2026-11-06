@@ -22,9 +22,10 @@
 \node[box, draw=cd, text=cd] (E) at (7.6,3) {essential $E$\\[-1pt]{\small\color{dim}5 dof, calibrated}};
 \node[box, draw=cd, text=cd] (F) at (11.4,3) {fundamental $F$\\[-1pt]{\small\color{dim}7 dof, point $\to$ line}};
 \draw[gen] (S) -- (A); \draw[gen] (A) -- (H); \draw[gen] (H) -- (P); \draw[gen] (P) -- (U);
-\draw[gen] (E) -- (F);
+\draw[obey, <->] (E) -- (F);
+\node[text=dim, font=\small] at (9.5,4) {$K_1,K_2$};
 \draw[obey] (P) -- node[right, text=dim, font=\small] {obeys $F$} (F);
-\node[anchor=west] at (0,5.2) {Each arrow: the left transform is a special case of the right one};
+\node[anchor=west] at (0,5.2) {Schematic: solid arrows add flexibility; calibration converts $E$ and $F$};
 \node[anchor=west, text=dim] at (0,-1.7) {$x_2\sim Hx_1 + \rho(x_1)\,e'$ \quad with $\rho=0$: $H$ \quad with $\rho$ free: parallax \quad rigid scene $\Rightarrow$ $x_2^{\top}Fx_1=0$};
 \end{tikzpicture}
 \end{document}
