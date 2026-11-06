@@ -1,7 +1,7 @@
 # Cochlea: raw-audio predictive oscillator bank
 
-> **Status:** active · **Branch:** `agent/cochlea` · **Updated:** 2026-11-05
-> **Now:** shared process-owned cochlea and oscillator-history views available for review.
+> **Status:** active · **Branch:** `agent/cochlea` · **Updated:** 2026-11-06
+> **Now:** shared process-owned cochlea views and an interactive, production-matched browser experiment.
 > **Next:** review the equations and listen to input, prediction, and residual before tuning the model.
 > **Blocked:** none.
 > **Resume:** `copilot --resume 405c9084-e5f0-490d-a823-aaa010083ca4`
@@ -25,6 +25,10 @@ branch and cross-modal connections, preserving the canvas and camera branch.
 **Documentation.** [Equations, timing, limitations, and diagrams](../docs/cochlea/index.md).
 Editable three-page source: `docs/cochlea/cochlea.drawio`.
 `scripts/render_audio_history.py` reproduces the headless Qt history screenshot.
+The interactive Vue/SVG experiment uses one simulated trajectory for all plots,
+with frequency/Q/correction controls and a sample-time cursor. Browser dynamics
+are checked against Python by `tests/docs/test_cochlea_simulation.py` (Node.js
+required). This experiment covers synthetic local inference, not graph learning.
 
 **Validation.** `uv run --group dev python -m pytest -q tests/audio_processing/test_cochlea.py tests/tui/test_cochlea_runtime.py`.
 `PYTHONPATH=src uv run python scripts/validate_cochlea.py` writes an illustrative
