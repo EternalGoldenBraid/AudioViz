@@ -3,7 +3,6 @@ import importlib.util
 import json
 from pathlib import Path
 import runpy
-import subprocess
 import sys
 
 import pytest
@@ -59,7 +58,7 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
 
 
 @pytest.mark.parametrize("configured", [False, True], ids=["first-run", "saved-devices"])
-def test_terminal_prepares_audio_devices_before_stdinless_window(tmp_path, monkeypatch, configured):
+def test_entrypoint_leaves_device_setup_to_tui(tmp_path, monkeypatch, configured):
     main_path = Path(__file__).resolve().parents[2] / "main.py"
     config_path = tmp_path / "config/audio_devices.json"
     expected = {
@@ -69,50 +68,51 @@ def test_terminal_prepares_audio_devices_before_stdinless_window(tmp_path, monke
         "output_channels": 2,
         "samplerate": 44100,
     }
-    devices = [{
-        "name": "Test audio",
-        "max_input_channels": 1,
-        "max_output_channels": 2,
-        "default_samplerate": 44100,
-    }]
     if configured:
         config_path.parent.mkdir()
         config_path.write_text(json.dumps(expected))
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", [str(main_path)])
-    monkeypatch.setattr(audio_devices.sd, "query_devices", lambda: devices)
-    prompts = []
+    def unexpected_prompt(*args, **kwargs):
+        pytest.fail("Startup must reach the TUI before querying or prompting for devices")
 
-    def answer(prompt):
-        prompts.append(prompt)
-        return "0"
+    monkeypatch.setattr("builtins.input", unexpected_prompt)
+    monkeypatch.setattr(audio_devices.sd, "query_devices", unexpected_prompt)
 
-    monkeypatch.setattr("builtins.input", answer)
-
-    def launch_window(command):
+    def launch_window(command, *, config_file):
         assert command == [sys.executable, str(main_path), "--no-tui"]
-        # Exercise the window's real config reader with the launcher's stdin contract.
-        child = subprocess.run(
-            [
-                sys.executable, "-c",
-                "import json, sys\n"
-                "from pathlib import Path\n"
-                "from audioviz.utils.audio_devices import select_devices, sd\n"
-                "sd.query_devices = lambda: json.loads(sys.argv[2])\n"
-                "print(json.dumps(select_devices(Path(sys.argv[1]))))\n",
-                str(config_path), json.dumps(devices),
-            ],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15,
-        )
-        assert child.returncode == 0, child.stderr
-        assert json.loads(child.stdout.splitlines()[-1]) == expected
+        assert config_file == Path("config/audio_devices.json")
+        assert config_file.exists() == configured
         return 0
 
     monkeypatch.setattr(launcher, "run_with_tui", launch_window)
     with pytest.raises(SystemExit) as exited:
         runpy.run_path(str(main_path), run_name="__main__")
     assert exited.value.code == 0
-    assert prompts == ([] if configured else [
-        "Select input device index: ", "Select output device index: ",
-    ])
-    assert json.loads(config_path.read_text()) == expected
+    assert config_path.exists() == configured
+
+
+def test_window_only_first_run_keeps_terminal_setup(tmp_path, monkeypatch):
+    from PyQt5 import QtWidgets
+
+    class StopBeforeStreams(Exception):
+        pass
+
+    def stop_before_streams(*args, **kwargs):
+        raise StopBeforeStreams
+
+    devices = [{
+        "name": "Test audio", "max_input_channels": 1, "max_output_channels": 2,
+        "default_samplerate": 48000,
+    }]
+    main_path = Path(__file__).resolve().parents[2] / "main.py"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", [str(main_path), "--no-tui"])
+    monkeypatch.setattr(audio_devices.sd, "query_devices", lambda: devices)
+    monkeypatch.setattr("builtins.input", lambda _: "0")
+    monkeypatch.setattr(QtWidgets, "QApplication", stop_before_streams)
+    with pytest.raises(StopBeforeStreams):
+        runpy.run_path(str(main_path), run_name="__main__")
+    config = json.loads((tmp_path / "config/audio_devices.json").read_text())
+    assert config["input_device_name"] == config["output_device_name"] == "Test audio"
+    assert config["samplerate"] == 48000

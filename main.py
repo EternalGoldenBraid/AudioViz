@@ -421,8 +421,8 @@ if __name__ == "__main__":
         except ImportError as error:
             logger.warning("terminal controller unavailable ({}); run `uv sync`; starting the window only", error)
         else:
-            # Finish terminal input before launching the window without stdin.
-            if APP_CONFIG["is_streaming"]:
-                select_devices(config_file=AUDIO_DEVICE_CONFIG)
-            sys.exit(run_with_tui([sys.executable, __file__, "--no-tui"]))
+            sys.exit(run_with_tui(
+                [sys.executable, __file__, "--no-tui"],
+                config_file=AUDIO_DEVICE_CONFIG if APP_CONFIG["is_streaming"] else None,
+            ))
     main()

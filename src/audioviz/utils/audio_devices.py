@@ -1,9 +1,30 @@
-from typing import Dict, Any, Union
+from typing import Dict, Any
 from enum import Enum
 from json import dumps, loads
 from pathlib import Path
 
 import sounddevice as sd
+
+NULL_DEVICE = {
+    "name": "Null Device",
+    "max_input_channels": 0,
+    "max_output_channels": 0,
+    "default_samplerate": 44100,
+}
+
+
+def make_device_config(devices, input_index: int, output_index: int) -> dict:
+    input_dev = NULL_DEVICE if input_index == -1 else devices[input_index]
+    output_dev = NULL_DEVICE if output_index == -1 else devices[output_index]
+    return {
+        "input_device_index": input_index,
+        "output_device_index": output_index,
+        "input_channels": input_dev["max_input_channels"],
+        "output_channels": output_dev["max_output_channels"],
+        "samplerate": int(input_dev["default_samplerate"] if input_index != -1 else output_dev["default_samplerate"]),
+        "input_device_name": input_dev["name"],
+        "output_device_name": output_dev["name"],
+    }
 
 class AudioDeviceMSI(Enum):
     SCARLETT_SOLO_USB = 0
@@ -45,7 +66,7 @@ def list_devices():
         print(f"[{idx}] {dev['name']} ({', '.join(io_flag)})")
 
     # Null device is always available
-    print(f"[{idx+1}] Null Device (no audio input/output)")
+    print(f"[{len(devices)}] Null Device (no audio input/output)")
     return devices
 
 def prompt_for_device(devices, kind: str = "input"):
@@ -56,11 +77,7 @@ def prompt_for_device(devices, kind: str = "input"):
             if index == len(devices):
                 print("Using Null Device (no audio input/output)")
                 index = -1
-                return index, {
-                    "name": "Null Device",
-                    "max_input_channels": 0, "max_output_channels": 0,
-                    "default_samplerate": 44100,
-                }
+                return index, NULL_DEVICE
 
             device = devices[index]
             if kind == "input" and device['max_input_channels'] == 0:
@@ -87,18 +104,12 @@ def select_devices(config_file: Path = Path("config.json")):
     devices = list_devices()
     
     print("\n--- Select Input Device ---")
-    input_index, input_dev = prompt_for_device(devices, kind="input")
+    input_index, _ = prompt_for_device(devices, kind="input")
     
     print("\n--- Select Output Device ---")
-    output_index, output_dev = prompt_for_device(devices, kind="output")
+    output_index, _ = prompt_for_device(devices, kind="output")
     
-    config: Dict[str, Union[int, str]] = {
-        "input_device_index": input_index,
-        "output_device_index": output_index,
-        "input_channels": input_dev['max_input_channels'],
-        "output_channels": output_dev['max_output_channels'],
-        "samplerate": int(input_dev['default_samplerate'])  # assume same SR
-    }
+    config = make_device_config(devices, input_index, output_index)
 
     with open(config_file, "w") as f:
         f.write(dumps(config, indent=4))

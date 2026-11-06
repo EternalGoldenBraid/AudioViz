@@ -51,11 +51,17 @@ CuPy remains optional and requires an installation matching your CUDA setup.
 
 Adjust runtime settings in `main.py`, including resolution, plane size, and optional GPU usage.
 
-For live streaming, the first run prompts for audio devices in the launching
-terminal before starting the window. It stores the machine-local selection in
-`config/audio_devices.json`; the window reads that saved configuration without
-prompting. The file is ignored by Git; `config/audio_devices.example.json`
-documents its structure and safe null device values.
+The TUI opens before the Qt windows. For live streaming it checks
+`config/audio_devices.json` and automatically starts the windows when the saved
+devices support the configured channels and sample rate. Missing or unusable
+selections open the TUI's input and output checklists: **j/k** move, **Space**
+selects, **Enter** confirms, and **Esc** returns to startup.
+
+Device choices are saved locally; new selections also store names to detect
+renumbered devices. Startup errors remain visible in the TUI, with actions to
+choose devices, retry, or quit. Quitting stops the window process it launched.
+`--no-tui` keeps the window-only path and its terminal prompts. The device file
+is ignored by Git; `config/audio_devices.example.json` documents its structure.
 
 ---
 

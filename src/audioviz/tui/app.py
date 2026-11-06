@@ -1,6 +1,7 @@
 """Terminal front end: modal, Vim-style control over layered, floating tiles."""
 
 import argparse
+import asyncio
 import json
 import os
 import shutil
@@ -13,6 +14,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import sounddevice as sd
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -34,6 +36,7 @@ from audioviz.tui.mixer import CONTROLS
 from audioviz.tui.record_tile import RecordPrompt, RecordTile
 from audioviz.tui.recorder import RecordedTile, Recorder
 from audioviz.tui.settings import settings_controls
+from audioviz.tui.startup import StartupPanel, WindowSession
 from audioviz.tui.themes import THEMES
 from audioviz.tui.tile_list import TileList
 from audioviz.tui import views as views_module
@@ -225,14 +228,26 @@ class AudioVizApp(App):
     OPACITY_STEP = 0.1
 
     def __init__(self, audio: str = "default", camera: bool = True, state_dir: Path | None = None,
-                 autosave: bool = True, hot_reload: bool = True, attach: bool = False) -> None:
+                 autosave: bool = True, hot_reload: bool = True, attach: bool = False,
+                 startup: WindowSession | None = None) -> None:
         super().__init__()
+        self.startup = startup
+        self.deck_ready = startup is None
+        self._startup_busy = False
+        self._deck_options = dict(audio=audio, camera=camera, state_dir=state_dir,
+                                  autosave=autosave, hot_reload=hot_reload, attach=attach or startup is not None)
+        if self.deck_ready:
+            self._configure_deck(**self._deck_options)
+
+    def _configure_deck(self, audio: str, camera: bool, state_dir: Path | None,
+                        autosave: bool, hot_reload: bool, attach: bool,
+                        deck: DeckClient | None = None) -> None:
         self.audio = audio
         self.mode = "NORMAL"
         self.attached = attach  # the mixer knobs drive a running main.py window; the local graph stays idle
         self.runtime = GraphRuntime(camera=camera and not attach)
         if attach:
-            self.deck = DeckClient()
+            self.deck = deck if deck is not None else DeckClient()
             self.mixer_controls, self.mixer_context = self.deck.controls(), self.deck
         else:
             self.mixer_controls, self.mixer_context = CONTROLS, self.runtime
@@ -273,6 +288,9 @@ class AudioVizApp(App):
         self.tile_background: str | None = None  # overrides the theme surface
 
     def compose(self) -> ComposeResult:
+        if not self.deck_ready:
+            yield StartupPanel(audio_setup=self.startup.config_file is not None, id="startup")
+            return
         with Container(id="stage"):
             for name in self.placements:
                 if name == "log":
@@ -291,6 +309,13 @@ class AudioVizApp(App):
         for theme in THEMES:
             self.register_theme(theme)
         self.theme = "black"
+        self.run_worker(self._serve_control(), exclusive=False)
+        if not self.deck_ready:
+            self.call_after_refresh(self.request_startup)
+            return
+        self._mount_deck()
+
+    def _mount_deck(self) -> None:
         self.query_one("#log", LogTile).border_title = "log"
         for name, placement in default_layout(self.size.width, max(self.size.height - 1, 12), self.mixer_ids, self.settings_ids).items():
             self.placements[name] = placement
@@ -309,7 +334,56 @@ class AudioVizApp(App):
         self.query_one("#canvas").focus()
         if not self.attached:
             self.select_audio(self.audio)
-        self.run_worker(self._serve_control(), exclusive=False)
+
+    def request_startup(self, choose_devices: bool = False) -> None:
+        if self._startup_busy or self.deck_ready:
+            return
+        self._startup_busy = True
+        self.run_worker(self._start_window(choose_devices), group="startup")
+
+    def on_startup_panel_action(self, event: StartupPanel.Action) -> None:
+        event.stop()
+        if event.action == "quit":
+            self.exit()
+        else:
+            self.request_startup(choose_devices=event.action == "devices")
+
+    async def _start_window(self, choose_devices: bool) -> None:
+        panel = self.query_one(StartupPanel)
+        try:
+            if self.startup.config_file is not None:
+                if not choose_devices:
+                    try:
+                        await asyncio.to_thread(self.startup.load_config)
+                    except FileNotFoundError:
+                        panel.status("No saved audio devices.\nChoose input, then output. Esc returns here.")
+                        choose_devices = True
+                    except (OSError, ValueError, sd.PortAudioError) as error:
+                        panel.status(f"Audio setup required: {error}\nChoose input, then output. Esc returns here.")
+                        choose_devices = True
+                while choose_devices:
+                    config = await self.startup.choose_devices(self)
+                    if config is None:
+                        panel.status("Startup paused. Choose devices or retry when ready.")
+                        return
+                    try:
+                        await asyncio.to_thread(self.startup.save_config, config)
+                    except (OSError, ValueError, sd.PortAudioError) as error:
+                        panel.status(f"Audio selection could not be used: {error}")
+                        self.notify(str(error), title="Audio setup", severity="error", timeout=10)
+                    else:
+                        choose_devices = False
+            panel.status("Starting Qt windows…\nThe terminal stays available while the window initializes.")
+            deck = await self.startup.connect()
+            await asyncio.to_thread(self._configure_deck, **self._deck_options, deck=deck)
+            self.deck_ready = True
+            await self.recompose()
+            self._mount_deck()
+        except (OSError, ValueError, RuntimeError, sd.PortAudioError) as error:
+            self.startup.stop()
+            panel.status(f"{error}\n\nChoose devices to change the selection, or retry startup.")
+        finally:
+            self._startup_busy = False
 
     async def _serve_control(self) -> None:
         server = await control.serve(self)
@@ -321,6 +395,8 @@ class AudioVizApp(App):
 
     def describe(self) -> dict:
         """Observable state for the control socket."""
+        if not self.deck_ready:
+            return {"phase": "startup", "busy": self._startup_busy}
         return {
             "groups": self.groups,
             "pages": self.pages,
@@ -344,6 +420,12 @@ class AudioVizApp(App):
         }
 
     def on_unmount(self) -> None:
+        if self.startup is not None:
+            self.startup.stop()
+        if not self.deck_ready:
+            if getattr(self, "owns_socket", False):
+                control.SOCKET.unlink(missing_ok=True)
+            return
         if self.recorder is not None:
             recorder, self.recorder = self.recorder, None
             recorder.stop()
@@ -354,6 +436,8 @@ class AudioVizApp(App):
         self.runtime.stop()
 
     def refresh_deck(self) -> None:
+        if not self.is_running:
+            return
         def poll() -> None:
             try:
                 before = self.sensors_enabled()
@@ -367,6 +451,9 @@ class AudioVizApp(App):
         self.run_worker(poll, thread=True, exclusive=True, group="deck")
 
     def refresh_tiles(self) -> None:
+        # Textual can deliver a queued timer after shutdown has begun pruning widgets.
+        if not self.is_running:
+            return
         self.fit_if_resized()
         for tile in self.query(ViewTile):
             if tile.display:
@@ -810,6 +897,14 @@ class AudioVizApp(App):
 
     def on_key(self, event: events.Key) -> None:
         if isinstance(self.screen, ModalScreen):
+            return
+        if not self.deck_ready:
+            if event.key in ("q", "escape"):
+                self.exit()
+                event.stop()
+            elif event.key == "r" or (event.key == "a" and self.startup.config_file is not None):
+                self.request_startup(choose_devices=event.key == "a")
+                event.stop()
             return
         if self.focused is self.query_one("#command", Input):
             if event.key == "escape":

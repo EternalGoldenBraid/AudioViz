@@ -47,6 +47,10 @@ class DeckClient:
     def refresh(self) -> None:
         self._call({"op": "controls"})
 
+    def close(self) -> None:
+        self._reader.close()
+        self._socket.close()
+
     def preview(self, name: str, rows: int, cols: int) -> "np.ndarray | None":
         """The last image fetched for a view; asking for it also schedules it for the next fetch_previews."""
         self.wanted[name] = (rows, cols)

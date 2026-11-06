@@ -9,6 +9,13 @@
 
 **Essence.** A Vim-modal Textual app that works as a DJ deck: `main.py` renders in its
 standalone Qt window and serves a deck socket; the TUI attaches and turns the window's knobs.
+
+**Startup.** `main.py` opens one idle TUI first, before any Qt window or local
+graph. Usable saved audio devices auto-start the window; missing or invalid
+selections open the existing Vim checklists. Startup remains responsive while
+the child initializes, and errors leave device selection and retry available.
+The same TUI then attaches to the window; quitting terminates its owned child.
+Window-only `--no-tui` retains terminal-based setup.
 There is one renderer. The TUI shows only low-res previews, and terminal pixel protocols and
 window-manager tiling are out of scope.
 

@@ -5,6 +5,7 @@ than are listed, checking one more unchecks the earliest. Dismisses with the che
 """
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -35,10 +36,10 @@ class DeviceChecklist(ModalScreen):
         Binding("escape,q", "dismiss(None)", show=False),
     ]
 
-    def __init__(self, title: str, choices: list[str], checked: list[str], capacity: int) -> None:
+    def __init__(self, title: str, choices: list[str], checked: list[str], capacity: int, *, live: bool = True) -> None:
         super().__init__()
         self.title_text, self.choices, self.capacity = title, choices, capacity
-        self.opened = list(checked)  # what is running now; shown as "live" until applied
+        self.opened = list(checked) if live else []  # only running devices are labelled live
         self.checked = list(checked)
 
     def compose(self) -> ComposeResult:
@@ -55,6 +56,10 @@ class DeviceChecklist(ModalScreen):
         if self.capacity == 1:
             return "one device at a time: checking another replaces it"
         return f"up to {self.capacity} devices: {len(self.checked)} checked"
+
+    def on_resize(self, event: events.Resize) -> None:
+        # Leave room for the frame and wrapped hints in short terminals.
+        self.query_one(OptionList).styles.max_height = max(1, min(22, int(event.size.height * 0.8) - 6))
 
     def _row(self, choice: str) -> Text:
         on = choice in self.checked
