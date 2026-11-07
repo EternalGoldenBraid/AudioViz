@@ -84,6 +84,35 @@ def test_ripple_engine_correction_preserves_prior_and_wave_velocity():
     np.testing.assert_array_equal(engine.propagator.Z, engine.Z)
     np.testing.assert_array_equal(engine.propagator.Z_old, engine.Z_old)
 
+def test_held_canvas_keeps_excitation_and_inference_without_wave_momentum():
+    engine = _build_engine()
+    assert engine.wave_propagation_enabled is True
+    excitation = _rgb_field([[0.5, -0.2], [0.1, 0.0]])
+    engine.propagate(excitation)
+    before = engine.get_field_numpy().copy()
+    assert np.any(engine.Z != engine.Z_old)
+    engine.set_wave_propagation(False)
+    engine.amplitude = 2.0
+    engine.propagate(excitation)
+    prior = before + 2.0 * excitation
+    np.testing.assert_array_equal(engine.get_prior_numpy(), prior)
+    correction = np.full(engine.canvas_shape, 0.03, dtype=np.float32)
+    engine.apply_observation_correction(correction)
+    np.testing.assert_array_equal(engine.Z, prior + correction)
+    np.testing.assert_array_equal(engine.Z_old, engine.Z)
+    engine.propagate()
+    np.testing.assert_array_equal(engine.Z, prior + correction)
+    engine.set_wave_propagation(True)
+    engine.propagate()
+    assert not np.array_equal(engine.Z, prior + correction)
+
+
+def test_wave_toggle_rejects_non_boolean_configuration():
+    engine = _build_engine()
+    for value in (0, 1, None, "off"):
+        with np.testing.assert_raises_regex(ValueError, "must be a boolean"):
+            engine.set_wave_propagation(value)
+
 
 def test_ripple_engine_normalizes_prediction_conductances_to_stable_degree_budget():
     engine = RippleEngine(

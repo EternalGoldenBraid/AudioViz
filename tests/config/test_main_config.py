@@ -39,6 +39,9 @@ def test_build_ripple_visualizer_config_flattens_nested_source_config():
 
     assert flattened["use_shader"] is True
     assert flattened["use_gpu"] is False
+    assert flattened["wave_propagation_enabled"] is True
+    config["dynamics"]["wave_propagation_enabled"] = False
+    assert main.build_ripple_visualizer_config(config)["wave_propagation_enabled"] is False
     orchestrator_config = flattened["source_orchestrator_config"]
 
     assert orchestrator_config.audio.enabled is False

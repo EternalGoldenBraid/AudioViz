@@ -26,6 +26,8 @@ def test_every_writable_qt_control_has_a_live_adapter_and_typed_config_roundtrip
         controls["speed"].set(None, 123)
         controls["excitation amplitude"].set(None, 2.5)
         controls["excitation falloff"].set(None, 3.5)
+        assert controls["wave propagation"].get(None) is True
+        controls["wave propagation"].set(None, False)
         config = window.source_orchestrator.visual_readout.config
         assert config.inference_steps == 12 and config.learning_enabled
         assert config.weight_decay == 0.02
@@ -45,11 +47,14 @@ def test_every_writable_qt_control_has_a_live_adapter_and_typed_config_roundtrip
         server.save({"backend": "window"})
         saved = json.loads(server.config_path.read_text())["mixer"]
         assert saved["learning"] is True and saved["inference steps"] == 12
+        assert saved["wave propagation"] is False
         controls["inference steps"].set(None, 4)
         controls["speed"].set(None, 300)
+        controls["wave propagation"].set(None, True)
         server.load(strict=True)
         assert window.source_orchestrator.visual_readout.config.inference_steps == 12
         assert window.engine.speed == window.speed == 123
+        assert window.engine.wave_propagation_enabled is False
         assert window.control_panel is None
     finally:
         window.close()

@@ -88,6 +88,7 @@ RIPPLE_CONFIG = {
         # "resolution": (48, 64),
     },
     "dynamics": {
+        "wave_propagation_enabled": True,
         "amplitude": 1.,
         "decay_alpha": 0.01,
         "speed": 340.0,

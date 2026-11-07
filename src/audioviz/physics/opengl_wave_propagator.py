@@ -23,6 +23,7 @@ uniform ivec2 grid_shape;
 uniform float c2_dt2;
 uniform float damping;
 uniform int boundary_condition;
+uniform bool wave_propagation_enabled;
 
 const int BOUNDARY_CONDITION_CYCLIC = 0;
 const int BOUNDARY_CONDITION_NEUMANN = 1;
@@ -41,6 +42,11 @@ void main() {
     }
 
     float center = current_with_excitation(p);
+    if (!wave_propagation_enabled) {
+        imageStore(z_current_after_excitation, p, vec4(center, 0.0, 0.0, 1.0));
+        imageStore(z_next, p, vec4(center, 0.0, 0.0, 1.0));
+        return;
+    }
     float neighbor_sum = 0.0;
     float degree = 0.0;
 
@@ -139,7 +145,7 @@ class WavePropagatorOpenGL:
         assert excitation.shape == self.shape
         self._pending_excitation += np.asarray(excitation, dtype=np.float32)
 
-    def step(self) -> None:
+    def step(self, *, wave_propagation_enabled: bool = True) -> None:
         self._ensure_initialized()
         gl = self._gl
 
@@ -147,6 +153,10 @@ class WavePropagatorOpenGL:
         self._pending_excitation.fill(0.0)
 
         gl.glUseProgram(self._program)
+        gl.glUniform1i(
+            gl.glGetUniformLocation(self._program, "wave_propagation_enabled"),
+            int(wave_propagation_enabled),
+        )
         gl.glUniform2i(
             gl.glGetUniformLocation(self._program, "grid_shape"),
             self._cols,

@@ -62,7 +62,7 @@ class GraphRuntime:
         if audio_model == "cochlea":
             self.orchestrator.set_audio_model(audio_model)
 
-    def _build(self, resolution: "int | str | tuple[int, int]", *, config: RippleSourceOrchestratorConfig, damping: float = 0.995, speed: float = 1.0) -> None:
+    def _build(self, resolution: "int | str | tuple[int, int]", *, config: RippleSourceOrchestratorConfig, damping: float = 0.995, speed: float = 1.0, wave_propagation_enabled: bool = True) -> None:
         grid = parse_resolution(resolution)
         longest = max(grid)
         engine = RippleEngine(
@@ -70,6 +70,7 @@ class GraphRuntime:
             plane_size_m=(grid[0] / longest, grid[1] / longest),  # square cells whatever the aspect
             speed=speed,
             damping=damping,
+            wave_propagation_enabled=wave_propagation_enabled,
             boundary_condition="cyclic",
         )
         orchestrator = RippleSourceOrchestrator(
@@ -104,7 +105,10 @@ class GraphRuntime:
                     gain=self.orchestrator.camera_source.gain,
                 ),
             )
-            self._build(resolution, config=config, damping=self.engine.damping, speed=self.engine.speed)
+            self._build(
+                resolution, config=config, damping=self.engine.damping, speed=self.engine.speed,
+                wave_propagation_enabled=self.engine.wave_propagation_enabled,
+            )
 
     @property
     def processor(self):

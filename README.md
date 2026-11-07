@@ -102,6 +102,7 @@ selection and 3D camera reset. The canvas's **Display Settings** button opens
 only those local display controls, including in `--no-tui` mode.
 
 * **Damping**: Controls wave attenuation over time (physical energy loss)
+* **Wave propagation**: On by default. Toggle it in the Wave tab to hold the canvas between sensory inference updates. Excitation and inference remain active; held steps clear wave momentum so enabling waves resumes from the current inferred state. This setting is saved with the runtime preset.
 * **Decay α**: Sets spatial spread using distance normalized by the field diagonal
 * **Amplitude**: Controls excitation strength
 * **Speed**: Wave propagation speed in meters per second

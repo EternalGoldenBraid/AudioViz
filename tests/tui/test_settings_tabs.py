@@ -26,14 +26,19 @@ def test_tabs_share_live_controls_and_return_to_overview_without_rebuilding(app)
             assert engine.damping < before
             await pilot.press("l")
             assert app.focused.control.name == "speed"
+            await pilot.press("w", "enter", "h", "escape")
+            assert app.focused.control.name == "wave propagation"
+            assert engine.wave_propagation_enabled is False
             app.run_command("w", ["session"])
             assert json.loads(app.session_path("session").read_text())["tab"] == "wave"
+            engine.set_wave_propagation(True)
             app.run_command("tab", ["learning"])
             await pilot.pause()
             assert app.focused.control.name == "learning"
             app.run_command("e", ["session"])
             await pilot.pause()
             assert app.workspace == "wave"
+            assert engine.wave_propagation_enabled is False
             await pilot.press("shift+tab", "shift+tab")
             await pilot.pause()
             assert app.workspace == "overview"

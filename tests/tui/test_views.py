@@ -95,11 +95,17 @@ def test_mixer_nudge_round_trips_through_runtime():
 
     runtime = GraphRuntime(resolution=16, camera=False)
     damping = next(c for c in CONTROLS if c.name == "damping")
+    waves = next(c for c in CONTROLS if c.name == "wave propagation")
+    assert waves.get(runtime) is True
+    waves.nudge(runtime, -1)
     before = damping.get(runtime)
     damping.nudge(runtime, -5)
     assert damping.get(runtime) < before
     runtime.rebuild(24)
     assert runtime.engine.damping < before
+    assert waves.get(runtime) is False
+    waves.nudge(runtime, 1)
+    assert waves.get(runtime) is True
 
 
 def _run(runtime, steps=60):

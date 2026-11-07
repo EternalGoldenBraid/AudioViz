@@ -69,6 +69,12 @@ def window_settings(window) -> dict[str, Control]:
             lambda _target, value, apply=setter, sync=callback: set_physics(value, apply, sync),
             step=step, category="wave",
         )
+    result["wave propagation"] = Control(
+        "wave propagation", 0, 1, lambda _target: window.engine.wave_propagation_enabled,
+        lambda _target, value: window.engine.set_wave_propagation(bool(value)),
+        toggle=True, category="wave",
+        description="Wave equation dynamics. Off holds the canvas between sensory inference updates.",
+    )
     for name, attribute, low, high, step, setter in (
         ("auto color threshold", "auto_color_activation_threshold", 0, 2, 0.01, window._update_auto_color_activation_threshold),
         ("reference scale", "auto_color_floor", 0, 2, 0.01, window._update_auto_color_floor),
