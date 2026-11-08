@@ -14,7 +14,7 @@ import Review from "./Review.vue";
 
 ## Energy and updates
 
-With $a=\tanh(h)$ and $r=\tanh(c)$, the model residuals are
+With $a=\tanh(h)$ and $r=c$, the model residuals are
 
 $$
 e_h=h-W_c r-W_h a,\qquad e_z=z-W_s a,\qquad e_y=y-\sigma(z).
@@ -34,6 +34,9 @@ Learning uses $W\leftarrow W-\eta_W\nabla_W E$ at the settled state.
 Canvas feedback is $c\leftarrow c-\eta_c\nabla_c E$, applied to both wave states to preserve velocity.
 The rates set update sizes; they do not temper the energy. The recurrent diagonal is structurally zero.
 The shared legacy configuration's gradient and weight clipping controls do not apply to this solver.
+The canvas readout is linear, so its correction is $\eta_c W_c^\top e_h$ within the root aperture.
+Wave propagation remains a separate dynamics step. The signed canvas renderer's display nonlinearity
+does not enter the inference or correction.
 
 Sensory states update during inference even when connection learning is disabled.
 Incoming predictions pull $z$ toward $W_s\tanh(h)$, observation error pulls the decoded prediction toward $y$,

@@ -117,8 +117,8 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
             </marker>
           </defs>
           <rect x="176" y="12" width="368" height="66" rx="9" class="group" />
-          <text x="360" y="37" class="center">Canvas c · tanh(c)</text>
-          <text x="360" y="59" class="center small">Root correction = −{{ settings.canvas_rate }} ∂E/∂c</text>
+          <text x="360" y="37" class="center">Canvas c · linear readout</text>
+          <text x="360" y="59" class="center small">Root correction = {{ settings.canvas_rate }} Wcᵀ e_h</text>
           <path d="M212 82L212 140L600 140" class="forward" />
           <text x="360" y="107" class="center small">Wc · dense root-to-hidden weights</text>
           <path d="M651 187L651 46L552 46" class="backward" />

@@ -14,7 +14,7 @@ def make_graph(**changes):
 
 def test_state_canvas_and_weight_gradients_differentiate_the_same_energy():
     graph = make_graph(weight_decay=.07)
-    graph.canvas[:] = np.linspace(-.3, .4, graph.visual_nodes)
+    graph.canvas[:] = np.linspace(-3., 4., graph.visual_nodes)
     graph.aperture_mask[1] = False
     graph.mean[graph.hidden_slice] = [.2, -.4]
     graph.sensory_potential[:] = np.linspace(-.5, .6, graph._sensory_nodes)
@@ -25,6 +25,11 @@ def test_state_canvas_and_weight_gradients_differentiate_the_same_energy():
     h = graph.mean[graph.hidden_slice]
     z = graph.sensory_potential
     terms = graph._terms(h, z)
+    root = np.where(graph.aperture_mask, graph.canvas, 0.)
+    np.testing.assert_allclose(terms[6], h - graph.canvas_weights @ root - graph.recurrent_weights @ np.tanh(h))
+    np.testing.assert_allclose(
+        terms[5], np.where(graph.aperture_mask, -(graph.canvas_weights.T @ terms[6]), 0.),
+    )
     gradients = (
         (h, terms[3]), (z, terms[4]), (graph.canvas, terms[5]),
         *(

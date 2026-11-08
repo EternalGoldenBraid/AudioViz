@@ -276,8 +276,7 @@ class ContinuousScenePredictiveCodingGraph:
         xp = self.backend
         activity = xp.tanh(hidden)
         dtanh = 1.0 - activity**2
-        raw_root_activity = xp.tanh(canvas)
-        root_activity = xp.where(aperture_mask, raw_root_activity, 0.0)
+        root_activity = xp.where(aperture_mask, canvas, 0.0)
         hidden_error = (
             hidden - self.canvas_weights @ root_activity
             - self.recurrent_weights @ activity
@@ -332,7 +331,7 @@ class ContinuousScenePredictiveCodingGraph:
         sensory_gradient = decay * sensory_potential + weighted_coupling_error - observation_drive
         root_gradient = xp.where(
             aperture_mask,
-            -(self.canvas_weights.T @ weighted_hidden_error) * (1.0 - raw_root_activity**2),
+            -(self.canvas_weights.T @ weighted_hidden_error),
             0.0,
         )
         return (
@@ -366,7 +365,7 @@ class ContinuousScenePredictiveCodingGraph:
         weighted_hidden_error = self.hidden_residual_precision * eh
         recurrent = -xp.outer(weighted_hidden_error, activity)
         xp.fill_diagonal(recurrent, 0.0)
-        root_activity = xp.where(self.aperture_mask, xp.tanh(self.canvas), 0.0)
+        root_activity = xp.where(self.aperture_mask, self.canvas, 0.0)
         return (
             -xp.outer(weighted_hidden_error, root_activity),
             recurrent,
