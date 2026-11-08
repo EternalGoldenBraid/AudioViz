@@ -6,6 +6,8 @@ layout: page
 import Review from "./Review.vue";
 </script>
 
+[All experiments](./) · [Node pulses and connection ripples](./dual)
+
 <div class="vp-doc inference-page">
 
 # Continuous inference: follow the actual gradients
