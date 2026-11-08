@@ -140,15 +140,15 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
     </div>
     <p v-if="playbackError" role="alert">{{ playbackError }}</p>
     <p class="settings">
-      Unit precisions · state rate {{ settings.rate }} · learning rate {{ settings.learning_rate }} ·
+      Linear visual output · unit precisions · state rate {{ settings.rate }} · learning rate {{ settings.learning_rate }} ·
       canvas rate {{ settings.canvas_rate }} · decay 1/τ = {{ (1/settings.tau).toFixed(1) }} ·
       {{ settings.inference_steps }} microsteps/frame · no clipping, metric rescaling or projection
     </p>
     <div class="panes">
       <section class="pane topology">
         <h2>Canvas → hidden → sensory</h2>
-        <p>Actual dense connectivity. Canvas and sensory boxes group {{ settings.sensory_nodes.toLocaleString() }} RGB coordinates.
-          The six hidden nodes are literal. Dashed arrows show energy-gradient feedback.</p>
+        <p>Schematic of dense connectivity. Canvas and sensory boxes group {{ settings.sensory_nodes.toLocaleString() }} RGB coordinates.
+          The six hidden nodes are literal. Dashed arrows show gradient contributions; updates use the negative total.</p>
         <svg viewBox="0 0 720 435" role="img" aria-label="Canvas above six recurrent hidden nodes above grouped sensory states">
           <defs>
             <marker id="forward" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -180,14 +180,15 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
           <text x="360" y="151" class="center tiny">Wh connects every hidden pair · diagonal zero</text>
           <rect x="111" y="278" width="498" height="69" rx="9" class="group" />
           <text x="360" y="301" class="center">Sensory latent z · inferred from three energy terms</text>
-          <text x="360" y="323" class="center small">Incoming prediction Ws tanh(h) · visual output sigmoid(z)</text>
+          <text x="360" y="323" class="center small">Incoming prediction Ws tanh(h) · visual output z</text>
           <path d="M616 311L678 311L678 196L649 196" class="backward" />
-          <text x="655" y="268" text-anchor="end" class="tiny">−Wsᵀ e_z</text>
+          <text x="655" y="268" text-anchor="end" class="tiny">−Jsᵀ e_z</text>
           <path d="M315 393L315 351" class="backward" />
           <rect x="176" y="394" width="368" height="34" rx="7" class="evidence" />
           <text x="360" y="416" class="center small">Observed image y · all pixels observed · no fovea</text>
-          <text x="456" y="371" class="center tiny">−(y − ŷ) sigmoid′(z)</text>
+          <text x="456" y="371" class="center tiny">−(y − z)</text>
         </svg>
+        <p>Js = Ws diag(tanh′(h)): hidden feedback includes the hidden activation slope.</p>
         <div class="metrics">
           <span>‖∇h‖ {{ numeric(norm(selected.grad_h)) }}</span>
           <span>Canvas peak |c| {{ selected.canvas_peak.toExponential(2) }}</span>
@@ -271,14 +272,16 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
       </section>
       <section class="pane diagnostics">
         <h2>Basic model checks</h2>
-        <h3>Black / gray / white · 30 s with learning</h3>
-        <table><thead><tr><th>Observed RGB</th><th>Settled RGB</th></tr></thead>
-          <tbody><tr v-for="result in capture.black_gray_white" :key="result.observed">
+        <h3>Linear vs ReLU · 30 s with learning</h3>
+        <table><thead><tr><th>Observed RGB</th><th>Linear prediction</th><th>ReLU prediction</th></tr></thead>
+          <tbody><tr v-for="(result, index) in capture.black_gray_white" :key="result.observed">
             <td>{{ result.observed }}</td><td>{{ f(result.prediction) }}</td>
+            <td>{{ f(capture.relu_black_gray_white[index].prediction) }}</td>
           </tr></tbody>
         </table>
-        <p class="finding">The observation gradient has the correct sign. Strong state decay and coupling leave the
-          prediction near gray. Removing clipping does not remove this equilibrium.</p>
+        <p class="finding">Linear output predicts black exactly, but decay and coupling attenuate bright predictions.
+          ReLU stalls at the unchanged zero initialization: its derivative at zero is zero, so observation error
+          sends no initial state drive. No bias, jitter or positive warm start is added.</p>
         <h3>XOR · output withheld at evaluation</h3>
         <table><thead><tr><th>Inputs</th><th>Target</th><th>Prediction</th></tr></thead>
           <tbody><tr v-for="result in capture.xor.cases" :key="`${result.a}-${result.b}`">

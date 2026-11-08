@@ -28,10 +28,11 @@ def camera_frame(index, shape=(48, 96)):
     return image
 
 
-def plain_graph(shape=(48, 96), *, hidden=6, audio=0, **config):
+def plain_graph(shape=(48, 96), *, hidden=6, audio=0, visual_decoder="linear", **config):
     return ContinuousScenePredictiveCodingGraph(
         visual_shape=shape, hidden_nodes=hidden, audio_nodes=audio,
         config=PredictiveCodingConfig(hidden_channels=hidden, **config),
+        visual_decoder=visual_decoder,
     )
 
 
@@ -73,10 +74,12 @@ def xor_probe():
     }
 
 
-def black_probe():
+def black_probe(visual_decoder="linear"):
     results = []
     for level in (0., .5, 1.):
-        graph = plain_graph((1, 1), hidden=2, inference_rate=2., learning_enabled=True)
+        graph = plain_graph(
+            (1, 1), hidden=2, inference_rate=2., learning_enabled=True, visual_decoder=visual_decoder,
+        )
         canvas = np.zeros((1, 1, 3))
         for _ in range(900):
             graph.forecast(canvas, 1/30)
@@ -85,8 +88,7 @@ def black_probe():
             "observed": level, "prediction": float(graph.visual_prediction.mean()),
             "gradient": graph.sensory_gradient.tolist(),
             "observation_drive": (
-                graph.sensory_error * graph._decode_sensory(graph.sensory_potential)
-                * (1 - graph._decode_sensory(graph.sensory_potential))
+                graph.sensory_error * graph._sensory_slope(graph.sensory_potential)
             ).tolist(),
         })
     return results
@@ -96,8 +98,8 @@ def comparison_frame(index, frames, image, panels, curves, fonts, rate, canvas_r
     title, font, small, legend = fonts
     picture = Image.new("RGB", (1104, 1280), "#10141e")
     draw = ImageDraw.Draw(picture)
-    draw.text((24, 16), "Current run: per-pixel vs plain continuous inference", font=title, fill="#f3f5fa")
-    draw.text((24, 58), f"Same input | 30 fps | learning {learning_rate:g} | right precision 1 | no external forcing",
+    draw.text((24, 16), "Current run: per-pixel vs linear continuous inference", font=title, fill="#f3f5fa")
+    draw.text((24, 58), f"Same input | 30 fps | learning {learning_rate:g} | linear output | right precision 1",
               font=small, fill="#bac5d8")
     picture.paste(Image.fromarray(np.rint(image*255).astype(np.uint8)).resize(
         (288, 144), Image.Resampling.NEAREST,
@@ -127,7 +129,7 @@ def comparison_frame(index, frames, image, panels, curves, fonts, rate, canvas_r
     draw.text((24, 262), f"Inference: left 0.1, right {rate:g} | canvas: left 0.01, right {canvas_rate:g}",
               font=small, fill="#bac5d8")
     for column, (prefix, heading) in enumerate((
-        ("legacy_", "Current per-pixel inference"), ("", "Updated plain continuous inference"),
+        ("legacy_", "Current per-pixel inference"), ("", "Continuous inference: linear output"),
     )):
         draw.text((24+552*column, 290), heading, font=font, fill="#f3f5fa")
         for row, mode in enumerate(("waves", "held")):
@@ -174,7 +176,9 @@ def record_graph(graph, frame, mode, image, corrected_canvas, indices, forecast_
         "z": z[indices].tolist(), "grad_z": snapshot["sensory_gradient"][indices].tolist(),
         "z_decay": (z[indices]/graph.memory_time_constant).tolist(),
         "z_coupling": ez[indices].tolist(),
-        "z_observation": (-snapshot["sensory_error"][indices] * pred[indices] * (1-pred[indices])).tolist(),
+        "z_observation": (
+            -snapshot["sensory_error"][indices] * graph._sensory_slope(z)[indices]
+        ).tolist(),
         "root": snapshot["canvas"][indices].tolist(),
         "grad_root": snapshot["canvas_gradient"][indices].tolist(),
         "observed": image.ravel()[indices].tolist(),
@@ -304,14 +308,17 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
             "wave_dt": engines["continuous"].dt, "sample_pixels": sample_pixels, "indices": indices.tolist(),
             "unit_precision": True, "weight_decay": 0,
             "legacy_inference_rate": .1, "legacy_canvas_rate": .01,
+            "visual_decoder": models["waves"].visual_decoder,
         },
         "snapshots": snapshots, "curves": curves,
         "black_gray_white": black_probe(), "xor": xor_probe(),
+        "relu_black_gray_white": black_probe("relu"),
     }
     path = output / "capture.json"
     path.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
     print(json.dumps({
         "capture": str(path), "black_gray_white": result["black_gray_white"],
+        "relu_black_gray_white": result["relu_black_gray_white"],
         "xor": result["xor"], "final_forecast_rmse": {
             name: values[-1] for name, values in curves.items() if name != "time"
         },

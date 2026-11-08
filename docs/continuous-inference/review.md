@@ -17,11 +17,12 @@ import Review from "./Review.vue";
 With $a=\tanh(h)$ and $r=c$, the model residuals are
 
 $$
-e_h=h-W_c r-W_h a,\qquad e_z=z-W_s a,\qquad e_y=y-\sigma(z).
+e_h=h-W_c r-W_h a,\qquad e_z=z-W_s a,\qquad e_y=y-z.
 $$
 
 The root aperture masks $r$ when present; only observed coordinates contribute $e_y$.
-Audio predictions use the linear decoder $z$. All residual precisions are fixed at one.
+Visual and audio predictions use the linear decoder $z$. All residual precisions are fixed at one.
+Inference and learning use unclipped predictions; RGB clipping applies only to display.
 
 $$
 E=\frac{\|h\|^2+\|z\|^2}{2\tau}
@@ -44,7 +45,15 @@ and state decay pulls $z$ toward zero. Connection learning subsequently changes 
 using the settled residuals.
 
 Observation error can remain nonzero at an energy minimum: the observation term competes with state decay and latent coupling.
+With a zero incoming prediction, an isolated linear sensory coordinate settles at
+$z=y/(1/\tau+2)$, or $z=y/5$ at the current $\tau=1/3$.
 The black/gray/white and XOR results above expose this limitation, not a successful reconstruction.
+
+The same solver accepts `visual_decoder="relu"` for a conventional ReLU decoder.
+Its derivative is zero at zero and for negative visual states; audio stays linear.
+The ReLU probe uses the same zero-root, zero-state initialization and learning settings.
+It stalls for nonzero visual evidence because the initial observation drive is zero.
+The default decoder is linear; the main video and synchronized graph use that default.
 
 ## Integration boundary
 
