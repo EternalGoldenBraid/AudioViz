@@ -8,8 +8,10 @@ const frame = ref(0);
 const hidden = ref(0);
 const sensory = ref(0);
 const matrix = ref("sensory_weights");
+const weightMetric = ref("step");
 const settings = capture.settings;
 const records = computed(() => capture.snapshots.filter(record => record.mode === mode.value));
+const legacyRecords = computed(() => capture.legacy_snapshots.filter(record => record.mode === mode.value));
 const selected = computed(() => records.value[Math.min(frame.value, records.value.length - 1)]);
 const video = ref(null);
 const playing = ref(false);
@@ -85,10 +87,57 @@ const zParts = computed(() => [
   ["Coupling residual", selected.value.z_coupling[sensory.value]],
   ["Observation residual", selected.value.z_observation[sensory.value]],
 ]);
-const matrixValues = computed(() => selected.value[
-  { canvas_weights: "Wc", recurrent_weights: "Wh", sensory_weights: "Ws" }[matrix.value]
+const matrixKey = computed(() =>
+  ({ canvas_weights: "Wc", recurrent_weights: "Wh", sensory_weights: "Ws" })[matrix.value]
+);
+const weightSources = computed(() => [
+  {
+    id: "legacy", title: "Old · per-pixel inference", records: legacyRecords.value,
+    available: matrix.value !== "recurrent_weights",
+    description: `${legacyRecords.value[0].Wc.length} hidden states per pixel; shared RGB matrices, all entries shown.`,
+  },
+  {
+    id: "continuous", title: "New · continuous inference", records: records.value,
+    available: true,
+    description: `${settings.hidden_nodes} hidden states for the whole image; Wc and Ws show nine sampled RGB coordinates.`,
+  },
 ]);
-const matrixGradients = computed(() => selected.value.weight_gradients[matrix.value]);
+function cumulativeChange(record, initial, r, c) {
+  return record[matrixKey.value][r][c] - initial[matrixKey.value][r][c]
+    + record.weight_updates[matrix.value][r][c];
+}
+function weightValues(record, initial) {
+  if (weightMetric.value === "weight") return record[matrixKey.value];
+  if (weightMetric.value === "step") return record.weight_updates[matrix.value];
+  return record[matrixKey.value].map((row, r) =>
+    row.map((value, c) => cumulativeChange(record, initial, r, c))
+  );
+}
+const weightPanels = computed(() => weightSources.value.map(source => {
+  const record = source.records[frame.value];
+  const initial = source.records[0];
+  return {
+    ...source, record, initial,
+    values: source.available ? weightValues(record, initial) : null,
+  };
+}));
+const weightColorLimit = computed(() => {
+  let maximum = 0;
+  for (const source of weightSources.value) {
+    if (!source.available) continue;
+    for (const record of source.records) {
+      for (const row of weightValues(record, source.records[0])) {
+        for (const value of row) maximum = Math.max(maximum, Math.abs(value));
+      }
+    }
+  }
+  return maximum;
+});
+function weightTitle(panel, r, c) {
+  const before = panel.record[matrixKey.value][r][c];
+  const update = panel.record.weight_updates[matrix.value][r][c];
+  return `row ${r}, col ${c}: W_before=${before}; applied ΔW=${update}; W_after=${before+update}; cumulative ΔW=${cumulativeChange(panel.record, panel.initial, r, c)}`;
+}
 const curve = (values, maximum=.6) => values.map((value, index) =>
   `${48 + index/Math.max(1, values.length-1)*580},${168 - value/maximum*135}`
 ).join(" ");
@@ -101,7 +150,7 @@ const microCurve = computed(() => {
   ).join(" ");
 });
 const color = value => {
-  const magnitude = Math.min(1, Math.abs(value) * 2);
+  const magnitude = weightColorLimit.value === 0 ? 0 : Math.abs(value)/weightColorLimit.value;
   return value >= 0 ? `rgba(195, 61, 93, ${.1 + .8*magnitude})`
     : `rgba(38, 122, 185, ${.1 + .8*magnitude})`;
 };
@@ -227,25 +276,41 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
           Opposite signs here show which terms balance.</p>
       </section>
       <section class="pane weights">
-        <h2>Connection learning</h2>
+        <h2>Connection learning · old and new</h2>
         <label>Weight matrix <select v-model="matrix">
-          <option value="canvas_weights">Wc: hidden × sampled canvas RGB</option>
-          <option value="recurrent_weights">Wh: hidden × hidden</option>
-          <option value="sensory_weights">Ws: sampled sensory RGB × hidden</option>
+          <option value="canvas_weights">Wc: canvas → hidden</option>
+          <option value="recurrent_weights">Wh: recurrent hidden connections</option>
+          <option value="sensory_weights">Ws: hidden → sensory</option>
         </select></label>
-        <p>Cells contain pre-learning weights. Hover for the exact weight, gradient and applied learning delta.
-          Red = positive; blue = negative. Wc and Ws show only nine sampled coordinates.</p>
-        <div class="matrix-scroll">
-          <table class="matrix">
-            <tbody><tr v-for="(row, r) in matrixValues" :key="r">
-              <td v-for="(value, c) in row" :key="c" :style="{background:color(value)}"
-                :title="`row ${r}, col ${c}: W=${value}; ∂E/∂W=${matrixGradients[r][c]}; ΔW=${-settings.learning_rate*matrixGradients[r][c]}`">
-                {{ value.toFixed(3) }}
-              </td>
-            </tr></tbody>
-          </table>
+        <label>Cell values <select v-model="weightMetric">
+          <option value="step">Applied ΔW this frame</option>
+          <option value="cumulative">Cumulative ΔW since start</option>
+          <option value="weight">Pre-learning weight W</option>
+        </select></label>
+        <p>Both models use this video's frame and dynamics selection. Updates are measured as post-learning minus
+          pre-learning weights, including the old engine's clipping. Cumulative changes include this frame's update.</p>
+        <p>Red = positive; blue = negative. Shared color limits ±{{ numeric(weightColorLimit) }},
+          fixed across the selected dynamics recording and cell-value mode.
+          Hover for exact before/after weights and changes; small values use scientific notation.</p>
+        <div class="weight-comparison">
+          <section v-for="panel in weightPanels" :key="panel.id" :class="`${panel.id}-weights`">
+            <h3>{{ panel.title }}</h3>
+            <p>{{ panel.description }}</p>
+            <template v-if="panel.available">
+              <div class="matrix-scroll">
+                <table class="matrix">
+                  <tbody><tr v-for="(row, r) in panel.values" :key="r">
+                    <td v-for="(value, c) in row" :key="c" :style="{background:color(value)}"
+                      :title="weightTitle(panel, r, c)">{{ signed(value) }}</td>
+                  </tr></tbody>
+                </table>
+              </div>
+              <p>Full-matrix ‖applied ΔW‖ = {{ numeric(panel.record.weight_update_norms[matrix]) }}.</p>
+            </template>
+            <p v-else>No same-layer recurrent weight matrix in this reference camera model.</p>
+          </section>
         </div>
-        <p>Full-matrix ‖∂E/∂W‖ = {{ numeric(selected.weight_gradient_norms[matrix]) }}.
+        <p>Continuous full-matrix ‖∂E/∂W‖ = {{ numeric(selected.weight_gradient_norms[matrix]) }}.
           W ← W − {{ settings.learning_rate }} ∂E/∂W.</p>
       </section>
       <section class="pane curves">
@@ -335,6 +400,9 @@ svg .tiny { font-size:12px; }
 .pane td:last-child { font-variant-numeric:tabular-nums; }
 .total { font-weight:700; }
 .matrix-scroll { overflow-x:auto; }
+.weights { grid-column:1 / -1; }
+.weight-comparison { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.weight-comparison > section { min-width:0; }
 .matrix { white-space:nowrap; }
 .matrix td { padding:5px; font-size:11px; text-align:center; }
 .axis { fill:none; stroke:var(--vp-c-text-2); stroke-width:1; }
@@ -345,5 +413,5 @@ svg .tiny { font-size:12px; }
 .waves-label { color:#428ec6; }
 .held-label { color:#dc8a35; }
 .finding { border-left:3px solid #cd752e; padding-left:10px; }
-@media (max-width:1000px) { .panes { grid-template-columns:1fr; } }
+@media (max-width:1000px) { .panes, .weight-comparison { grid-template-columns:1fr; } }
 </style>

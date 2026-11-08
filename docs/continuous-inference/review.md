@@ -12,6 +12,22 @@ import Review from "./Review.vue";
 
 <Review />
 
+## Paired connection updates
+
+The old per-pixel engine and new continuous solver are recorded against the same full-frame input.
+The weight comparison follows the video's frame and waves-on/held selection. Cells can show
+pre-learning weights, actual applied updates, or cumulative changes from initialization through the selected frame.
+Both implementations' updates are measured from their actual post-learning minus pre-learning parameters.
+The old engine retains its pixel-averaged learning, gradient clipping and weight clipping.
+Color limits are shared by the two implementations and fixed across the selected dynamics recording for each matrix and cell-value mode.
+Scientific notation exposes changes below ordinary decimal display precision.
+
+The architectures are not capacity matched: the old model has six hidden states per pixel and shared RGB weights;
+the continuous model has six shared hidden states and dense whole-image weights.
+All old RGB matrix entries are shown; continuous Wc/Ws panels sample three RGB pixels.
+The old camera-only model has no same-layer recurrent matrix, so its Wh panel is explicitly unavailable.
+Full-matrix applied-update norms include connections outside the sampled continuous panels.
+
 ## Energy and updates
 
 With $a=\tanh(h)$ and $r=c$, the model residuals are
@@ -61,7 +77,7 @@ This page exercises the existing research continuous solver ported into `agent/i
 The running application still uses its existing per-pixel readouts; the continuous solver is not yet connected
 to the TUI, cochlea, local camera or LAN-camera owner.
 The captured weights, residuals and gradients are evaluated before each frame's connection update.
-The graph groups large populations; matrix panels explicitly sample three RGB pixels.
+The graph groups large populations; continuous matrix panels explicitly sample three RGB pixels.
 The comparison video and graph telemetry come from the same run, captured at 30 frames per second.
 The graph follows video-frame presentation callbacks; there is no independent playback timer
 or interpolated neural state. Video frame $k$ displays the state after inference interval $k$.
