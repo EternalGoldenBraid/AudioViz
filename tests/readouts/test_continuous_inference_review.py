@@ -107,3 +107,83 @@ def test_force_capture_matches_gradient_and_elapsed_inference_time(strength):
             control.step(np.zeros_like(control.position), result["wave_dt"], force_curvature=0.)
         np.testing.assert_array_equal(canvas.position, control.position)
         np.testing.assert_array_equal(canvas.velocity, control.velocity)
+
+
+@pytest.fixture
+def dual_review(monkeypatch):
+    path = Path(__file__).resolve().parents[2] / "scripts/continuous_dual_review.py"
+    monkeypatch.syspath_prepend(str(path.parent))
+    spec = importlib.util.spec_from_file_location("continuous_dual_review", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_dual_messages_cover_every_coordinate_and_match_full_gradients(dual_review):
+    graph = review.plain_graph((2, 3), hidden=2, inference_rate=2., learning_enabled=True)
+    canvas = np.linspace(-.2, .3, 18).reshape(2, 3, 3)
+    image = np.linspace(.1, .9, 18).reshape(2, 3, 3)
+    graph.forecast(canvas, .05)
+    graph.condition(image)
+    groups = dual_review.spatial_groups((2, 3))
+    nodes, edges = dual_review.topology(groups, 2)
+    boundary = dual_review.sample_boundary(graph, canvas, image, groups)
+    np.testing.assert_array_equal(
+        np.sort(np.concatenate([group["indices"] for group in groups])), np.arange(18),
+    )
+    assert len(boundary["messages"]) == len(edges)
+    h = graph.mean[graph.hidden_slice]
+    a = np.tanh(h)
+    eh = h-graph.canvas_weights @ canvas.ravel()-graph.recurrent_weights @ a
+    ez = graph.sensory_potential-graph.sensory_weights @ a
+    for index in range(2):
+        hidden = 3*len(groups)+index
+        predictions = sum(
+            float(value[0]) for edge, value in zip(edges, boundary["messages"])
+            if edge["target"] == hidden and edge["kind"] == "prediction"
+        )
+        feedback = sum(
+            float(value[0]) for edge, value in zip(edges, boundary["messages"])
+            if edge["target"] == hidden and edge["kind"] == "feedback"
+        )
+        assert predictions == pytest.approx(
+            (graph.canvas_weights @ canvas.ravel()+graph.recurrent_weights @ a)[index],
+        )
+        assert feedback == pytest.approx(
+            ((graph.recurrent_weights.T @ eh+graph.sensory_weights.T @ ez)*(1-a*a))[index],
+        )
+    for region, group in enumerate(groups):
+        feedback = sum(
+            value for edge, value in zip(edges, boundary["messages"])
+            if edge["target"] == region and edge["kind"] == "feedback"
+        )
+        np.testing.assert_allclose(feedback, (graph.canvas_weights.T @ eh)[group["indices"]])
+    assert sum(node["coordinates"] for node in nodes if node["layer"] == "sensory") == 18
+    for region, group in enumerate(groups):
+        np.testing.assert_allclose(
+            boundary["gradients"][2*len(groups)+region],
+            (image.ravel()-graph.sensory_potential)[group["indices"]],
+        )
+
+
+def test_dual_message_change_can_exist_without_node_motion(dual_review):
+    graph = review.plain_graph((1, 1), hidden=2)
+    graph.mean[graph.hidden_slice] = [.2, -.1]
+    graph.sensory_potential[:] = [.1, -.2, .3]
+    canvas = np.ones((1, 1, 3))
+    groups = dual_review.spatial_groups((1, 1))
+    old = dual_review.sample_boundary(graph, canvas, np.zeros_like(canvas), groups)
+    graph.sensory_weights *= -2.
+    new = dual_review.sample_boundary(graph, canvas, np.zeros_like(canvas), groups)
+    record = dual_review.record_boundary(new, old, .1)
+    assert all(node[3] == 0. for node in record["nodes"])
+    assert any(message[3] > 0. for message in record["messages"])
+    graph.canvas_weights.fill(0.)
+    graph.recurrent_weights.fill(0.)
+    graph.sensory_weights.fill(0.)
+    zero = dual_review.sample_boundary(graph, canvas, np.zeros_like(canvas), groups)
+    _, edges = dual_review.topology(groups, 2)
+    assert all(
+        np.all(value == 0.) for edge, value in zip(edges, zero["messages"])
+        if edge["family"] != "observation"
+    )
