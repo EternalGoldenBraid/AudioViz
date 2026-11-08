@@ -159,6 +159,16 @@ def test_dual_messages_cover_every_coordinate_and_match_full_gradients(dual_revi
         )
         np.testing.assert_allclose(feedback, (graph.canvas_weights.T @ eh)[group["indices"]])
     assert sum(node["coordinates"] for node in nodes if node["layer"] == "sensory") == 18
+    np.testing.assert_array_equal(boundary["fields"]["state-canvas"], canvas.ravel())
+    np.testing.assert_allclose(boundary["fields"]["message-canvas-feedback"], graph.canvas_weights.T @ eh)
+    np.testing.assert_allclose(
+        sum(boundary["fields"][f"message-sensory-prediction-hidden-{index}"] for index in range(2)),
+        boundary["fields"]["message-sensory-prediction"],
+    )
+    np.testing.assert_allclose(
+        sum(boundary["fields"][f"message-canvas-feedback-hidden-{index}"] for index in range(2)),
+        boundary["fields"]["message-canvas-feedback"],
+    )
     for region, group in enumerate(groups):
         np.testing.assert_allclose(
             boundary["gradients"][2*len(groups)+region],
@@ -211,3 +221,24 @@ def test_dual_input_atlas_matches_the_observed_record_boundaries(dual_review, tm
                 assert data["records"][frame]["nodes"][2*len(groups)+region][0] == pytest.approx(
                     float(np.mean(expected.ravel()[group["indices"]])),
                 )
+    key = "message-sensory-prediction-hidden-0"
+    changes = [
+        current["fields"][key]-previous["fields"][key]
+        for _, current, previous, _ in dual_review.trajectory((height, width), 2)
+    ]
+    scale = data["settings"]["native_fields"][key]
+    assert scale == max(float(np.max(dual_review.field_magnitude(change, (height, width)))) for change in changes)
+    with Image.open(tmp_path/"native-fields"/f"{key}.png") as atlas:
+        for frame, change in enumerate(changes):
+            x, y = (frame%columns)*width, (frame//columns)*height
+            np.testing.assert_array_equal(
+                np.asarray(atlas.crop((x, y, x+width, y+height))),
+                np.asarray(dual_review.field_image(change, scale, (height, width))),
+            )
+
+
+def test_native_field_encoding_keeps_adjacent_pixel_changes_separate(dual_review):
+    change = np.array([[[.3, .3, .3], [-.1, -.1, -.1], [0., 0., 0.]]])
+    pixels = np.asarray(dual_review.field_image(change.ravel(), .3, (1, 3)))
+    np.testing.assert_array_equal(pixels[0, :, :3], [[255,158,119], [72,211,236], [185,196,215]])
+    np.testing.assert_array_equal(pixels[0, :, 3], [255, round(255*np.sqrt(1/3)), 0])

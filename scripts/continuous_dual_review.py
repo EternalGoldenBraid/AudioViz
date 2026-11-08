@@ -125,9 +125,19 @@ def sample_boundary(graph, canvas, image, groups):
         value[group["indices"]].copy()
         for value in (terms[5], terms[4], ey) for group in groups
     ] + [terms[3][index:index+1].copy() for index in range(graph.hidden_nodes)]
+    fields = {
+        "state-canvas": c, "state-sensory": z, "state-evidence": y,
+        "message-canvas-feedback": mask*(wc.T @ eh),
+        "message-sensory-prediction": ws @ a,
+        "message-sensory-feedback": ey*graph._sensory_slope(z),
+        "message-evidence-prediction": graph._decode_sensory(z),
+    }
+    for index in range(graph.hidden_nodes):
+        fields[f"message-canvas-feedback-hidden-{index}"] = mask*wc[index]*eh[index]
+        fields[f"message-sensory-prediction-hidden-{index}"] = ws[:, index]*a[index]
     return {
         "states": states, "messages": messages, "gradients": gradients,
-        "energy": [terms[0], terms[1], terms[2]],
+        "energy": [terms[0], terms[1], terms[2]], "fields": fields,
     }
 
 
@@ -152,10 +162,7 @@ def record_boundary(current, previous, time):
     }
 
 
-def capture(output, steps):
-    if steps < 1:
-        raise ValueError("steps must be positive")
-    shape = (48, 96)
+def trajectory(shape, steps):
     graph = plain_graph(shape, inference_rate=.3, learning_enabled=True, learning_rate=.001)
     reference = RippleEngine(
         resolution=shape, plane_size_m=(50, 50), speed=340, damping=.988,
@@ -166,23 +173,67 @@ def capture(output, steps):
         damping_rate=-np.log(reference.damping)/reference.dt, boundary_condition="neumann",
     )
     groups = spatial_groups(shape)
-    nodes, edges = topology(groups, graph.hidden_nodes)
     previous = sample_boundary(graph, canvas.position, np.zeros_like(canvas.position), groups)
-    records = [record_boundary(previous, previous, 0.)]
-    columns = 20
-    atlas = Image.new("RGB", (columns*shape[1], ((steps+columns)//columns)*shape[0]))
+    yield 0, previous, previous, np.zeros_like(canvas.position)
     for frame in range(steps):
         image = camera_frame(frame)
         graph.forecast(canvas.position, 1/30)
         graph.condition(image)
         advance_canvas_force(graph, canvas, 1/30, 1., reference.dt)
         current = sample_boundary(graph, canvas.position, image, groups)
-        records.append(record_boundary(current, previous, (frame+1)/30))
+        yield frame+1, current, previous, image
+        previous = current
+
+
+def field_magnitude(value, shape):
+    return np.sqrt(np.mean(value.reshape(*shape, 3)**2, axis=2))
+
+
+def field_image(change, scale, shape):
+    values = change.reshape(*shape, 3)
+    mean = np.mean(values, axis=2)
+    colors = np.empty((*shape, 4), dtype=np.uint8)
+    colors[..., :3] = np.where(
+        (mean < 0)[..., None], [72, 211, 236],
+        np.where((mean > 0)[..., None], [255, 158, 119], [185, 196, 215]),
+    )
+    magnitude = field_magnitude(change, shape)
+    colors[..., 3] = 0 if scale == 0 else np.rint(255*np.sqrt(magnitude/scale)).astype(np.uint8)
+    return Image.fromarray(colors)
+
+
+def capture(output, steps):
+    if steps < 1:
+        raise ValueError("steps must be positive")
+    shape = (48, 96)
+    groups = spatial_groups(shape)
+    records = []
+    columns = 20
+    size = (columns*shape[1], ((steps+columns)//columns)*shape[0])
+    atlas = Image.new("RGB", size)
+    maxima = {}
+    for frame, current, previous, image in trajectory(shape, steps):
+        records.append(record_boundary(current, previous, frame/30))
         atlas.paste(
             Image.fromarray(np.rint(image*255).astype(np.uint8)),
-            (((frame+1)%columns)*shape[1], ((frame+1)//columns)*shape[0]),
+            ((frame%columns)*shape[1], (frame//columns)*shape[0]),
         )
-        previous = current
+        for key, value in current["fields"].items():
+            change = value-previous["fields"][key]
+            maxima[key] = max(maxima.get(key, 0.), float(np.max(field_magnitude(change, shape))))
+    final_fields = current["fields"]
+    field_atlases = {key: Image.new("RGBA", size) for key in maxima}
+    # Replay the same deterministic trajectory to encode fixed recording-wide scales.
+    for frame, current, previous, _ in trajectory(shape, steps):
+        for key, value in current["fields"].items():
+            field_atlases[key].paste(
+                field_image(value-previous["fields"][key], maxima[key], shape),
+                ((frame%columns)*shape[1], (frame//columns)*shape[0]),
+            )
+    if not all(np.array_equal(value, final_fields[key]) for key, value in current["fields"].items()):
+        raise RuntimeError("native field replay differs from the recorded trajectory")
+    hidden_nodes = len(current["states"])-3*len(groups)
+    nodes, edges = topology(groups, hidden_nodes)
     sources = [
         Path(__file__), Path(__file__).with_name("continuous_inference_review.py"),
         Path(__file__).resolve().parents[1]/"src/audioviz/readouts/continuous_scene_predictive_coding.py",
@@ -191,10 +242,11 @@ def capture(output, steps):
     result = {
         "schema": "continuous-dual-v1",
         "settings": {
-            "shape": shape, "hidden_nodes": graph.hidden_nodes, "fps": 30,
+            "shape": shape, "hidden_nodes": hidden_nodes, "fps": 30,
             "duration": steps/30, "inference_rate": .3, "learning_rate": .001,
             "inference_force_strength": 1.,
             "input_atlas": {"columns": columns, "frames": steps+1},
+            "native_fields": maxima,
             "boundary": "After neural inference, learning and mechanical advance; current weights.",
         },
         "source_hashes": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sources},
@@ -204,6 +256,12 @@ def capture(output, steps):
     temporary_atlas = output/"dual-input.pending.png"
     atlas.save(temporary_atlas)
     temporary_atlas.replace(output/"dual-input.png")
+    field_directory = output/"native-fields"
+    field_directory.mkdir(exist_ok=True)
+    for key, image in field_atlases.items():
+        temporary_field = field_directory/f"{key}.pending.png"
+        image.save(temporary_field)
+        temporary_field.replace(field_directory/f"{key}.png")
     temporary = output/"dual-capture.pending.json"
     temporary.write_text(json.dumps(result, allow_nan=False, separators=(",", ":")), encoding="utf-8")
     temporary.replace(output/"dual-capture.json")
