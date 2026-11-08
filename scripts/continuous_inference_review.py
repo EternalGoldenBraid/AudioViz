@@ -5,13 +5,16 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 import numpy as np
-from PIL import Image
+from matplotlib import colormaps
+from PIL import Image, ImageDraw, ImageFont
 
 from audioviz.engine import RippleEngine
 from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
-from audioviz.readouts.predictive_coding import PredictiveCodingConfig
+from audioviz.readouts.predictive_coding import PredictiveCodingConfig, PredictiveCodingRGBReadout
+from audioviz.visualization.ripple_renderers import _canvas_to_rgb
 
 
 def camera_frame(index, shape=(48, 96)):
@@ -89,10 +92,114 @@ def black_probe():
     return results
 
 
+def comparison_frame(index, frames, image, panels, curves, fonts, rate, canvas_rate, learning_rate):
+    title, font, small, legend = fonts
+    picture = Image.new("RGB", (1104, 1280), "#10141e")
+    draw = ImageDraw.Draw(picture)
+    draw.text((24, 16), "Current run: per-pixel vs plain continuous inference", font=title, fill="#f3f5fa")
+    draw.text((24, 58), f"Same input | 30 fps | learning {learning_rate:g} | right precision 1 | no external forcing",
+              font=small, fill="#bac5d8")
+    picture.paste(Image.fromarray(np.rint(image*255).astype(np.uint8)).resize(
+        (288, 144), Image.Resampling.NEAREST,
+    ), (24, 100))
+    draw.text((340, 92), "Whole-frame pre-evidence forecast RMSE", font=small, fill="#f3f5fa")
+    for tick in (0., .3, .6):
+        yy = 238 - tick/.6*106
+        draw.line((380, yy, 1060, yy), fill="#354156")
+        draw.text((340, yy-9), f"{tick:g}", font=small, fill="#bac5d8")
+    for seconds in (0, frames/60, frames/30):
+        xx = 380 + 680*seconds/(frames/30)
+        draw.text((xx-9, 242), f"{seconds:g}s", font=small, fill="#bac5d8")
+    for position, (key, label, color) in enumerate((
+        ("legacy_waves", "Per-pixel waves", "#6cdec0"),
+        ("legacy_held", "Per-pixel held", "#e6cf68"),
+        ("waves", "Continuous waves", "#7ca8ff"),
+        ("held", "Continuous held", "#fa9f71"),
+    )):
+        legend_x = 340 + position*185
+        draw.line((legend_x, 120, legend_x+12, 120), fill=color, width=3)
+        draw.text((legend_x+16, 111), label, font=legend, fill=color)
+        if index:
+            draw.line([
+                (380 + 680*i/max(1, frames-1), 238-value/.6*106)
+                for i, value in enumerate(curves[key])
+            ], fill=color, width=2)
+    draw.text((24, 262), f"Inference: left 0.1, right {rate:g} | canvas: left 0.01, right {canvas_rate:g}",
+              font=small, fill="#bac5d8")
+    for column, (prefix, heading) in enumerate((
+        ("legacy_", "Current per-pixel inference"), ("", "Updated plain continuous inference"),
+    )):
+        draw.text((24+552*column, 290), heading, font=font, fill="#f3f5fa")
+        for row, mode in enumerate(("waves", "held")):
+            left, top = 24+552*column, 349+450*row
+            canvas, forecast = panels[prefix+mode]
+            draw.text((left, top-32), "Waves ON" if mode == "waves" else "Waves HELD",
+                      font=font, fill="#8ddbbb" if mode == "waves" else "#eac896")
+            draw.text((left+270, top-27), f"Canvas RMS {np.sqrt(np.mean(canvas**2)):.2e}",
+                      font=small, fill="#bac5d8")
+            picture.paste(Image.fromarray(_canvas_to_rgb(canvas, limit=.15)).resize(
+                (504, 252), Image.Resampling.NEAREST,
+            ), (left, top))
+            draw.text((left, top+266), "Forecast RGB (clipped 0..1)", font=small, fill="#bac5d8")
+            draw.text((left+258, top+266), f"Forecast error | RMSE {curves[prefix+mode][-1]:.3f}",
+                      font=small, fill="#bac5d8")
+            error = np.sqrt(np.mean((forecast-image)**2, axis=-1))
+            for x, values in (
+                (left, np.clip(forecast, 0, 1)),
+                (left+258, colormaps["inferno"](np.clip(error, 0, 1))[..., :3]),
+            ):
+                picture.paste(Image.fromarray(np.rint(values*255).astype(np.uint8)).resize(
+                    (246, 123), Image.Resampling.NEAREST,
+                ), (x, top+292))
+    draw.text((24, 1255), f"Frame {index+1}/{frames} | Video and graph: same 30 fps timeline | Canvas RGB scale 0..0.15",
+              font=legend, fill="#bac5d8")
+    return picture
+
+
+def record_graph(graph, frame, mode, image, corrected_canvas, indices, forecast_rmse, settled_rmse):
+    snapshot = graph.belief_snapshot()
+    h = snapshot["mean"][graph.hidden_slice]
+    a = np.tanh(h)
+    eh = snapshot["hidden_error"]
+    ez = snapshot["sensory_potential_error"]
+    z = snapshot["sensory_potential"]
+    pred = graph._decode_sensory(z)[graph.visual_slice]
+    return {
+        "frame": frame, "time": frame/30, "mode": mode,
+        "h": h.tolist(), "grad_h": snapshot["hidden_gradient"].tolist(),
+        "h_decay": (h/graph.memory_time_constant).tolist(),
+        "h_local": eh.tolist(),
+        "h_recurrent": (-(snapshot["recurrent_weights"].T @ eh) * (1-a*a)).tolist(),
+        "h_sensory": (-(snapshot["sensory_weights"].T @ ez) * (1-a*a)).tolist(),
+        "z": z[indices].tolist(), "grad_z": snapshot["sensory_gradient"][indices].tolist(),
+        "z_decay": (z[indices]/graph.memory_time_constant).tolist(),
+        "z_coupling": ez[indices].tolist(),
+        "z_observation": (-snapshot["sensory_error"][indices] * pred[indices] * (1-pred[indices])).tolist(),
+        "root": snapshot["canvas"][indices].tolist(),
+        "grad_root": snapshot["canvas_gradient"][indices].tolist(),
+        "observed": image.ravel()[indices].tolist(),
+        "predicted": pred[indices].tolist(),
+        "Wc": snapshot["canvas_weights"][:, indices].tolist(),
+        "Wh": snapshot["recurrent_weights"].tolist(),
+        "Ws": snapshot["sensory_weights"][indices].tolist(),
+        "weight_gradients": {
+            key: (
+                value[:, indices] if key == "canvas_weights" else
+                value[indices] if key == "sensory_weights" else value
+            ).tolist()
+            for key, value in snapshot["weight_gradients"].items()
+        },
+        "weight_gradient_norms": {
+            key: float(np.linalg.norm(value)) for key, value in snapshot["weight_gradients"].items()
+        },
+        "energy": snapshot["energy"], "micro_energy": list(snapshot["inference_energy"]),
+        "forecast_rmse": forecast_rmse, "settled_rmse": settled_rmse,
+        "canvas_peak": float(np.max(np.abs(corrected_canvas))),
+    }
+
+
 def capture(output, frames, rate, canvas_rate, learning_rate):
     output.mkdir(parents=True, exist_ok=True)
-    images = output / "frames"
-    images.mkdir(exist_ok=True)
     shape = (48, 96)
     sample_pixels = [(3, 3), (14, 23), (34, 74)]
     indices = np.array([3*(row*shape[1]+column)+channel
@@ -102,95 +209,83 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
                           learning_rate=learning_rate, canvas_rate=canvas_rate)
         for name in ("waves", "held")
     }
-    engine = RippleEngine(
-        resolution=shape, plane_size_m=(50, 50), speed=340,
-        damping=.988, use_gpu=False, use_shader=False, boundary_condition="neumann",
-    )
-    held_canvas = np.zeros((*shape, 3))
+    engines = {
+        name: RippleEngine(
+            resolution=shape, plane_size_m=(50, 50), speed=340,
+            damping=.988, use_gpu=False, use_shader=False, boundary_condition="neumann",
+        ) for name in ("continuous", "legacy")
+    }
+    held = {name: np.zeros((*shape, 3)) for name in engines}
+    legacy = {
+        name: PredictiveCodingRGBReadout(
+            canvas_shape=(*shape, 3),
+            config=PredictiveCodingConfig(
+                hidden_channels=6, inference_steps=8, inference_rate=.1, canvas_rate=.01,
+                learning_enabled=True, learning_rate=learning_rate,
+            ),
+        ) for name in ("waves", "held")
+    }
     snapshots = []
-    curves = {"time": [], "waves": [], "held": [], "settled_waves": [], "settled_held": []}
-    for frame in range(frames):
-        image = camera_frame(frame)
-        for name, graph in models.items():
-            if name == "waves":
-                canvas = engine.propagate()
-            else:
-                canvas = held_canvas
-            forecast, _ = graph.forecast(canvas, 1/30)
-            direction = graph.condition(image)
-            correction = canvas_rate * direction
-            if name == "waves":
-                corrected_canvas = engine.apply_observation_correction(correction)
-            else:
-                held_canvas += correction
-                corrected_canvas = held_canvas
-            curves[name].append(float(np.sqrt(np.mean((forecast - image)**2))))
-            curves[f"settled_{name}"].append(
-                float(np.sqrt(np.mean((graph.visual_prediction - image)**2))),
-            )
-            if frame % 15 == 0 or frame == frames - 1:
-                snapshot = graph.belief_snapshot()
-                h = snapshot["mean"][graph.hidden_slice]
-                a = np.tanh(h)
-                eh = snapshot["hidden_error"]
-                ez = snapshot["sensory_potential_error"]
-                z = snapshot["sensory_potential"]
-                pred = graph._decode_sensory(z)[graph.visual_slice]
-                record = {
-                    "frame": frame, "time": (frame+1)/30, "mode": name,
-                    "h": h.tolist(), "grad_h": snapshot["hidden_gradient"].tolist(),
-                    "h_decay": (h/graph.memory_time_constant).tolist(),
-                    "h_local": eh.tolist(),
-                    "h_recurrent": (
-                        -(snapshot["recurrent_weights"].T @ eh) * (1-a*a)
-                    ).tolist(),
-                    "h_sensory": (
-                        -(snapshot["sensory_weights"].T @ ez) * (1-a*a)
-                    ).tolist(),
-                    "z": z[indices].tolist(), "grad_z": snapshot["sensory_gradient"][indices].tolist(),
-                    "z_decay": (z[indices]/graph.memory_time_constant).tolist(),
-                    "z_coupling": ez[indices].tolist(),
-                    "z_observation": (
-                        -snapshot["sensory_error"][indices] * pred[indices] * (1-pred[indices])
-                    ).tolist(),
-                    "root": snapshot["canvas"][indices].tolist(),
-                    "grad_root": snapshot["canvas_gradient"][indices].tolist(),
-                    "observed": image.ravel()[indices].tolist(),
-                    "predicted": pred[indices].tolist(),
-                    "Wc": snapshot["canvas_weights"][:, indices].tolist(),
-                    "Wh": snapshot["recurrent_weights"].tolist(),
-                    "Ws": snapshot["sensory_weights"][indices].tolist(),
-                    "weight_gradients": {
-                        key: (
-                            value[:, indices] if key == "canvas_weights" else
-                            value[indices] if key == "sensory_weights" else value
-                        ).tolist()
-                        for key, value in snapshot["weight_gradients"].items()
-                    },
-                    "weight_gradient_norms": {
-                        key: float(np.linalg.norm(value))
-                        for key, value in snapshot["weight_gradients"].items()
-                    },
-                    "energy": snapshot["energy"], "micro_energy": list(snapshot["inference_energy"]),
-                    "forecast_rmse": curves[name][-1],
-                    "settled_rmse": curves[f"settled_{name}"][-1],
-                    "canvas_peak": float(np.max(np.abs(corrected_canvas))),
-                }
-                for kind, values in (
-                    ("input", image), ("forecast", forecast),
-                    ("settled", graph.visual_prediction),
-                    ("canvas", .5 + .5*np.tanh(corrected_canvas/.15)),
-                    ("error", np.repeat(
-                        np.sqrt(np.mean((forecast-image)**2, axis=-1))[..., None], 3, axis=-1,
-                    )),
-                ):
-                    filename = f"{name}-{frame:04}-{kind}.png"
-                    Image.fromarray(
-                        np.rint(np.clip(values, 0, 1)*255).astype(np.uint8),
-                    ).save(images / filename)
-                    record[kind+"_image"] = "frames/" + filename
-                snapshots.append(record)
-        curves["time"].append((frame+1)/30)
+    curves = {name: [] for name in (
+        "time", "waves", "held", "settled_waves", "settled_held", "legacy_waves", "legacy_held",
+    )}
+    fonts = [
+        ImageFont.truetype("/usr/share/fonts/TTF/DejaVuSans.ttf", size)
+        for size in (29, 24, 17, 14)
+    ]
+    temporary_video = output / "comparison.pending.mp4"
+    command = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo",
+        "-pixel_format", "rgb24", "-video_size", "1104x1280", "-framerate", "30",
+        "-i", "-", "-an", "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+        "-threads", "2", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(temporary_video),
+    ]
+    with subprocess.Popen(command, stdin=subprocess.PIPE) as process:
+        for frame in range(frames):
+            image = camera_frame(frame)
+            panels = {}
+            for name, graph in models.items():
+                engine = engines["continuous"]
+                canvas = engine.propagate() if name == "waves" else held["continuous"]
+                forecast, _ = graph.forecast(canvas, 1/30)
+                correction = canvas_rate * graph.condition(image)
+                if name == "waves":
+                    corrected_canvas = engine.apply_observation_correction(correction)
+                else:
+                    held["continuous"] += correction
+                    corrected_canvas = held["continuous"]
+                curves[name].append(float(np.sqrt(np.mean((forecast-image)**2))))
+                curves[f"settled_{name}"].append(
+                    float(np.sqrt(np.mean((graph.visual_prediction-image)**2))),
+                )
+                snapshots.append(record_graph(
+                    graph, frame, name, image, corrected_canvas, indices,
+                    curves[name][-1], curves[f"settled_{name}"][-1],
+                ))
+                panels[name] = corrected_canvas, forecast
+            for name, model in legacy.items():
+                engine = engines["legacy"]
+                canvas = engine.propagate() if name == "waves" else held["legacy"]
+                forecast = model.predict(canvas)
+                correction = model.infer(canvas, image)
+                if name == "waves":
+                    corrected_canvas = engine.apply_observation_correction(correction)
+                else:
+                    held["legacy"] += correction
+                    corrected_canvas = held["legacy"]
+                curves["legacy_"+name].append(float(np.sqrt(np.mean((forecast-image)**2))))
+                panels["legacy_"+name] = corrected_canvas, forecast
+            for name, (canvas, forecast) in panels.items():
+                if not np.isfinite(canvas).all() or not np.isfinite(forecast).all():
+                    raise FloatingPointError(f"{name} frame {frame} produced non-finite canvas or forecast")
+            curves["time"].append(frame/30)
+            process.stdin.write(comparison_frame(
+                frame, frames, image, panels, curves, fonts, rate, canvas_rate, learning_rate,
+            ).tobytes())
+        process.stdin.close()
+        if process.wait() != 0:
+            raise RuntimeError("comparison video encoding failed")
+    temporary_video.replace(output / "comparison.mp4")
     result = {
         "source_hashes": {
             name: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -198,14 +293,17 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
                 ("capture_script", Path(__file__)),
                 ("continuous_solver", Path(__file__).resolve().parents[1]
                  / "src/audioviz/readouts/continuous_scene_predictive_coding.py"),
+                ("per_pixel_solver", Path(__file__).resolve().parents[1]
+                 / "src/audioviz/readouts/predictive_coding.py"),
             )
         },
         "settings": {
             "shape": shape, "sensory_nodes": int(np.prod(shape))*3, "hidden_nodes": 6,
             "frames": frames, "fps": 30, "rate": rate, "learning_rate": learning_rate,
             "canvas_rate": canvas_rate, "tau": 1/3, "inference_steps": 8,
-            "wave_dt": engine.dt, "sample_pixels": sample_pixels, "indices": indices.tolist(),
+            "wave_dt": engines["continuous"].dt, "sample_pixels": sample_pixels, "indices": indices.tolist(),
             "unit_precision": True, "weight_decay": 0,
+            "legacy_inference_rate": .1, "legacy_canvas_rate": .01,
         },
         "snapshots": snapshots, "curves": curves,
         "black_gray_white": black_probe(), "xor": xor_probe(),

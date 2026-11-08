@@ -1,50 +1,75 @@
 <script setup>
-import { computed, onUnmounted, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import capture from "./capture.json";
 import comparisonVideo from "./comparison.mp4?url";
 
 const mode = ref("waves");
-const frame = ref(capture.snapshots.filter(record => record.mode === "waves").length - 1);
+const frame = ref(0);
 const hidden = ref(0);
 const sensory = ref(0);
 const matrix = ref("sensory_weights");
 const settings = capture.settings;
 const records = computed(() => capture.snapshots.filter(record => record.mode === mode.value));
 const selected = computed(() => records.value[Math.min(frame.value, records.value.length - 1)]);
+const video = ref(null);
 const playing = ref(false);
+const playbackError = ref("");
 let animation = null;
 
-function pause() {
-  playing.value = false;
-  if (animation !== null) cancelAnimationFrame(animation);
+function cancelFrame() {
+  if (animation !== null) video.value.cancelVideoFrameCallback(animation);
   animation = null;
 }
 
-function play() {
-  if (frame.value === records.value.length - 1) frame.value = 0;
-  const startTime = selected.value.time;
-  const startedAt = performance.now();
+function syncFrame(time = video.value.currentTime) {
+  frame.value = Math.min(settings.frames - 1, Math.floor(time * settings.fps + 1e-6));
+}
+
+function presentedFrame() {
+  animation = video.value.requestVideoFrameCallback((now, metadata) => {
+    animation = null;
+    syncFrame(metadata.mediaTime);
+    if (!video.value.paused) presentedFrame();
+  });
+}
+
+function onPlay() {
   playing.value = true;
-  function tick(now) {
-    const time = startTime + (now - startedAt)/1000;
-    while (frame.value < records.value.length - 1 && records.value[frame.value+1].time <= time) {
-      frame.value++;
-    }
-    if (time >= records.value[records.value.length - 1].time) {
-      pause();
-    } else {
-      animation = requestAnimationFrame(tick);
-    }
+  playbackError.value = "";
+  cancelFrame();
+  presentedFrame();
+}
+
+function onPause() {
+  playing.value = false;
+  cancelFrame();
+}
+
+function pause() {
+  video.value.pause();
+}
+
+async function play() {
+  if (frame.value === settings.frames - 1) restart();
+  try {
+    await video.value.play();
+  } catch (error) {
+    onPause();
+    playbackError.value = `Playback failed: ${error.message}`;
   }
-  animation = requestAnimationFrame(tick);
+}
+
+function seek(index) {
+  pause();
+  video.value.currentTime = index / settings.fps;
 }
 
 function restart() {
-  pause();
+  seek(0);
   frame.value = 0;
 }
 
-onUnmounted(pause);
+onBeforeUnmount(cancelFrame);
 const f = value => value.toFixed(4);
 const numeric = value => value !== 0 && Math.abs(value) < .0001 ? value.toExponential(2) : f(value);
 const signed = value => `${value >= 0 ? "+" : ""}${numeric(value)}`;
@@ -65,7 +90,7 @@ const matrixValues = computed(() => selected.value[
 ]);
 const matrixGradients = computed(() => selected.value.weight_gradients[matrix.value]);
 const curve = (values, maximum=.6) => values.map((value, index) =>
-  `${48 + index/(values.length-1)*580},${168 - value/maximum*135}`
+  `${48 + index/Math.max(1, values.length-1)*580},${168 - value/maximum*135}`
 ).join(" ");
 const microCurve = computed(() => {
   const values = selected.value.micro_energy;
@@ -85,20 +110,20 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
 
 <template>
   <section class="inference-review" aria-label="Continuous inference diagnostics">
-    <section class="comparison" aria-label="Existing camera dynamics comparison">
-      <h2>Comparison · earlier 60-second run</h2>
-      <video controls preload="metadata" playsinline
+    <section class="comparison" aria-label="Current camera dynamics comparison">
+      <h2>Current comparison · per-pixel and updated continuous inference</h2>
+      <video ref="video" controls preload="metadata" playsinline
         :src="comparisonVideo"
-        aria-label="Current per-pixel and previous continuous solver comparison, with and without waves">
-        <a href="http://127.0.0.1:8767/canvas-dynamics-comparison.mp4">Open the comparison video</a>
+        aria-label="Current per-pixel and plain continuous solver comparison, with and without waves"
+        @play="onPlay" @pause="onPause" @ended="onPause" @seeked="syncFrame()"
+        @error="playbackError = 'The comparison video could not be loaded.'">
+        <a :href="comparisonVideo">Open the comparison video</a>
       </video>
-      <p>The retained 30 fps video compares per-pixel inference with the previous scaled/clipped continuous solver.
-        The graph below uses a separate 20-second capture of the updated plain-gradient solver,
-        sampled about twice per second. These recordings are not synchronized.</p>
-      <p><a href="http://127.0.0.1:8767/canvas-dynamics-comparison.mp4">Original comparison link</a>.
-        The embedded player uses an identical local copy served with byte-range support.</p>
+      <p>Fresh {{ settings.frames/settings.fps }}-second run, same camera input and learning enabled in both models.
+        The graph uses the exact continuous-model telemetry for each displayed video frame at {{ settings.fps }} fps.
+        Play, pause and seek here or below; both views share one clock.</p>
     </section>
-    <h2>Updated solver · playable network diagnostics</h2>
+    <h2>Continuous solver · synchronized network diagnostics</h2>
     <div class="controls">
       <button type="button" :aria-pressed="playing" @click="playing ? pause() : play()">
         {{ playing ? "Pause" : "Play" }}
@@ -108,10 +133,12 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
         <select v-model="mode" @change="pause"><option value="waves">With waves</option><option value="held">Waves held</option></select>
       </label>
       <label class="scrubber">Recorded time: {{ f(selected.time) }} s
-        <input v-model.number="frame" type="range" min="0" :max="records.length-1" step="1" @input="pause">
+        <input :value="frame" type="range" min="0" :max="settings.frames-1" step="1"
+          @input="seek(Number($event.target.value))">
       </label>
       <output>Energy {{ selected.energy.toFixed(2) }} · forecast RMSE {{ f(selected.forecast_rmse) }}</output>
     </div>
+    <p v-if="playbackError" role="alert">{{ playbackError }}</p>
     <p class="settings">
       Unit precisions · state rate {{ settings.rate }} · learning rate {{ settings.learning_rate }} ·
       canvas rate {{ settings.canvas_rate }} · decay 1/τ = {{ (1/settings.tau).toFixed(1) }} ·
@@ -165,24 +192,6 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
           <span>‖∇h‖ {{ numeric(norm(selected.grad_h)) }}</span>
           <span>Canvas peak |c| {{ selected.canvas_peak.toExponential(2) }}</span>
           <span>Learning uses settled states and pre-update weights.</span>
-        </div>
-      </section>
-      <section class="pane images">
-        <h2>What the model sees and predicts</h2>
-        <div class="image-grid">
-          <figure v-for="[kind, title] in [
-            ['input','Synthetic camera input'], ['canvas','Corrected canvas · shared ±0.15 scale'],
-            ['forecast','Forecast before evidence'], ['settled','Prediction after evidence'],
-            ['error','Forecast error · grayscale 0–1'],
-          ]" :key="kind">
-            <img :src="selected[kind+'_image']" :alt="title">
-            <figcaption>{{ title }}</figcaption>
-          </figure>
-          <div class="image-note">
-            Forecast RMSE {{ f(selected.forecast_rmse) }}<br>
-            Settled RMSE {{ f(selected.settled_rmse) }}<br><br>
-            Black canvas maps to middle gray in this signed renderer; gray decoded forecasts mean RGB ≈ 0.5.
-          </div>
         </div>
       </section>
       <section class="pane gradients">
@@ -280,7 +289,7 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
         <details><summary>Evaluation protocol</summary><p>{{ capture.xor.protocol }}</p></details>
       </section>
     </div>
-    <p class="timing">Playback runs at 1× speed using recorded snapshots, sampled about twice per second.
+    <p class="timing">Playback uses one recorded snapshot per video frame at {{ settings.fps }} fps.
       Recorded experiment, not a live app connection. Each simulation frame advances inference by 1/30 s
       and waves by one CFL step ({{ settings.wave_dt.toExponential(3) }} s); these clocks differ.
       No hardware camera, fovea, gaze actions or external canvas forcing is used in the camera run.</p>
@@ -318,10 +327,6 @@ svg .tiny { font-size:12px; }
 .recurrent { stroke:#68835a; stroke-width:1.8; fill:none; marker-end:url(#forward); }
 .select-node { cursor:pointer; }
 .metrics { display:flex; flex-wrap:wrap; gap:12px; font-size:12px; }
-.image-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
-figure { margin:0; }
-figure img { width:100%; image-rendering:pixelated; border:1px solid var(--vp-c-divider); }
-figcaption, .image-note { font-size:12px; line-height:1.5; }
 .pane table { width:100%; display:table; margin:12px 0; font-size:13px; }
 .pane td, .pane th { padding:6px 9px; }
 .pane td:last-child { font-variant-numeric:tabular-nums; }

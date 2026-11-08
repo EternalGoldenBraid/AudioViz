@@ -53,6 +53,10 @@ The running application still uses its existing per-pixel readouts; the continuo
 to the TUI, cochlea, local camera or LAN-camera owner.
 The captured weights, residuals and gradients are evaluated before each frame's connection update.
 The graph groups large populations; matrix panels explicitly sample three RGB pixels.
+The comparison video and graph telemetry come from the same run, captured at 30 frames per second.
+The graph follows video-frame presentation callbacks; there is no independent playback timer
+or interpolated neural state. Video frame $k$ displays the state after inference interval $k$.
+The baseline retains its existing per-pixel update rule; the continuous solver uses the energy above.
 
 ## Reproduce
 
@@ -61,13 +65,10 @@ From this worktree:
 ```bash
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run python scripts/continuous_inference_review.py \
   --output-dir docs/continuous-inference --frames 600
-curl --fail http://127.0.0.1:8767/canvas-dynamics-comparison.mp4 \
-  --output docs/continuous-inference/comparison.mp4
 ```
 
-Use agent-doc-review to open this document. The generated `capture.json`, `frames/` and retained
-comparison video stay local and are ignored by Git. The original comparison recording must be
-available from its existing loopback server for the copy command.
+Use agent-doc-review to open this document. The generated `capture.json` and `comparison.mp4`
+stay local and are ignored by Git. FFmpeg must be available for video encoding.
 
 </div>
 
