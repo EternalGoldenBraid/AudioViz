@@ -179,6 +179,69 @@ class WavePropagatorCPU:
         self.vertical_edge_weights[:] = 1
 
 
+class ForceDrivenCanvasCPU:
+    """Unit-mass waves with velocity damping and externally evaluated gradient forces.
+
+    Force is acceleration evaluated at the current position. Its restoring
+    curvature bound is combined with the unweighted wave operator's bound.
+    Damping is integrated implicitly; velocity then advances position.
+    """
+
+    def __init__(
+        self,
+        shape: tuple[int, ...],
+        dx: float,
+        speed: float,
+        damping_rate: float,
+        boundary_condition: BoundaryCondition | str = BoundaryCondition.CYCLIC,
+    ):
+        if len(shape) < 2 or any(not isinstance(size, (int, np.integer)) or size <= 0 for size in shape):
+            raise ValueError("shape must contain at least two positive grid dimensions")
+        if not np.isfinite(dx) or dx <= 0:
+            raise ValueError("dx must be finite and positive")
+        for name, value in (("speed", speed), ("damping_rate", damping_rate)):
+            if not np.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        self.dx = float(dx)
+        self.speed = float(speed)
+        self.damping_rate = float(damping_rate)
+        self.boundary_condition = coerce_boundary_condition(boundary_condition)
+        self.position = np.zeros(shape, dtype=np.float64)
+        self.velocity = np.zeros_like(self.position)
+        self.time = 0.0
+
+    def max_step(self, force_curvature: float) -> float:
+        if not np.isfinite(force_curvature) or force_curvature < 0:
+            raise ValueError("force_curvature must be finite and non-negative")
+        curvature = 8 * (self.speed / self.dx)**2 + force_curvature
+        return 2 / np.sqrt(curvature) if curvature > 0 else np.inf
+
+    def step(self, force: np.ndarray, dt: float, *, force_curvature: float) -> np.ndarray:
+        if not np.isfinite(dt) or dt <= 0:
+            raise ValueError("dt must be finite and positive")
+        if dt > self.max_step(force_curvature):
+            raise ValueError("dt exceeds the combined wave and force stability bound")
+        force = np.asarray(force, dtype=np.float64)
+        if force.shape != self.position.shape:
+            raise ValueError("force must match the canvas shape")
+        if not np.isfinite(force).all():
+            raise FloatingPointError("canvas force became non-finite")
+        laplacian = (
+            _weighted_laplacian_periodic(np, self.position)
+            if self.boundary_condition is BoundaryCondition.CYCLIC
+            else _weighted_laplacian_neumann(np, self.position)
+        )
+        acceleration = (self.speed / self.dx)**2 * laplacian + force
+        velocity = (self.velocity + dt * acceleration) / (1 + self.damping_rate * dt)
+        position = self.position + dt * velocity
+        if not np.isfinite(position).all() or not np.isfinite(velocity).all():
+            raise FloatingPointError("force-driven canvas update became non-finite")
+        self.position[:] = position
+        self.velocity[:] = velocity
+        self.time += dt
+        return self.position
+
+
 class WavePropagatorGPU:
     def __init__(
         self,
