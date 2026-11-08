@@ -158,7 +158,11 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
 </script>
 
 <template>
-  <section class="inference-review" aria-label="Continuous inference diagnostics">
+  <p v-if="settings.inference_force_strength === undefined" class="stale-capture" role="alert">
+    This recording predates force-driven canvas dynamics. Regenerate capture.json and comparison.mp4
+    with the command below to view the updated comparison.
+  </p>
+  <section v-else class="inference-review" aria-label="Continuous inference diagnostics">
     <section class="comparison" aria-label="Current camera dynamics comparison">
       <h2>Current comparison · per-pixel and updated continuous inference</h2>
       <video ref="video" controls preload="metadata" playsinline
@@ -190,14 +194,21 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
     <p v-if="playbackError" role="alert">{{ playbackError }}</p>
     <p class="settings">
       Linear visual output · unit precisions · state rate {{ settings.rate }} · learning rate {{ settings.learning_rate }} ·
-      canvas rate {{ settings.canvas_rate }} · decay 1/τ = {{ (1/settings.tau).toFixed(1) }} ·
+      inference force g = {{ settings.inference_force_strength }} · decay 1/τ = {{ (1/settings.tau).toFixed(1) }} ·
       {{ settings.inference_steps }} microsteps/frame · no clipping, metric rescaling or projection
+    </p>
+    <p class="settings">
+      New simulation time {{ selected.simulation_time.toFixed(3) }} s:
+      {{ selected.wave_substeps }} mechanical steps × {{ selected.wave_dt.toExponential(3) }} s per interval.
+      Velocity damping γ = {{ settings.damping_rate.toFixed(3) }} s⁻¹.
+      g = 0 disables canvas back-action, not canvas-to-hidden predictions or neural learning.
     </p>
     <div class="panes">
       <section class="pane topology">
         <h2>Canvas → hidden → sensory</h2>
         <p>Schematic of dense connectivity. Canvas and sensory boxes group {{ settings.sensory_nodes.toLocaleString() }} RGB coordinates.
-          The six hidden nodes are literal. Dashed arrows show gradient contributions; updates use the negative total.</p>
+          The six hidden nodes are literal. Dashed arrows show gradient contributions;
+          canvas force uses −g times its energy gradient.</p>
         <svg viewBox="0 0 720 435" role="img" aria-label="Canvas above six recurrent hidden nodes above grouped sensory states">
           <defs>
             <marker id="forward" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -209,11 +220,11 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
           </defs>
           <rect x="176" y="12" width="368" height="66" rx="9" class="group" />
           <text x="360" y="37" class="center">Canvas c · linear readout</text>
-          <text x="360" y="59" class="center small">Root correction = {{ settings.canvas_rate }} Wcᵀ e_h</text>
+          <text x="360" y="59" class="center small">Force at interval start = {{ settings.inference_force_strength }} Wcᵀ e_h</text>
           <path d="M212 82L212 140L600 140" class="forward" />
           <text x="360" y="107" class="center small">Wc · dense root-to-hidden weights</text>
           <path d="M651 187L651 46L552 46" class="backward" />
-          <text x="645" y="123" text-anchor="end" class="small">∂E/∂c</text>
+          <text x="645" y="123" text-anchor="end" class="small">−g ∂E/∂c</text>
           <g v-for="(value, index) in selected.h" :key="index"
             tabindex="0" role="button" :aria-label="`Select hidden node ${index}`"
             @click="hidden=index" @keydown.enter="hidden=index" @keydown.space.prevent="hidden=index"
@@ -241,6 +252,8 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
         <div class="metrics">
           <span>‖∇h‖ {{ numeric(norm(selected.grad_h)) }}</span>
           <span>Canvas peak |c| {{ selected.canvas_peak.toExponential(2) }}</span>
+          <span>‖velocity‖ {{ numeric(selected.canvas_velocity_norm) }}</span>
+          <span>‖initial force‖ {{ numeric(selected.force_start_norm) }}</span>
           <span>Learning uses settled states and pre-update weights.</span>
         </div>
       </section>
@@ -256,7 +269,8 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
           </tbody>
         </table>
         <p>Next microstep Δh = −{{ settings.rate }}/(30 × {{ settings.inference_steps }}) × ∂E/∂h.
-          Values above describe the settled state's next direction, not the preceding microstep's delta.</p>
+          Values above describe the settled neural state before mechanical advance,
+          not the preceding microstep's delta.</p>
         <label>Sampled RGB coordinate
           <select v-model.number="sensory">
             <option v-for="(index, position) in settings.indices" :value="position">
@@ -326,14 +340,15 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
         </svg>
         <p><span class="waves-label">Blue: waves</span> · <span class="held-label">Orange dashed: held</span>.
           Overlapping curves mean their errors are indistinguishable at this scale.</p>
-        <h3>Within-frame energy descent</h3>
+        <h3>Within-frame neural energy descent</h3>
         <svg viewBox="0 0 680 195" role="img" aria-label="Energy decreases across the selected frame's inference microsteps">
           <path d="M48 22V168H628" class="axis" />
           <polyline :points="microCurve" class="line waves" />
           <text x="48" y="188" class="small">Interval-start energy {{ selected.micro_energy[0].toFixed(4) }}</text>
           <text x="628" y="188" text-anchor="end" class="small">Settled {{ selected.energy.toFixed(4) }}</text>
         </svg>
-        <p>The vertical axis spans this frame's minimum and maximum energy. A descent is not a claim of zero residual.</p>
+        <p>The vertical axis spans this frame's neural inference energy at the fixed interval-start canvas.
+          It does not measure total mechanical energy or imply zero residual.</p>
       </section>
       <section class="pane diagnostics">
         <h2>Basic model checks</h2>
@@ -358,8 +373,12 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
       </section>
     </div>
     <p class="timing">Playback uses one recorded snapshot per video frame at {{ settings.fps }} fps.
-      Recorded experiment, not a live app connection. Each simulation frame advances inference by 1/30 s
-      and waves by one CFL step ({{ settings.wave_dt.toExponential(3) }} s); these clocks differ.
+      Recorded experiment, not a live app connection. The new model advances neural inference and
+      mechanical dynamics through {{ settings.simulation_interval.toFixed(4) }} s per frame.
+      Neural inference runs first; mechanical substeps use its settled states and pre-learning weights.
+      In the new held case, wave speed is zero but inference-driven inertia remains active.
+      The old reference retains its per-frame inference and one CFL wave step
+      ({{ settings.legacy_wave_dt.toExponential(3) }} s); its clock is not matched to the new model.
       No hardware camera, fovea, gaze actions or external canvas forcing is used in the camera run.</p>
   </section>
 </template>
@@ -376,6 +395,7 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
 .scrubber input { flex:1; min-width:100px; }
 select { max-width:100%; border:1px solid var(--vp-c-divider); border-radius:5px; padding:4px 8px; background:var(--vp-c-bg); color:inherit; }
 .settings, .timing { font-size:13px; line-height:1.6; }
+.stale-capture { border-left:3px solid #cd752e; padding:12px; background:var(--vp-c-bg-soft); }
 .panes { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
 .pane { min-width:0; padding:16px; border:1px solid var(--vp-c-divider); border-radius:10px; }
 .pane h2 { border:0; margin:0 0 12px; padding:0; font-size:19px; }

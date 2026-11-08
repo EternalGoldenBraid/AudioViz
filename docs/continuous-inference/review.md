@@ -48,12 +48,11 @@ $$
 
 Inference uses $x\leftarrow x-\eta\,\Delta t\,\nabla_x E/M$ for $M$ microsteps.
 Learning uses $W\leftarrow W-\eta_W\nabla_W E$ at the settled state.
-Canvas feedback is $c\leftarrow c-\eta_c\nabla_c E$, applied to both wave states to preserve velocity.
 The rates set update sizes; they do not temper the energy. The recurrent diagonal is structurally zero.
 The shared legacy configuration's gradient and weight clipping controls do not apply to this solver.
-The canvas readout is linear, so its correction is $\eta_c W_c^\top e_h$ within the root aperture.
-Wave propagation remains a separate dynamics step. The signed canvas renderer's display nonlinearity
-does not enter the inference or correction.
+The canvas readout is linear. Its unit-mass inference force is
+$F_{\mathrm{PC}}=-g\nabla_c E=gW_c^\top e_h$ within the root aperture.
+The signed canvas renderer's display nonlinearity does not enter the inference or force.
 
 Sensory states update during inference even when connection learning is disabled.
 Incoming predictions pull $z$ toward $W_s\tanh(h)$, observation error pulls the decoded prediction toward $y$,
@@ -70,6 +69,45 @@ Its derivative is zero at zero and for negative visual states; audio stays linea
 The ReLU probe uses the same zero-root, zero-state initialization and learning settings.
 It stalls for nonzero visual evidence because the initial observation drive is zero.
 The default decoder is linear; the main video and synchronized graph use that default.
+
+## Force-driven canvas and clocks
+
+The continuous experiment uses unit mass and an explicit velocity:
+
+$$
+\ddot c=s^2\nabla^2c-\gamma\dot c-g\nabla_cE.
+$$
+
+Each mechanical substep computes acceleration from waves and inference,
+then updates $v_{\mathrm{next}}=(v+\Delta t\,a)/(1+\gamma\Delta t)$
+and $c_{\mathrm{next}}=c+\Delta t\,v_{\mathrm{next}}$.
+Damping acts on velocity. Canvas displacement is a consequence of motion;
+no correction shifts the current and previous positions together.
+
+`--inference-force-strength` controls $g$, defaulting to one.
+At zero, inference applies no canvas force; intrinsic waves still run.
+Canvas-to-hidden predictions, sensory conditioning and connection learning remain enabled.
+This is one-way back-action control, not a disconnection of the whole graph
+or a conserved energy budget redistributed among nodes.
+
+Every video frame advances the new neural and mechanical dynamics through the same $1/30$-second interval.
+The integrator first settles neural states at the interval-start canvas, then advances mechanics
+using those settled states and pre-learning weights. Force is reevaluated at each mechanical position.
+Weight learning still occurs once per frame, not once per mechanical substep.
+The neural energy/gradient telemetry describes the state before mechanical advance;
+canvas peak and velocity describe the end of that interval.
+
+The mechanical step bound is $2/\sqrt{8(s/\Delta x)^2+g\|W_c\|_2^2}$,
+including the inference spring's restoring curvature. The recorded bound uses the full Wc matrix,
+which is conservative when the root aperture masks coordinates.
+Both new wave cases also respect the reference wave-only CFL limit; the interval is divided into enough equal substeps.
+At the current settings this is about 31 mechanical steps per frame.
+The new held case sets wave speed to zero while retaining force-driven motion and damping.
+The damping rate is derived as $\gamma=-\log(0.988)/\Delta t_{\mathrm{legacy}}$;
+this is velocity friction, while the unchanged old integrator multiplies its next position by 0.988.
+
+The old reference keeps its original inference, learning, displacement corrections and one CFL wave step per video frame.
+Consequently it is not clock matched to the new experiment.
 
 ## Integration boundary
 
@@ -89,7 +127,7 @@ From this worktree:
 
 ```bash
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run python scripts/continuous_inference_review.py \
-  --output-dir docs/continuous-inference --frames 600
+  --output-dir docs/continuous-inference --frames 600 --inference-force-strength 1
 ```
 
 Use agent-doc-review to open this document. The generated `capture.json` and `comparison.mp4`
