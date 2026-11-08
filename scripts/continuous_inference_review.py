@@ -160,6 +160,18 @@ def comparison_frame(index, frames, image, panels, curves, fonts, rate, canvas_r
 
 def record_graph(graph, frame, mode, image, corrected_canvas, indices, forecast_rmse, settled_rmse):
     snapshot = graph.belief_snapshot()
+    updates = {
+        name: getattr(graph, name) - snapshot[name]
+        for name in graph._PARAMETERS
+    }
+
+    def sampled(name, value):
+        if name == "canvas_weights":
+            return value[:, indices].tolist()
+        if name == "sensory_weights":
+            return value[indices].tolist()
+        return value.tolist()
+
     h = snapshot["mean"][graph.hidden_slice]
     a = np.tanh(h)
     eh = snapshot["hidden_error"]
@@ -187,11 +199,12 @@ def record_graph(graph, frame, mode, image, corrected_canvas, indices, forecast_
         "Wh": snapshot["recurrent_weights"].tolist(),
         "Ws": snapshot["sensory_weights"][indices].tolist(),
         "weight_gradients": {
-            key: (
-                value[:, indices] if key == "canvas_weights" else
-                value[indices] if key == "sensory_weights" else value
-            ).tolist()
+            key: sampled(key, value)
             for key, value in snapshot["weight_gradients"].items()
+        },
+        "weight_updates": {key: sampled(key, value) for key, value in updates.items()},
+        "weight_update_norms": {
+            key: float(np.linalg.norm(value)) for key, value in updates.items()
         },
         "weight_gradient_norms": {
             key: float(np.linalg.norm(value)) for key, value in snapshot["weight_gradients"].items()
@@ -199,6 +212,23 @@ def record_graph(graph, frame, mode, image, corrected_canvas, indices, forecast_
         "energy": snapshot["energy"], "micro_energy": list(snapshot["inference_energy"]),
         "forecast_rmse": forecast_rmse, "settled_rmse": settled_rmse,
         "canvas_peak": float(np.max(np.abs(corrected_canvas))),
+    }
+
+
+def record_legacy(model, before, frame, mode):
+    updates = {name: getattr(model, name) - value for name, value in before.items()}
+    return {
+        "frame": frame, "time": frame/30, "mode": mode,
+        "Wc": before["canvas_weights"].tolist(),
+        "Ws": before["visual_weights"].tolist(),
+        "weight_updates": {
+            "canvas_weights": updates["canvas_weights"].tolist(),
+            "sensory_weights": updates["visual_weights"].tolist(),
+        },
+        "weight_update_norms": {
+            "canvas_weights": float(np.linalg.norm(updates["canvas_weights"])),
+            "sensory_weights": float(np.linalg.norm(updates["visual_weights"])),
+        },
     }
 
 
@@ -230,6 +260,7 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
         ) for name in ("waves", "held")
     }
     snapshots = []
+    legacy_snapshots = []
     curves = {name: [] for name in (
         "time", "waves", "held", "settled_waves", "settled_held", "legacy_waves", "legacy_held",
     )}
@@ -271,7 +302,12 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
                 engine = engines["legacy"]
                 canvas = engine.propagate() if name == "waves" else held["legacy"]
                 forecast = model.predict(canvas)
+                before = {
+                    key: getattr(model, key).copy()
+                    for key in ("canvas_weights", "visual_weights")
+                }
                 correction = model.infer(canvas, image)
+                legacy_snapshots.append(record_legacy(model, before, frame, name))
                 if name == "waves":
                     corrected_canvas = engine.apply_observation_correction(correction)
                 else:
@@ -310,7 +346,7 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
             "legacy_inference_rate": .1, "legacy_canvas_rate": .01,
             "visual_decoder": models["waves"].visual_decoder,
         },
-        "snapshots": snapshots, "curves": curves,
+        "snapshots": snapshots, "legacy_snapshots": legacy_snapshots, "curves": curves,
         "black_gray_white": black_probe(), "xor": xor_probe(),
         "relu_black_gray_white": black_probe("relu"),
     }
