@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from audioviz.engine import RippleEngine
 from audioviz.physics.wave_propagator import ForceDrivenCanvasCPU
@@ -168,6 +169,8 @@ def capture(output, steps):
     nodes, edges = topology(groups, graph.hidden_nodes)
     previous = sample_boundary(graph, canvas.position, np.zeros_like(canvas.position), groups)
     records = [record_boundary(previous, previous, 0.)]
+    columns = 20
+    atlas = Image.new("RGB", (columns*shape[1], ((steps+columns)//columns)*shape[0]))
     for frame in range(steps):
         image = camera_frame(frame)
         graph.forecast(canvas.position, 1/30)
@@ -175,6 +178,10 @@ def capture(output, steps):
         advance_canvas_force(graph, canvas, 1/30, 1., reference.dt)
         current = sample_boundary(graph, canvas.position, image, groups)
         records.append(record_boundary(current, previous, (frame+1)/30))
+        atlas.paste(
+            Image.fromarray(np.rint(image*255).astype(np.uint8)),
+            (((frame+1)%columns)*shape[1], ((frame+1)//columns)*shape[0]),
+        )
         previous = current
     sources = [
         Path(__file__), Path(__file__).with_name("continuous_inference_review.py"),
@@ -187,12 +194,16 @@ def capture(output, steps):
             "shape": shape, "hidden_nodes": graph.hidden_nodes, "fps": 30,
             "duration": steps/30, "inference_rate": .3, "learning_rate": .001,
             "inference_force_strength": 1.,
+            "input_atlas": {"columns": columns, "frames": steps+1},
             "boundary": "After neural inference, learning and mechanical advance; current weights.",
         },
         "source_hashes": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sources},
         "nodes": nodes, "edges": edges, "records": records,
     }
     output.mkdir(parents=True, exist_ok=True)
+    temporary_atlas = output/"dual-input.pending.png"
+    atlas.save(temporary_atlas)
+    temporary_atlas.replace(output/"dual-input.png")
     temporary = output/"dual-capture.pending.json"
     temporary.write_text(json.dumps(result, allow_nan=False, separators=(",", ":")), encoding="utf-8")
     temporary.replace(output/"dual-capture.json")

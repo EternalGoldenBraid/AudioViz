@@ -187,3 +187,27 @@ def test_dual_message_change_can_exist_without_node_motion(dual_review):
         np.all(value == 0.) for edge, value in zip(edges, zero["messages"])
         if edge["family"] != "observation"
     )
+
+
+def test_dual_input_atlas_matches_the_observed_record_boundaries(dual_review, tmp_path):
+    import json
+    from PIL import Image
+
+    dual_review.capture(tmp_path, 2)
+    data = json.loads((tmp_path/"dual-capture.json").read_text())
+    columns = data["settings"]["input_atlas"]["columns"]
+    assert data["settings"]["input_atlas"]["frames"] == len(data["records"]) == 3
+    height, width = data["settings"]["shape"]
+    groups = dual_review.spatial_groups((height, width))
+    with Image.open(tmp_path/"dual-input.png") as atlas:
+        for frame in range(3):
+            expected = np.zeros((height, width, 3)) if frame == 0 else review.camera_frame(frame-1)
+            x, y = (frame%columns)*width, (frame//columns)*height
+            np.testing.assert_array_equal(
+                np.asarray(atlas.crop((x, y, x+width, y+height))),
+                np.rint(expected*255).astype(np.uint8),
+            )
+            for region, group in enumerate(groups):
+                assert data["records"][frame]["nodes"][2*len(groups)+region][0] == pytest.approx(
+                    float(np.mean(expected.ravel()[group["indices"]])),
+                )

@@ -20,6 +20,8 @@ Two views, one continuous-model trajectory. Drag either view to rotate both.
 
 The left view pulses with **actual state change**. The right view carries **changes in directed messages** by default; its selector can also show message values. Node landmarks on the right stay quiet.
 
+Below the paired views, the input preview shows the image supplied at the selected recorded boundary: red and blue blocks with a moving green circle. The initial zero-time frame is blank, before the first observation.
+
 Canvas, sensory and evidence coordinates are grouped into nine spatial regions per layer, covering the entire RGB grid. Every hidden node is shown individually. Grouped state pulses use RMS change per coordinate. Grouped prediction messages retain the full vector when their destination is a region; messages arriving at one hidden node sum the contributing coordinates before measuring amplitude. Opposing contributions can cancel.
 
 Predictions use weighted source activity. Feedback uses weighted residuals and the source activation derivative. The evidence connection has an identity prediction and an observation-error return. Hidden recurrence is retained, so opposite prediction directions remain independent connections.

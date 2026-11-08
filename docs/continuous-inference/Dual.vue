@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import data from "./dual-capture.json";
+import inputAtlasUrl from "./dual-input.png?url";
 
 const time = ref(0);
 const playing = ref(true);
@@ -12,11 +13,17 @@ const focus = ref(-1);
 const yaw = ref(.42);
 const pitch = ref(.4);
 const canvases = [];
+const inputCanvas = ref(null);
+const inputReady = ref(false);
+const inputError = ref("");
+let inputImage = null;
+let inputFrame = -1;
 let animation = null;
 let observer = null;
 let previousStamp = null;
 let drag = null;
 const valid = data.schema === "continuous-dual-v1";
+const hasInput = valid && data.settings.input_atlas !== undefined;
 const frame = computed(() => Math.min(data.records.length-1, Math.floor(time.value*data.settings.fps)));
 const fraction = computed(() => Math.min(1, time.value*data.settings.fps-frame.value));
 const current = computed(() => data.records[frame.value]);
@@ -131,6 +138,15 @@ function render() {
           }
         }
       });
+      if (inputReady.value && inputCanvas.value && inputFrame !== frame.value) {
+        const [height, width] = data.settings.shape;
+        const columns = data.settings.input_atlas.columns;
+        inputCanvas.value.getContext("2d").drawImage(
+          inputImage, (frame.value%columns)*width, Math.floor(frame.value/columns)*height,
+          width, height, 0, 0, width, height,
+        );
+        inputFrame = frame.value;
+      }
     }
     const order = points.map((point, index) => ({ ...point, index })).sort((a, b) => a.depth-b.depth);
     for (const point of order) {
@@ -229,10 +245,30 @@ onMounted(() => {
   observer = new ResizeObserver(render);
   canvases.forEach(canvas => observer.observe(canvas));
   animation = requestAnimationFrame(tick);
+  if (hasInput) {
+    inputImage = new Image();
+    inputImage.onload = () => {
+      const [height, width] = data.settings.shape;
+      const atlas = data.settings.input_atlas;
+      if (inputImage.naturalWidth !== atlas.columns*width
+        || inputImage.naturalHeight !== Math.ceil(atlas.frames/atlas.columns)*height
+        || atlas.frames !== data.records.length) {
+        inputError.value = "The recorded input image does not match this recording. Regenerate it with the command below.";
+        return;
+      }
+      inputReady.value = true;
+      render();
+    };
+    inputImage.onerror = () => {
+      inputError.value = "The recorded input image failed to load. Regenerate it with the command below.";
+    };
+    inputImage.src = inputAtlasUrl;
+  }
 });
 onBeforeUnmount(() => {
   if (animation !== null) cancelAnimationFrame(animation);
   observer?.disconnect();
+  if (inputImage) { inputImage.onload = null; inputImage.onerror = null; }
 });
 </script>
 
@@ -260,6 +296,16 @@ onBeforeUnmount(() => {
         <canvas :ref="element => canvases[index] = element" :data-frame="frame"
           :data-camera="`${yaw.toFixed(4)},${pitch.toFixed(4)}`" :aria-label="title" role="img"
           @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="drag = null"></canvas>
+      </figure>
+    </div>
+    <div class="input-row">
+      <figure class="experiment-input">
+        <figcaption><strong>Experiment input</strong><span>Recorded RGB stimulus · same simulation clock</span></figcaption>
+        <p v-if="!hasInput" role="alert">This recording has no input images. Regenerate it with the command below.</p>
+        <p v-else-if="inputError" role="alert">{{ inputError }}</p>
+        <p v-else-if="!inputReady">Loading recorded input…</p>
+        <canvas v-if="hasInput" v-show="inputReady" ref="inputCanvas" :width="data.settings.shape[1]"
+          :height="data.settings.shape[0]" :data-frame="frame" aria-label="Experiment input" role="img"></canvas>
       </figure>
     </div>
     <p class="legend"><span class="positive">Warm: positive mean</span> · <span class="negative">Cool: negative mean</span> · Neutral: zero mean ·
@@ -303,6 +349,10 @@ figcaption { display:flex; flex-direction:column; padding:15px 17px 0; gap:3px; 
 figcaption span { font-size:11px; color:#8798ab; }
 canvas { display:block; width:100%; height:520px; touch-action:none; cursor:grab; }
 canvas:active { cursor:grabbing; }
+.input-row { display:flex; justify-content:center; margin-top:16px; }
+.experiment-input { width:418px; max-width:100%; padding-bottom:16px; }
+.experiment-input canvas { width:calc(100% - 32px); max-width:384px; height:auto; margin:14px 16px 0; image-rendering:pixelated; touch-action:auto; cursor:default; }
+.experiment-input p { font-size:12px; padding:0 16px; }
 .legend, .energy { font-size:12px; line-height:1.6; color:#98a8ba; }
 .positive { color:#ffae91; } .negative { color:#76d3e9; }
 .energy { font-variant-numeric:tabular-nums; }
