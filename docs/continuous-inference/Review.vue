@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onUnmounted, ref } from "vue";
 import capture from "./capture.json";
 
 const mode = ref("waves");
@@ -10,6 +10,40 @@ const matrix = ref("sensory_weights");
 const settings = capture.settings;
 const records = computed(() => capture.snapshots.filter(record => record.mode === mode.value));
 const selected = computed(() => records.value[Math.min(frame.value, records.value.length - 1)]);
+const playing = ref(false);
+let animation = null;
+
+function pause() {
+  playing.value = false;
+  if (animation !== null) cancelAnimationFrame(animation);
+  animation = null;
+}
+
+function play() {
+  if (frame.value === records.value.length - 1) frame.value = 0;
+  const startTime = selected.value.time;
+  const startedAt = performance.now();
+  playing.value = true;
+  function tick(now) {
+    const time = startTime + (now - startedAt)/1000;
+    while (frame.value < records.value.length - 1 && records.value[frame.value+1].time <= time) {
+      frame.value++;
+    }
+    if (time >= records.value[records.value.length - 1].time) {
+      pause();
+    } else {
+      animation = requestAnimationFrame(tick);
+    }
+  }
+  animation = requestAnimationFrame(tick);
+}
+
+function restart() {
+  pause();
+  frame.value = 0;
+}
+
+onUnmounted(pause);
 const f = value => value.toFixed(4);
 const numeric = value => value !== 0 && Math.abs(value) < .0001 ? value.toExponential(2) : f(value);
 const signed = value => `${value >= 0 ? "+" : ""}${numeric(value)}`;
@@ -51,11 +85,15 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
 <template>
   <section class="inference-review" aria-label="Continuous inference diagnostics">
     <div class="controls">
+      <button type="button" :aria-pressed="playing" @click="playing ? pause() : play()">
+        {{ playing ? "Pause" : "Play" }}
+      </button>
+      <button type="button" @click="restart">Restart</button>
       <label>Dynamics
-        <select v-model="mode"><option value="waves">With waves</option><option value="held">Waves held</option></select>
+        <select v-model="mode" @change="pause"><option value="waves">With waves</option><option value="held">Waves held</option></select>
       </label>
       <label class="scrubber">Recorded time: {{ f(selected.time) }} s
-        <input v-model.number="frame" type="range" min="0" :max="records.length-1" step="1">
+        <input v-model.number="frame" type="range" min="0" :max="records.length-1" step="1" @input="pause">
       </label>
       <output>Energy {{ selected.energy.toFixed(2) }} · forecast RMSE {{ f(selected.forecast_rmse) }}</output>
     </div>
@@ -99,8 +137,8 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
           <path d="M71 166C23 103 662 103 634 166" class="recurrent" />
           <text x="360" y="151" class="center tiny">Wh connects every hidden pair · diagonal zero</text>
           <rect x="111" y="278" width="498" height="69" rx="9" class="group" />
-          <text x="360" y="301" class="center">Sensory latent states z = prediction from Ws + residual</text>
-          <text x="360" y="323" class="center small">Visual prediction ŷ = sigmoid(z) · Ws is dense</text>
+          <text x="360" y="301" class="center">Sensory latent z · inferred from three energy terms</text>
+          <text x="360" y="323" class="center small">Incoming prediction Ws tanh(h) · visual output sigmoid(z)</text>
           <path d="M616 311L678 311L678 196L649 196" class="backward" />
           <text x="655" y="268" text-anchor="end" class="tiny">−Wsᵀ e_z</text>
           <path d="M315 393L315 351" class="backward" />
@@ -227,7 +265,8 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
         <details><summary>Evaluation protocol</summary><p>{{ capture.xor.protocol }}</p></details>
       </section>
     </div>
-    <p class="timing">Recorded experiment, not a live app connection. Each displayed frame advances inference by 1/30 s
+    <p class="timing">Playback runs at 1× speed using recorded snapshots, sampled about twice per second.
+      Recorded experiment, not a live app connection. Each simulation frame advances inference by 1/30 s
       and waves by one CFL step ({{ settings.wave_dt.toExponential(3) }} s); these clocks differ.
       No hardware camera, fovea, gaze actions or external canvas forcing is used in the camera run.</p>
   </section>
@@ -237,6 +276,8 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
 .inference-review { color: var(--vp-c-text-1); }
 .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding:12px; background:var(--vp-c-bg-soft); border-radius:8px; }
 .controls label { display:flex; gap:8px; align-items:center; }
+.controls button { border:1px solid var(--vp-c-divider); border-radius:5px; padding:4px 12px; background:var(--vp-c-bg); }
+.controls button[aria-pressed="true"] { border-color:#428ec6; }
 .scrubber { flex:1; min-width:250px; }
 .scrubber input { flex:1; min-width:100px; }
 select { max-width:100%; border:1px solid var(--vp-c-divider); border-radius:5px; padding:4px 8px; background:var(--vp-c-bg); color:inherit; }

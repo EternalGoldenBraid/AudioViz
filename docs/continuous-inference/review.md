@@ -35,6 +35,11 @@ Canvas feedback is $c\leftarrow c-\eta_c\nabla_c E$, applied to both wave states
 The rates set update sizes; they do not temper the energy. The recurrent diagonal is structurally zero.
 The shared legacy configuration's gradient and weight clipping controls do not apply to this solver.
 
+Sensory states update during inference even when connection learning is disabled.
+Incoming predictions pull $z$ toward $W_s\tanh(h)$, observation error pulls the decoded prediction toward $y$,
+and state decay pulls $z$ toward zero. Connection learning subsequently changes the predicting weights
+using the settled residuals.
+
 Observation error can remain nonzero at an energy minimum: the observation term competes with state decay and latent coupling.
 The black/gray/white and XOR results above expose this limitation, not a successful reconstruction.
 
