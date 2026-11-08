@@ -5,19 +5,21 @@ from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScene
 from audioviz.readouts.predictive_coding import PredictiveCodingConfig
 
 
-def make_graph(**changes):
+def make_graph(*, visual_decoder="linear", **changes):
     return ContinuousScenePredictiveCodingGraph(
         visual_shape=(1, 2), audio_nodes=1, hidden_nodes=2,
         config=PredictiveCodingConfig(hidden_channels=2, **changes),
+        visual_decoder=visual_decoder,
     )
 
 
-def test_state_canvas_and_weight_gradients_differentiate_the_same_energy():
-    graph = make_graph(weight_decay=.07)
+@pytest.mark.parametrize("decoder", ("linear", "relu"))
+def test_state_canvas_and_weight_gradients_differentiate_the_same_energy(decoder):
+    graph = make_graph(weight_decay=.07, visual_decoder=decoder)
     graph.canvas[:] = np.linspace(-3., 4., graph.visual_nodes)
     graph.aperture_mask[1] = False
     graph.mean[graph.hidden_slice] = [.2, -.4]
-    graph.sensory_potential[:] = np.linspace(-.5, .6, graph._sensory_nodes)
+    graph.sensory_potential[:] = np.linspace(-.5, 1.6, graph._sensory_nodes)
     graph.clamped[:graph._sensory_nodes] = True
     graph.clamped[2] = False
     graph.evidence[:graph._sensory_nodes] = np.linspace(.1, .9, graph._sensory_nodes)
@@ -25,6 +27,8 @@ def test_state_canvas_and_weight_gradients_differentiate_the_same_energy():
     h = graph.mean[graph.hidden_slice]
     z = graph.sensory_potential
     terms = graph._terms(h, z)
+    if decoder == "linear":
+        np.testing.assert_array_equal(terms[9], z)
     root = np.where(graph.aperture_mask, graph.canvas, 0.)
     np.testing.assert_allclose(terms[6], h - graph.canvas_weights @ root - graph.recurrent_weights @ np.tanh(h))
     np.testing.assert_allclose(
@@ -96,17 +100,40 @@ def test_black_gray_white_evidence_pushes_decoded_predictions_in_the_right_direc
         gradient = graph._terms(
             graph.mean[graph.hidden_slice], graph.sensory_potential,
         )[4][:graph.visual_nodes]
-        np.testing.assert_allclose(gradient, (.5 - level) * .25)
+        np.testing.assert_allclose(gradient, -level)
         for _ in range(300):
             graph.condition(np.full_like(canvas, level))
             graph.forecast(canvas, 1/30)
         graph.condition(np.full_like(canvas, level))
         predictions.append(float(graph.visual_prediction.mean()))
         assert np.all(np.diff(graph.inference_energy) <= 1e-12)
-    assert 0. < predictions[0] < .5
-    assert predictions[1] == pytest.approx(.5)
-    assert .5 < predictions[2] < 1.
-    assert predictions[0] + predictions[2] == pytest.approx(1., abs=1e-5)
+    assert predictions[0] == 0.
+    assert 0. < predictions[1] < .5
+    assert predictions[1] < predictions[2] < 1.
+
+
+def test_relu_gates_only_visual_observation_drives_and_can_stall_at_zero():
+    graph = make_graph(visual_decoder="relu", learning_enabled=True)
+    graph.sensory_potential[:] = [-.2, 0., .2, -.4, 0., .4, -.3]
+    graph.clamped[:graph._sensory_nodes] = True
+    graph.evidence[:graph._sensory_nodes] = .8
+    h = graph.mean[graph.hidden_slice]
+    terms = graph._terms(h, graph.sensory_potential)
+    np.testing.assert_array_equal(terms[9], [0., 0., .2, 0., 0., .4, -.3])
+    np.testing.assert_allclose(
+        terms[4] - graph.sensory_potential / graph.memory_time_constant - terms[7],
+        [0., 0., -.6, 0., 0., -.4, -1.1],
+        atol=1e-14,
+    )
+    graph.reset()
+    weights = {name: getattr(graph, name).copy() for name in graph._PARAMETERS}
+    for _ in range(20):
+        graph.forecast(np.zeros((1, 2, 3)), 1/30)
+        graph.condition(np.ones((1, 2, 3)))
+    np.testing.assert_array_equal(graph.visual_prediction, 0.)
+    np.testing.assert_array_equal(graph.hidden_gradient, 0.)
+    for name, weight in weights.items():
+        np.testing.assert_array_equal(getattr(graph, name), weight)
 
 
 def test_unobserved_interval_is_not_replayed_and_zero_rate_freezes_decay():
@@ -130,11 +157,21 @@ def test_unobserved_interval_is_not_replayed_and_zero_rate_freezes_decay():
     graph.condition()
 
 
-def test_covariance_uses_captured_decay_and_matches_dense_precision():
-    graph = make_graph()
+@pytest.mark.parametrize("decoder", ("linear", "relu"))
+def test_covariance_uses_captured_decay_and_matches_dense_precision(decoder):
+    graph = make_graph(visual_decoder=decoder)
+    graph.sensory_potential[:] = [-.2, 0., .2, -.4, .5, .4, -.3]
     graph.forecast(np.zeros((1, 2, 3)), .02)
     graph.condition(np.ones((1, 2, 3)))
     covariance = graph.state_covariance()
+    slope = (
+        np.ones(graph._sensory_nodes) if decoder == "linear"
+        else np.concatenate((graph.visual_potential > 0., np.ones(graph.audio_nodes)))
+    )
+    np.testing.assert_allclose(
+        covariance.precision_diagonal[:graph._sensory_nodes],
+        1/graph.memory_time_constant + 1 + graph.clamped[:graph._sensory_nodes] * slope**2,
+    )
     graph.set_memory_time_constant(2.)
     after = graph.state_covariance()
     np.testing.assert_array_equal(covariance.precision_diagonal, after.precision_diagonal)
@@ -146,14 +183,18 @@ def test_covariance_uses_captured_decay_and_matches_dense_precision():
     )
 
 
-def test_information_gain_uses_unit_precision_independent_of_update_rate():
+@pytest.mark.parametrize("decoder", ("linear", "relu"))
+def test_information_gain_uses_unit_precision_independent_of_update_rate(decoder):
     scores = []
     for rate in (0., 2.):
-        graph = make_graph(inference_rate=rate)
+        graph = make_graph(inference_rate=rate, visual_decoder=decoder)
         graph.forecast(np.zeros((1, 2, 3)), .02)
         scores.append(graph.candidate_information_gains([[0., 0.], [1., 0.]], foveal_radius=1))
         assert np.isfinite(scores[-1]).all()
-        assert (scores[-1] > 0).all()
+        if decoder == "linear":
+            assert (scores[-1] > 0).all()
+        else:
+            np.testing.assert_array_equal(scores[-1], 0.)
         graph.condition()
         with pytest.raises(RuntimeError, match="after forecast and before condition"):
             graph.candidate_information_gain([0., 0.], foveal_radius=1)

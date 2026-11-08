@@ -17,6 +17,7 @@ __all__ = [
 
 class ContinuousSceneSnapshot(TypedDict):
     model: Literal["continuous-scene"]
+    visual_decoder: Literal["linear", "relu"]
     mean: np.ndarray
     prior_mean: np.ndarray
     sensory_potential: np.ndarray
@@ -62,12 +63,14 @@ class ContinuousSceneSnapshot(TypedDict):
 
 
 class ContinuousScenePredictiveCodingGraph:
-    """Continuous whole-image sensory logit field coupled to one recurrent hidden population.
+    """Continuous whole-image sensory field coupled to one recurrent hidden population.
 
     Every sensory coordinate $i \\in \\{1, \\dots, S\\}$ is backed by a continuous
     neural potential $z_i(t) \\in \\mathbb{R}$, distinct from its decoded sensory
-    prediction ($\\hat{y}_{v,i} = \\sigma(z_{v,i}) \\in (0, 1)$ for visual RGB slots
-    and $\\hat{y}_{a,i} = z_{a,i}$ for audio slots). A single shared recurrent
+    prediction. Visual RGB uses a linear decoder by default, with optional ReLU;
+    audio always uses $\\hat{y}_{a,i} = z_{a,i}$. Predictions are not clipped during
+    inference or learning. ReLU has derivative zero at zero and for negative
+    potentials. A single shared recurrent
     hidden state $h(t) \\in \\mathbb{R}^H$ couples across the scene through top-down
     generative weights $W_s \\in \\mathbb{R}^{S \\times H}$ and recurrent weights
     $W_h \\in \\mathbb{R}^{H \\times H}$ ($\\text{diag}(W_h) = 0$).
@@ -110,6 +113,7 @@ class ContinuousScenePredictiveCodingGraph:
         hidden_nodes=8,
         config: PredictiveCodingConfig | None = None,
         memory_time_constant: float = 1 / 3,
+        visual_decoder: Literal["linear", "relu"] = "linear",
         backend=np,
         seed=0,
     ):
@@ -134,6 +138,9 @@ class ContinuousScenePredictiveCodingGraph:
         self._sensory_nodes = self.visual_nodes + self.audio_nodes
         self.total_nodes = self._sensory_nodes + self.hidden_nodes
 
+        if visual_decoder not in ("linear", "relu"):
+            raise ValueError("visual_decoder must be linear or relu")
+        self._visual_decoder = visual_decoder
         self.memory_time_constant = self._validate_positive_float(
             memory_time_constant, "memory_time_constant",
         )
@@ -195,6 +202,10 @@ class ContinuousScenePredictiveCodingGraph:
             raise ValueError("learning_enabled must be a boolean")
 
     @property
+    def visual_decoder(self) -> Literal["linear", "relu"]:
+        return self._visual_decoder
+
+    @property
     def learning_enabled(self) -> bool:
         return self.config.learning_enabled
 
@@ -246,13 +257,16 @@ class ContinuousScenePredictiveCodingGraph:
 
     def _decode_sensory(self, sensory_potential):
         xp = self.backend
-        prediction = xp.empty_like(sensory_potential)
-        prediction[self.visual_slice] = 0.5 * (
-            1.0 + xp.tanh(0.5 * sensory_potential[self.visual_slice])
-        )
-        if self.audio_nodes:
-            prediction[self.audio_slice] = sensory_potential[self.audio_slice]
+        prediction = sensory_potential.copy()
+        if self.visual_decoder == "relu":
+            prediction[self.visual_slice] = xp.maximum(sensory_potential[self.visual_slice], 0.0)
         return prediction
+
+    def _sensory_slope(self, sensory_potential):
+        slope = self.backend.ones_like(sensory_potential)
+        if self.visual_decoder == "relu":
+            slope[self.visual_slice] = sensory_potential[self.visual_slice] > 0.0
+        return slope
 
     def _gaussian_residual_energy(self, error, precision, *, observed=None) -> float:
         """Diagonal Gaussian factor energy, omitting the fixed log(2*pi) constant.
@@ -288,10 +302,7 @@ class ContinuousScenePredictiveCodingGraph:
             xp.nan_to_num(evidence[:self._sensory_nodes]) - prediction, 0.0,
         )
 
-        sensory_slope = xp.ones_like(prediction)
-        sensory_slope[self.visual_slice] = (
-            prediction[self.visual_slice] * (1.0 - prediction[self.visual_slice])
-        )
+        sensory_slope = self._sensory_slope(sensory_potential)
         weighted_hidden_error = self.hidden_residual_precision * hidden_error
         weighted_coupling_error = self.coupling_precision * sensory_potential_error
         observation_drive = self.observation_precision * sensory_error * sensory_slope
@@ -612,11 +623,7 @@ class ContinuousScenePredictiveCodingGraph:
         )
         sensory_jacobian = weights["sensory_weights"] * hidden_slope[None, :]
         # Neural potentials stay inferred at observed pixels; clamped RGB means are not these states.
-        prediction = self._decode_sensory(self.sensory_potential)
-        sensory_slope = xp.ones_like(prediction)
-        sensory_slope[self.visual_slice] = prediction[self.visual_slice] * (
-            1 - prediction[self.visual_slice]
-        )
+        sensory_slope = self._sensory_slope(self.sensory_potential)
         # Observation noise precision contributes curvature through the decoder's squared slope.
         observation_curvature = (
             precisions["observation_precision"]
@@ -646,7 +653,7 @@ class ContinuousScenePredictiveCodingGraph:
         it does not forecast learning, scene transitions or covariance history.
 
         Each gaze selects in-bounds camera RGB slots. The likelihood uses the
-        forecast sigmoid slope and unit observation precision,
+        forecast decoder slope and unit observation precision,
         matching the model's inference curvature. Parameters/linearization are
         frozen during imagination; no camera values are read or fabricated.
         """
@@ -674,10 +681,10 @@ class ContinuousScenePredictiveCodingGraph:
         ]
         xp = self.backend
         uncertainty = self.state_covariance()
-        prediction = self._decode_sensory(self.sensory_potential)[self.visual_slice]
+        slope = self._sensory_slope(self.sensory_potential)[self.visual_slice]
         added = (
             self._snapshot_precisions["observation_precision"][self.visual_slice]
-            * (prediction * (1 - prediction))**2
+            * slope**2
         )
         scores = np.empty(values.shape[:-1], dtype=np.float64)
         centers = np.rint(
@@ -723,6 +730,7 @@ class ContinuousScenePredictiveCodingGraph:
         }
         snapshot.update(
             model="continuous-scene",
+            visual_decoder=self.visual_decoder,
             visual_shape=self.visual_shape,
             visual_slice=(self.visual_slice.start, self.visual_slice.stop),
             audio_slice=(self.audio_slice.start, self.audio_slice.stop),
