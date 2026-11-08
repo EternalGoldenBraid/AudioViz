@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from math import ceil
 from pathlib import Path
 import subprocess
 
@@ -12,6 +13,7 @@ from matplotlib import colormaps
 from PIL import Image, ImageDraw, ImageFont
 
 from audioviz.engine import RippleEngine
+from audioviz.physics.wave_propagator import ForceDrivenCanvasCPU
 from audioviz.readouts.continuous_scene_predictive_coding import ContinuousScenePredictiveCodingGraph
 from audioviz.readouts.predictive_coding import PredictiveCodingConfig, PredictiveCodingRGBReadout
 from audioviz.visualization.ripple_renderers import _canvas_to_rgb
@@ -94,11 +96,11 @@ def black_probe(visual_decoder="linear"):
     return results
 
 
-def comparison_frame(index, frames, image, panels, curves, fonts, rate, canvas_rate, learning_rate):
+def comparison_frame(index, frames, image, panels, curves, fonts, rate, force_strength, learning_rate):
     title, font, small, legend = fonts
     picture = Image.new("RGB", (1104, 1280), "#10141e")
     draw = ImageDraw.Draw(picture)
-    draw.text((24, 16), "Current run: per-pixel vs linear continuous inference", font=title, fill="#f3f5fa")
+    draw.text((24, 16), "Current run: per-pixel vs force-driven continuous inference", font=title, fill="#f3f5fa")
     draw.text((24, 58), f"Same input | 30 fps | learning {learning_rate:g} | linear output | right precision 1",
               font=small, fill="#bac5d8")
     picture.paste(Image.fromarray(np.rint(image*255).astype(np.uint8)).resize(
@@ -126,10 +128,10 @@ def comparison_frame(index, frames, image, panels, curves, fonts, rate, canvas_r
                 (380 + 680*i/max(1, frames-1), 238-value/.6*106)
                 for i, value in enumerate(curves[key])
             ], fill=color, width=2)
-    draw.text((24, 262), f"Inference: left 0.1, right {rate:g} | canvas: left 0.01, right {canvas_rate:g}",
+    draw.text((24, 262), f"Inference: left 0.1, right {rate:g} | left correction 0.01 | right force g={force_strength:g}",
               font=small, fill="#bac5d8")
     for column, (prefix, heading) in enumerate((
-        ("legacy_", "Current per-pixel inference"), ("", "Continuous inference: linear output"),
+        ("legacy_", "Current per-pixel inference"), ("", "Continuous: force-driven canvas"),
     )):
         draw.text((24+552*column, 290), heading, font=font, fill="#f3f5fa")
         for row, mode in enumerate(("waves", "held")):
@@ -232,7 +234,43 @@ def record_legacy(model, before, frame, mode):
     }
 
 
-def capture(output, frames, rate, canvas_rate, learning_rate):
+def advance_canvas_force(graph, canvas, interval, force_strength, wave_step_limit):
+    for name, value in (("interval", interval), ("wave_step_limit", wave_step_limit)):
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be finite and positive")
+    if not np.isfinite(force_strength) or force_strength < 0:
+        raise ValueError("force_strength must be finite and non-negative")
+    snapshot = graph.belief_snapshot()
+    weights = snapshot["canvas_weights"]
+    hidden = snapshot["mean"][graph.hidden_slice]
+    offset = hidden - snapshot["recurrent_weights"] @ np.tanh(hidden)
+    mask = graph.aperture_mask
+    curvature = force_strength * float(np.linalg.eigvalsh(weights @ weights.T)[-1])
+    limit = min(wave_step_limit, canvas.max_step(curvature))
+    steps = ceil(interval / limit)
+    dt = interval / steps
+
+    def force_at_position():
+        root = np.where(mask, canvas.position.ravel(), 0.)
+        error = offset - weights @ root
+        return (force_strength * np.where(mask, weights.T @ error, 0.)).reshape(canvas.position.shape)
+
+    initial_force = force_at_position()
+    force = initial_force
+    for step in range(steps):
+        if step:
+            force = force_at_position()
+        canvas.step(force, dt, force_curvature=curvature)
+    return {
+        "simulation_time": canvas.time, "wave_substeps": steps, "wave_dt": dt,
+        "max_wave_dt": limit, "force_start": initial_force,
+        "force_start_norm": float(np.linalg.norm(initial_force)),
+        "force_last_norm": float(np.linalg.norm(force)),
+        "canvas_velocity_norm": float(np.linalg.norm(canvas.velocity)),
+    }
+
+
+def capture(output, frames, rate, force_strength, learning_rate):
     output.mkdir(parents=True, exist_ok=True)
     shape = (48, 96)
     sample_pixels = [(3, 3), (14, 23), (34, 74)]
@@ -240,16 +278,22 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
                         for row, column in sample_pixels for channel in range(3)])
     models = {
         name: plain_graph(shape, inference_rate=rate, learning_enabled=True,
-                          learning_rate=learning_rate, canvas_rate=canvas_rate)
+                          learning_rate=learning_rate)
         for name in ("waves", "held")
     }
-    engines = {
-        name: RippleEngine(
-            resolution=shape, plane_size_m=(50, 50), speed=340,
-            damping=.988, use_gpu=False, use_shader=False, boundary_condition="neumann",
-        ) for name in ("continuous", "legacy")
+    legacy_engine = RippleEngine(
+        resolution=shape, plane_size_m=(50, 50), speed=340,
+        damping=.988, use_gpu=False, use_shader=False, boundary_condition="neumann",
+    )
+    damping_rate = -np.log(legacy_engine.damping) / legacy_engine.dt
+    mechanical = {
+        name: ForceDrivenCanvasCPU(
+            (*shape, 3), dx=legacy_engine.grid_spacing,
+            speed=legacy_engine.speed if name == "waves" else 0.,
+            damping_rate=damping_rate, boundary_condition="neumann",
+        ) for name in models
     }
-    held = {name: np.zeros((*shape, 3)) for name in engines}
+    legacy_held = np.zeros((*shape, 3))
     legacy = {
         name: PredictiveCodingRGBReadout(
             canvas_shape=(*shape, 3),
@@ -280,27 +324,29 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
             image = camera_frame(frame)
             panels = {}
             for name, graph in models.items():
-                engine = engines["continuous"]
-                canvas = engine.propagate() if name == "waves" else held["continuous"]
+                canvas = mechanical[name].position
                 forecast, _ = graph.forecast(canvas, 1/30)
-                correction = canvas_rate * graph.condition(image)
-                if name == "waves":
-                    corrected_canvas = engine.apply_observation_correction(correction)
-                else:
-                    held["continuous"] += correction
-                    corrected_canvas = held["continuous"]
+                graph.condition(image)
+                physics = advance_canvas_force(
+                    graph, mechanical[name], 1/30, force_strength, legacy_engine.dt,
+                )
+                corrected_canvas = mechanical[name].position
                 curves[name].append(float(np.sqrt(np.mean((forecast-image)**2))))
                 curves[f"settled_{name}"].append(
                     float(np.sqrt(np.mean((graph.visual_prediction-image)**2))),
                 )
-                snapshots.append(record_graph(
+                record = record_graph(
                     graph, frame, name, image, corrected_canvas, indices,
                     curves[name][-1], curves[f"settled_{name}"][-1],
-                ))
+                )
+                record.update({
+                    key: value for key, value in physics.items() if key != "force_start"
+                })
+                record["force_start"] = physics["force_start"].ravel()[indices].tolist()
+                snapshots.append(record)
                 panels[name] = corrected_canvas, forecast
             for name, model in legacy.items():
-                engine = engines["legacy"]
-                canvas = engine.propagate() if name == "waves" else held["legacy"]
+                canvas = legacy_engine.propagate() if name == "waves" else legacy_held
                 forecast = model.predict(canvas)
                 before = {
                     key: getattr(model, key).copy()
@@ -309,10 +355,10 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
                 correction = model.infer(canvas, image)
                 legacy_snapshots.append(record_legacy(model, before, frame, name))
                 if name == "waves":
-                    corrected_canvas = engine.apply_observation_correction(correction)
+                    corrected_canvas = legacy_engine.apply_observation_correction(correction)
                 else:
-                    held["legacy"] += correction
-                    corrected_canvas = held["legacy"]
+                    legacy_held += correction
+                    corrected_canvas = legacy_held
                 curves["legacy_"+name].append(float(np.sqrt(np.mean((forecast-image)**2))))
                 panels["legacy_"+name] = corrected_canvas, forecast
             for name, (canvas, forecast) in panels.items():
@@ -320,7 +366,7 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
                     raise FloatingPointError(f"{name} frame {frame} produced non-finite canvas or forecast")
             curves["time"].append(frame/30)
             process.stdin.write(comparison_frame(
-                frame, frames, image, panels, curves, fonts, rate, canvas_rate, learning_rate,
+                frame, frames, image, panels, curves, fonts, rate, force_strength, learning_rate,
             ).tobytes())
         process.stdin.close()
         if process.wait() != 0:
@@ -335,13 +381,16 @@ def capture(output, frames, rate, canvas_rate, learning_rate):
                  / "src/audioviz/readouts/continuous_scene_predictive_coding.py"),
                 ("per_pixel_solver", Path(__file__).resolve().parents[1]
                  / "src/audioviz/readouts/predictive_coding.py"),
+                ("mechanical_canvas", Path(__file__).resolve().parents[1]
+                 / "src/audioviz/physics/wave_propagator.py"),
             )
         },
         "settings": {
             "shape": shape, "sensory_nodes": int(np.prod(shape))*3, "hidden_nodes": 6,
             "frames": frames, "fps": 30, "rate": rate, "learning_rate": learning_rate,
-            "canvas_rate": canvas_rate, "tau": 1/3, "inference_steps": 8,
-            "wave_dt": engines["continuous"].dt, "sample_pixels": sample_pixels, "indices": indices.tolist(),
+            "inference_force_strength": force_strength, "tau": 1/3, "inference_steps": 8,
+            "simulation_interval": 1/30, "damping_rate": damping_rate,
+            "legacy_wave_dt": legacy_engine.dt, "sample_pixels": sample_pixels, "indices": indices.tolist(),
             "unit_precision": True, "weight_decay": 0,
             "legacy_inference_rate": .1, "legacy_canvas_rate": .01,
             "visual_decoder": models["waves"].visual_decoder,
@@ -366,9 +415,11 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--frames", type=int, default=900)
     parser.add_argument("--inference-rate", type=float, default=.3)
-    parser.add_argument("--canvas-rate", type=float, default=.3)
+    parser.add_argument("--inference-force-strength", type=float, default=1.)
     parser.add_argument("--learning-rate", type=float, default=.001)
     args = parser.parse_args()
     if args.frames <= 0:
         parser.error("--frames must be positive")
-    capture(args.output_dir, args.frames, args.inference_rate, args.canvas_rate, args.learning_rate)
+    if not np.isfinite(args.inference_force_strength) or args.inference_force_strength < 0:
+        parser.error("--inference-force-strength must be finite and non-negative")
+    capture(args.output_dir, args.frames, args.inference_rate, args.inference_force_strength, args.learning_rate)
