@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref } from "vue";
 import capture from "./capture.json";
+import comparisonVideo from "./comparison.mp4?url";
 
 const mode = ref("waves");
 const frame = ref(capture.snapshots.filter(record => record.mode === "waves").length - 1);
@@ -84,6 +85,20 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
 
 <template>
   <section class="inference-review" aria-label="Continuous inference diagnostics">
+    <section class="comparison" aria-label="Existing camera dynamics comparison">
+      <h2>Comparison · earlier 60-second run</h2>
+      <video controls preload="metadata" playsinline
+        :src="comparisonVideo"
+        aria-label="Current per-pixel and previous continuous solver comparison, with and without waves">
+        <a href="http://127.0.0.1:8767/canvas-dynamics-comparison.mp4">Open the comparison video</a>
+      </video>
+      <p>The retained 30 fps video compares per-pixel inference with the previous scaled/clipped continuous solver.
+        The graph below uses a separate 20-second capture of the updated plain-gradient solver,
+        sampled about twice per second. These recordings are not synchronized.</p>
+      <p><a href="http://127.0.0.1:8767/canvas-dynamics-comparison.mp4">Original comparison link</a>.
+        The embedded player uses an identical local copy served with byte-range support.</p>
+    </section>
+    <h2>Updated solver · playable network diagnostics</h2>
     <div class="controls">
       <button type="button" :aria-pressed="playing" @click="playing ? pause() : play()">
         {{ playing ? "Pause" : "Play" }}
@@ -274,6 +289,8 @@ const labels = ["Black background", "Red rectangle", "Blue rectangle"];
 
 <style scoped>
 .inference-review { color: var(--vp-c-text-1); }
+.comparison video { display:block; width:100%; max-width:1104px; max-height:85vh; margin:auto; background:#080808; }
+.comparison p { font-size:13px; line-height:1.65; }
 .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding:12px; background:var(--vp-c-bg-soft); border-radius:8px; }
 .controls label { display:flex; gap:8px; align-items:center; }
 .controls button { border:1px solid var(--vp-c-divider); border-radius:5px; padding:4px 12px; background:var(--vp-c-bg); }

@@ -61,10 +61,13 @@ From this worktree:
 ```bash
 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run python scripts/continuous_inference_review.py \
   --output-dir docs/continuous-inference --frames 600
+curl --fail http://127.0.0.1:8767/canvas-dynamics-comparison.mp4 \
+  --output docs/continuous-inference/comparison.mp4
 ```
 
-Use agent-doc-review to open this document. The generated `capture.json` and `frames/`
-stay local and are ignored by Git.
+Use agent-doc-review to open this document. The generated `capture.json`, `frames/` and retained
+comparison video stay local and are ignored by Git. The original comparison recording must be
+available from its existing loopback server for the copy command.
 
 </div>
 
