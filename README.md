@@ -31,6 +31,12 @@ Audio Ripple generates a simulated wave propagation field in response to real-ti
 
 ## 🔧 Installation
 
+The continuous whole-scene solver is an integration-stage module, separate from
+the application's current per-pixel readouts. Its
+[gradient review](docs/continuous-inference/review.md) records canvas feedback,
+residual contributions, learning and black/XOR diagnostics using fixed unit
+precisions, linear sensory outputs and ordinary gradient descent.
+
 Use Python 3.13+ and [uv](https://docs.astral.sh/uv/). From the repository or
 worktree you want to run:
 
