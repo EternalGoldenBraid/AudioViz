@@ -3,37 +3,8 @@ layout: page
 ---
 
 <script setup>
-import CompletionImageGrid from './CompletionImageGrid.vue'
-import CompletionSeparabilityStatic from './CompletionSeparabilityStatic.vue'
+import CompletionHighlightPlayer from './CompletionHighlightPlayer.vue'
 import CompletionExplorer from './CompletionExplorer.vue'
-
-import patchTargetLines from './highlight-patch-target-lines.png?url'
-import patchTargetCircles from './highlight-patch-target-circles.png?url'
-import patchSoftLines from './highlight-patch-completion-soft-small-lines.png?url'
-import patchSoftCircles from './highlight-patch-completion-soft-small-circles.png?url'
-import patchHardLines from './highlight-patch-completion-hard-small-lines.png?url'
-import patchHardCircles from './highlight-patch-completion-hard-small-circles.png?url'
-
-import sceneTargetLines from './pattern-lines.png?url'
-import sceneTargetCircles from './pattern-circles.png?url'
-import sceneSoftLines from './highlight-scene-completion-soft-small-lines.png?url'
-import sceneSoftCircles from './highlight-scene-completion-soft-small-circles.png?url'
-import sceneHardLines from './highlight-scene-completion-hard-small-lines.png?url'
-import sceneHardCircles from './highlight-scene-completion-hard-small-circles.png?url'
-
-const columns = [
-  { key: "target", label: "Target" },
-  { key: "soft", label: "Soft clamp (0)" },
-  { key: "hard", label: "Hard clamp (1.0)" },
-]
-const patchImages = {
-  "lines-target": patchTargetLines, "lines-soft": patchSoftLines, "lines-hard": patchHardLines,
-  "circles-target": patchTargetCircles, "circles-soft": patchSoftCircles, "circles-hard": patchHardCircles,
-}
-const sceneImages = {
-  "lines-target": sceneTargetLines, "lines-soft": sceneSoftLines, "lines-hard": sceneHardLines,
-  "circles-target": sceneTargetCircles, "circles-soft": sceneSoftCircles, "circles-hard": sceneHardCircles,
-}
 </script>
 
 <div class="vp-doc experiment-page">
@@ -42,53 +13,41 @@ const sceneImages = {
 
 # Scene completion from a raster-scanned fovea
 
-Can the model complete a **static scene it has already learned**, using only a small patch
-strictly smaller than the scene? Training scans the whole world; evaluation only ever fixates
-one small center patch, holding the eye open the whole time — whatever it looks at is the only
-clamp.
+Can the model complete a **static scene it has already learned**, using only a small moving
+fovea strictly smaller than the scene? The eye stays open throughout: whatever it looks at right
+now is the only clamp. Learning stays **on** the entire time, including during the recorded
+scan below — this models a continuously running system, not a frozen-weight benchmark.
 
-Every figure below compares the same two curated configurations (τ=1/3 soft clamp vs τ=3 hard
-clamp), chosen because they show the largest effect in the full six-configuration grid. A free
-explorer for all six configurations together is at the bottom of the page.
+The recorded scan re-visits the whole raster path twice: every region is clamped once, left
+unclamped as the fovea moves on, then clamped again on the second pass. The gold ring marks the
+currently clamped disk on every panel below.
 
-## Does the patch reach its own target?
+## Does τ matter more than clamp strength, once learning stays on?
 
-Zoomed crop around the fovea, settled final frame. Soft clamp (the solver's own decay-dominated
-pull) barely reaches the target; hard clamp reconstructs it almost exactly.
+Both configurations below use a **hard clamp (1.0)**; only the memory time constant τ differs.
+With learning left on, this turned out to be the dominant lever, not clamp strength: by the end
+of the second pass, τ=3 drives the whole-scene RMSE down to **≈0.09–0.10**, close to the
+σ=0.03 observation-noise floor, while τ=1/3 only reaches **≈0.41–0.46** under the same hard
+clamp. Watch the right-hand panels: the τ=3 prediction visibly locks onto the target as the
+second pass proceeds; the τ=1/3 prediction stays comparatively vague.
 
-<CompletionImageGrid :rows="['lines', 'circles']" :columns="columns" :images="patchImages" />
+<CompletionHighlightPlayer />
 
-Increasing τ alone (not pictured — see reproduce command for the full sweep) moves this far less
-than clamp strength does. This confirms a soft-clamp diagnosis directly: the fixed decay rate
-dominates the observation pull at small τ, not a learning or capacity problem.
+The inside/outside error chart shows the same story quantitatively: both curves fall as the
+fovea revisits a region, but the τ=3 (orange) curve falls much further and recovers faster after
+the fovea moves away, than the τ=1/3 (blue) curve. The hidden-unit traces below show τ=3 settling
+into a much larger, more structured excursion than τ=1/3 for the same lines/circles distinction.
 
-## Does the rest of the scene complete correctly?
-
-Same two configurations, full scene instead of a zoomed patch.
-
-<CompletionImageGrid :rows="['lines', 'circles']" :columns="columns" :images="sceneImages" />
-
-Fixing in-patch reconstruction does **not** fix completion: the area outside the patch stays
-visibly near-blank in both configurations, and the circles scene often predicts something closer
-to the *lines* pattern than to its own. The decay/clamp balance and the completion failure are
-separate problems.
-
-## Are the hidden units even separable?
-
-<CompletionSeparabilityStatic />
-
-The hard-clamp configuration drives noticeably larger hidden-unit excursions for the lines
-pattern than for circles. There is *some* separation signal reaching the hidden layer, but it
-stays far from the ±1 range `tanh` actually uses, and separation alone does not translate into
-correct completion. The next open question is whether `Ws` (hidden→sensory) is undertrained to
-carry that signal outward, or whether the patch content itself is too ambiguous — not whether the
-hidden layer can represent a difference at all.
+This does not mean clamp strength stopped mattering — at fixed τ=1/3, moving from soft (0) to
+hard (1.0) clamp still nearly halves the final RMSE (0.59 → 0.41 for lines). It means τ now
+matters *more*, which did not hold in the earlier frozen-weight, fixed-patch version of this
+experiment. Explore every clamp/τ combination below to see the full picture.
 
 ## Explore all six configurations
 
 Three clamp strengths × two memory time constants, replacing an exhaustive sweep whose
-combinatorics would grow too fast to show meaningfully. This is the only interactive part of the
-page; everything above already makes its point without it.
+combinatorics would grow too fast to show meaningfully. Switch the view to the error map to see
+pixel-level residuals instead of the raw prediction.
 
 <CompletionExplorer />
 
@@ -100,8 +59,8 @@ OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run python scripts/continuous_scene_
   --learning-rate .1 --sigma .03 --grid
 ```
 
-Deterministic (fixed seed) across all six configurations. The generated playback atlases,
-summaries, section-highlight crops and the curated grid index stay local; this page's figures
-were produced by exactly this one command.
+Deterministic (fixed seed) across all six configurations. The generated playback/error atlases,
+summaries and the curated grid index stay local; this page's figures were produced by exactly
+this one command.
 
 </div>
