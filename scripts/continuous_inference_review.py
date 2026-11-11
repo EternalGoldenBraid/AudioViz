@@ -30,11 +30,12 @@ def camera_frame(index, shape=(48, 96)):
     return image
 
 
-def plain_graph(shape=(48, 96), *, hidden=6, audio=0, visual_decoder="linear", **config):
+def plain_graph(shape=(48, 96), *, hidden=6, audio=0, visual_decoder="linear", tau=None, **config):
+    kwargs = {} if tau is None else {"memory_time_constant": tau}
     return ContinuousScenePredictiveCodingGraph(
         visual_shape=shape, hidden_nodes=hidden, audio_nodes=audio,
         config=PredictiveCodingConfig(hidden_channels=hidden, **config),
-        visual_decoder=visual_decoder,
+        visual_decoder=visual_decoder, **kwargs,
     )
 
 
