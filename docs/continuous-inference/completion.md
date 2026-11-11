@@ -43,6 +43,12 @@ hard (1.0) clamp still nearly halves the final RMSE (0.59 → 0.41 for lines). I
 matters *more*, which did not hold in the earlier frozen-weight, fixed-patch version of this
 experiment. Explore every clamp/τ combination below to see the full picture.
 
+**Caveat: this advantage is specific to a static scene.** A large τ helps here because slow
+decay lets old, still-correct evidence persist across the whole two-pass scan. If the scene
+changed while unobserved, that same long memory would cling to stale state instead of tracking
+the change — large τ could become a liability rather than an advantage. Testing that trade-off
+needs a moving/changing scene, not this static one; that is a follow-up experiment, not yet run.
+
 ## Explore all six configurations
 
 Three clamp strengths × two memory time constants, replacing an exhaustive sweep whose
