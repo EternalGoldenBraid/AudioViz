@@ -8,3 +8,7 @@
 /native-fields/
 /dual-prediction.png
 /dual-prediction.pending.png
+/completion-*.png
+/completion-*.pending.png
+/completion-*.json
+/completion-*.pending.json
