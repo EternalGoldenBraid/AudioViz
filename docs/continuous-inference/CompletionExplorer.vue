@@ -157,16 +157,16 @@ function markerX(index, length) {
 
 <style scoped>
 .explorer { margin: 14px 0; }
-.config-select { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 10px; }
+.config-select { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 10px; justify-content: center; }
 .config-select select { border: 1px solid #3b4756; border-radius: 5px; background: #19212b; color: #e6edf4; padding: 5px 8px; }
-.transport { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-bottom: 12px; }
+.transport { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-bottom: 12px; max-width: 640px; margin-left: auto; margin-right: auto; }
 .transport button { border: 1px solid #3b4756; border-radius: 5px; background: #19212b; color: #e6edf4; padding: 5px 10px; }
 .scrubber { flex: 1; min-width: 120px; accent-color: #82c7d3; }
-.playback-row, .trace-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.playback-row, .trace-row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
 .playback-row figure, .trace-row figure { margin: 0; background: #0d141e; border: 1px solid #263140; border-radius: 10px; padding: 8px 10px; }
 .playback-row figcaption, .trace-row figcaption { font-size: 11px; color: #8798ab; margin-bottom: 6px; }
 .side-by-side { display: flex; gap: 8px; align-items: center; }
-.reference, canvas { width: 96px; height: 96px; image-rendering: pixelated; border: 1px solid #263140; border-radius: 4px; }
+.reference, canvas { width: 220px; height: 220px; image-rendering: pixelated; border: 1px solid #263140; border-radius: 4px; }
 .trace-row svg { width: 300px; max-width: 100%; height: auto; display: block; }
 .legend { font-size: 12px; color: #98a8ba; margin: 4px 0 16px; }
 </style>
