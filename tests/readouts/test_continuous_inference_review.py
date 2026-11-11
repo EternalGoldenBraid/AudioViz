@@ -209,6 +209,7 @@ def test_dual_input_atlas_matches_the_observed_record_boundaries(dual_review, tm
     assert data["settings"]["input_atlas"]["frames"] == len(data["records"]) == 3
     height, width = data["settings"]["shape"]
     groups = dual_review.spatial_groups((height, width))
+    fovea = dual_review.WorldAnchoredFovea((height, width), radius=8)
     with Image.open(tmp_path/"dual-input.png") as atlas:
         for frame in range(3):
             expected = np.zeros((height, width, 3)) if frame == 0 else review.camera_frame(frame-1)
@@ -217,9 +218,15 @@ def test_dual_input_atlas_matches_the_observed_record_boundaries(dual_review, tm
                 np.asarray(atlas.crop((x, y, x+width, y+height))),
                 np.rint(expected*255).astype(np.uint8),
             )
+            observed = np.zeros((height, width), dtype=bool)
+            if frame:
+                fovea.set_gaze(dual_review.raster_gaze(frame-1, (height, width), 8))
+                observed = fovea.observation_mask
+                assert data["records"][frame]["fovea"]["center"] == fovea.center.tolist()
+            evidence = np.where(observed[..., None], expected, 0.)
             for region, group in enumerate(groups):
                 assert data["records"][frame]["nodes"][2*len(groups)+region][0] == pytest.approx(
-                    float(np.mean(expected.ravel()[group["indices"]])),
+                    float(np.mean(evidence.ravel()[group["indices"]])),
                 )
     key = "message-sensory-prediction-hidden-0"
     changes = [
@@ -235,6 +242,52 @@ def test_dual_input_atlas_matches_the_observed_record_boundaries(dual_review, tm
                 np.asarray(atlas.crop((x, y, x+width, y+height))),
                 np.asarray(dual_review.field_image(change, scale, (height, width))),
             )
+    with Image.open(tmp_path/"dual-prediction.png") as atlas:
+        for frame, current, _, _ in dual_review.trajectory((height, width), 2):
+            x, y = (frame%columns)*width, (frame//columns)*height
+            expected = current["fields"]["message-evidence-prediction"].reshape(height, width, 3)
+            np.testing.assert_array_equal(
+                np.asarray(atlas.crop((x, y, x+width, y+height))),
+                np.rint(np.clip(expected, 0, 1)*255).astype(np.uint8),
+            )
+
+
+def test_foveal_clamp_ignores_outside_evidence_but_predicts_the_full_world(dual_review):
+    shape = (5, 7)
+    fovea = dual_review.WorldAnchoredFovea(shape, radius=1)
+    fovea.set_gaze((0., 0.))
+    observed = fovea.observation_mask
+    image = np.full((*shape, 3), .8)
+    altered = image.copy()
+    altered[~observed] = np.nan
+    results = []
+    for evidence in (image, altered):
+        graph = review.plain_graph(shape, hidden=2, inference_rate=2., learning_enabled=True)
+        graph.mean[graph.hidden_slice] = [.2, -.1]
+        graph.sensory_potential[:] = .05
+        canvas = np.zeros_like(image)
+        graph.forecast(canvas, .05)
+        graph.condition(evidence, visual_mask=observed)
+        boundary = dual_review.sample_boundary(graph, canvas, evidence, dual_review.spatial_groups(shape))
+        np.testing.assert_array_equal(graph.clamped[:graph.visual_nodes].reshape(*shape, 3), np.repeat(observed[..., None], 3, axis=2))
+        feedback = boundary["fields"]["message-sensory-feedback"].reshape(*shape, 3)
+        np.testing.assert_array_equal(feedback[~observed], 0.)
+        prediction = boundary["fields"]["message-evidence-prediction"].reshape(*shape, 3)
+        assert np.any(prediction[~observed] != 0.)
+        np.testing.assert_array_equal(boundary["fields"]["state-evidence"].reshape(*shape, 3)[~observed], 0.)
+        results.append(boundary["fields"])
+    for key in results[0]:
+        np.testing.assert_array_equal(results[0][key], results[1][key])
+
+
+def test_raster_scan_visits_the_entire_world_without_resizing_it(dual_review):
+    shape = (48, 96)
+    fovea = dual_review.WorldAnchoredFovea(shape, radius=8)
+    coverage = np.zeros(shape, dtype=bool)
+    for frame in range(600):
+        fovea.set_gaze(dual_review.raster_gaze(frame, shape, 8))
+        coverage |= fovea.observation_mask
+    assert coverage.all()
 
 
 def test_native_field_encoding_keeps_adjacent_pixel_changes_separate(dual_review):

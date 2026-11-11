@@ -30,6 +30,12 @@ The left view pulses with **actual state change**. The right view carries **chan
 
 Below the paired views, the input preview shows the image supplied at the selected recorded boundary: red and blue blocks with a moving green circle. The initial zero-time frame is blank, before the first observation.
 
+**Foveal observation, full-image prediction.** Only the gold disk supplies visual evidence. The radius-8 disk scans raster rows, holding each fixation for six frames; one 18.2-second pass covers the whole 96 × 48 world. Its center is rounded to world pixel coordinates, and borders clip its observed support. All sensory states and connection coordinates remain world-anchored. Predictions, recurrent dynamics and canvas feedback continue across the full field.
+
+The input image is a scene reference, not a full-image clamp. Its gold outline shows the observed patch. The adjacent preview shows the complete decoded sensory prediction, clipped to 0–1 only for RGB display. Absent evidence is recorded as display-only zero; those coordinates are **unobserved**, not black evidence. Adding or releasing a clamp can itself pulse the evidence and feedback change fields.
+
+The disk geometry is the world-anchored routing slice of [`SharedSensoryIO` on the active-vision branch](https://github.com/EternalGoldenBraid/AudioViz/blob/ac3d587/src/audioviz/readouts/shared_sensory_io.py). This experiment keeps its linear continuous solver, six hidden states and force-driven canvas; foveation changes observation routing, not the full-field compute budget.
+
 In the grouped view and numeric inspector, canvas, sensory and evidence coordinates are grouped into nine spatial regions per layer, covering the entire RGB grid. Every hidden node is shown individually. Grouped state pulses use RMS change per coordinate. Grouped prediction messages retain the full vector when their destination is a region; messages arriving at one hidden node sum the contributing coordinates before measuring amplitude. Opposing contributions can cancel.
 
 Predictions use weighted source activity. Feedback uses weighted residuals and the source activation derivative. The evidence connection has an identity prediction and an observation-error return. Hidden recurrence is retained, so opposite prediction directions remain independent connections.

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import data from "./dual-capture.json";
 import inputAtlasUrl from "./dual-input.png?url";
+import predictionAtlasUrl from "./dual-prediction.png?url";
 const fieldAssets = import.meta.glob("./native-fields/*.png", { eager: true, query: "?url", import: "default" });
 
 const time = ref(0);
@@ -21,14 +22,22 @@ const canvases = [];
 const inputCanvas = ref(null);
 const inputReady = ref(false);
 const inputError = ref("");
-let inputImage = null;
-let inputFrame = -1;
+const predictionCanvas = ref(null);
+const predictionReady = ref(false);
+const predictionError = ref("");
+const previews = [
+  { canvas: inputCanvas, ready: inputReady, error: inputError, url: inputAtlasUrl,
+    atlas: "input_atlas", label: "Experiment input", outline: true, image: null, frame: -1 },
+  { canvas: predictionCanvas, ready: predictionReady, error: predictionError, url: predictionAtlasUrl,
+    atlas: "prediction_atlas", label: "Full image prediction", outline: false, image: null, frame: -1 },
+];
 let animation = null;
 let observer = null;
 let previousStamp = null;
 let drag = null;
 const valid = data.schema === "continuous-dual-v1";
 const hasInput = valid && data.settings.input_atlas !== undefined;
+const hasPrediction = valid && data.settings.prediction_atlas !== undefined;
 const hasNative = valid && data.settings.native_fields !== undefined;
 const frame = computed(() => Math.min(data.records.length-1, Math.floor(time.value*data.settings.fps)));
 const fraction = computed(() => Math.min(1, time.value*data.settings.fps-frame.value));
@@ -114,6 +123,43 @@ function fieldTexture(key) {
 function fieldPosition(x, y, layer) {
   const [height, width] = data.settings.shape;
   return [(x/width-.5)*3.45, { canvas: -1.9, sensory: 1.3, evidence: 2.8 }[layer], (y/height-.5)*2.7];
+}
+function drawFovea(ctx, project) {
+  if (!current.value.fovea) return;
+  const { center: [row, column], radius } = current.value.fovea;
+  const [height, width] = data.settings.shape;
+  ctx.save(); ctx.strokeStyle = "#e7cc87"; ctx.lineWidth = 1;
+  for (const layer of ["sensory", "evidence"]) {
+    ctx.beginPath();
+    let connected = false;
+    for (let step=0; step<=64; step++) {
+      const angle = 2*Math.PI*step/64;
+      const x = column+.5+(radius+.5)*Math.cos(angle), y = row+.5+(radius+.5)*Math.sin(angle);
+      if (x<0 || x>width || y<0 || y>height) { connected = false; continue; }
+      const point = project(fieldPosition(x,y,layer));
+      if (connected) ctx.lineTo(point.x,point.y);
+      else ctx.moveTo(point.x,point.y);
+      connected = true;
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawPreviews() {
+  const [height, width] = data.settings.shape;
+  for (const preview of previews) {
+    if (!preview.ready.value || !preview.canvas.value || preview.frame === frame.value) continue;
+    const columns = data.settings[preview.atlas].columns;
+    const ctx = preview.canvas.value.getContext("2d");
+    ctx.drawImage(preview.image, (frame.value%columns)*width, Math.floor(frame.value/columns)*height,
+      width, height, 0, 0, width, height);
+    if (preview.outline && current.value.fovea) {
+      const { center: [row,column], radius } = current.value.fovea;
+      ctx.save(); ctx.strokeStyle = "#e7cc87"; ctx.lineWidth = .8;
+      ctx.beginPath(); ctx.arc(column+.5,row+.5,radius+.5,0,2*Math.PI); ctx.stroke(); ctx.restore();
+    }
+    preview.frame = frame.value;
+  }
 }
 function drawFields(ctx, project, panel) {
   const [height, width] = data.settings.shape;
@@ -255,15 +301,6 @@ function render() {
       });
       nativePending.value = resolution.value === "native" && hasNative
         && [...fieldNames(0), ...fieldNames(1)].some(key => !fieldCache[key]?.ready);
-      if (inputReady.value && inputCanvas.value && inputFrame !== frame.value) {
-        const [height, width] = data.settings.shape;
-        const columns = data.settings.input_atlas.columns;
-        inputCanvas.value.getContext("2d").drawImage(
-          inputImage, (frame.value%columns)*width, Math.floor(frame.value/columns)*height,
-          width, height, 0, 0, width, height,
-        );
-        inputFrame = frame.value;
-      }
     }
     const order = points.map((point, index) => ({ ...point, index })).sort((a, b) => a.depth-b.depth);
     for (const point of order) {
@@ -286,6 +323,7 @@ function render() {
         ctx.beginPath(); ctx.arc(point.x, point.y, 10, 0, 2*Math.PI); ctx.stroke();
       }
     }
+    drawFovea(ctx, project);
     ctx.font = "11px sans-serif"; ctx.fillStyle = "#8899ac"; ctx.textAlign = "left";
     for (const layer of ["canvas", "hidden", "sensory", "evidence"]) {
       const positions = data.nodes.filter(node => node.layer === layer).map(node => node.position);
@@ -296,6 +334,7 @@ function render() {
       ctx.fillText(layer.toUpperCase(), 12, Math.max(15, Math.min(height-10, point.y)));
     }
   });
+  drawPreviews();
 }
 function tick(stamp) {
   if (previousStamp !== null && playing.value) {
@@ -368,30 +407,31 @@ onMounted(() => {
   observer = new ResizeObserver(render);
   canvases.forEach(canvas => observer.observe(canvas));
   animation = requestAnimationFrame(tick);
-  if (hasInput) {
-    inputImage = new Image();
-    inputImage.onload = () => {
+  for (const preview of previews) {
+    const atlas = data.settings[preview.atlas];
+    if (!atlas) continue;
+    preview.image = new Image();
+    preview.image.onload = () => {
       const [height, width] = data.settings.shape;
-      const atlas = data.settings.input_atlas;
-      if (inputImage.naturalWidth !== atlas.columns*width
-        || inputImage.naturalHeight !== Math.ceil(atlas.frames/atlas.columns)*height
+      if (preview.image.naturalWidth !== atlas.columns*width
+        || preview.image.naturalHeight !== Math.ceil(atlas.frames/atlas.columns)*height
         || atlas.frames !== data.records.length) {
-        inputError.value = "The recorded input image does not match this recording. Regenerate it with the command below.";
+        preview.error.value = `${preview.label} does not match this recording. Regenerate it with the command below.`;
         return;
       }
-      inputReady.value = true;
+      preview.ready.value = true;
       render();
     };
-    inputImage.onerror = () => {
-      inputError.value = "The recorded input image failed to load. Regenerate it with the command below.";
+    preview.image.onerror = () => {
+      preview.error.value = `${preview.label} failed to load. Regenerate it with the command below.`;
     };
-    inputImage.src = inputAtlasUrl;
+    preview.image.src = preview.url;
   }
 });
 onBeforeUnmount(() => {
   if (animation !== null) cancelAnimationFrame(animation);
   observer?.disconnect();
-  if (inputImage) { inputImage.onload = null; inputImage.onerror = null; }
+  previews.forEach(preview => { if (preview.image) { preview.image.onload = null; preview.image.onerror = null; } });
   Object.values(fieldCache).forEach(entry => { entry.image.onload = null; entry.image.onerror = null; });
 });
 </script>
@@ -420,6 +460,8 @@ onBeforeUnmount(() => {
     <p v-else-if="nativePending" class="native-loading">Loading native fields…</p>
     <p v-if="resolution === 'native'" class="legend">96 × 48 RGB sites per sheet · full pixel data, no spatial binning.
       Overview carriers use grouped paths; focused carriers sample pixel paths. Fields include every pixel.</p>
+    <p v-if="data.settings.fovea" class="legend fovea-readout">Gold disk: raster-scanned observation ·
+      {{ current.fovea ? `${current.fovea.pixels} clamped RGB pixels` : 'No observation yet' }} · predictions cover the full image.</p>
     <div class="pair">
       <figure v-for="(title, index) in ['Node pulses', 'Connection ripples']" :key="title">
         <figcaption><strong>{{ title }}</strong><span>{{ index === 0 ? 'Actual state change · quiet connections' : 'Directed messages · quiet node landmarks' }}</span></figcaption>
@@ -430,12 +472,20 @@ onBeforeUnmount(() => {
     </div>
     <div class="input-row">
       <figure class="experiment-input">
-        <figcaption><strong>Experiment input</strong><span>Recorded RGB stimulus · same simulation clock</span></figcaption>
+        <figcaption><strong>Experiment input</strong><span>Scene reference · only the gold disk is observed</span></figcaption>
         <p v-if="!hasInput" role="alert">This recording has no input images. Regenerate it with the command below.</p>
         <p v-else-if="inputError" role="alert">{{ inputError }}</p>
         <p v-else-if="!inputReady">Loading recorded input…</p>
         <canvas v-if="hasInput" v-show="inputReady" ref="inputCanvas" :width="data.settings.shape[1]"
           :height="data.settings.shape[0]" :data-frame="frame" aria-label="Experiment input" role="img"></canvas>
+      </figure>
+      <figure class="experiment-prediction">
+        <figcaption><strong>Full image prediction</strong><span>Decoded sensory field · same simulation clock</span></figcaption>
+        <p v-if="!hasPrediction" role="alert">This recording has no prediction images. Regenerate it with the command below.</p>
+        <p v-else-if="predictionError" role="alert">{{ predictionError }}</p>
+        <p v-else-if="!predictionReady">Loading recorded predictions…</p>
+        <canvas v-if="hasPrediction" v-show="predictionReady" ref="predictionCanvas" :width="data.settings.shape[1]"
+          :height="data.settings.shape[0]" :data-frame="frame" aria-label="Full image prediction" role="img"></canvas>
       </figure>
     </div>
     <p class="legend"><span class="positive">Warm: positive mean</span> · <span class="negative">Cool: negative mean</span> · Neutral: zero mean ·
@@ -479,10 +529,10 @@ figcaption { display:flex; flex-direction:column; padding:15px 17px 0; gap:3px; 
 figcaption span { font-size:11px; color:#8798ab; }
 canvas { display:block; width:100%; height:520px; touch-action:none; cursor:grab; }
 canvas:active { cursor:grabbing; }
-.input-row { display:flex; justify-content:center; margin-top:16px; }
-.experiment-input { width:418px; max-width:100%; padding-bottom:16px; }
-.experiment-input canvas { width:calc(100% - 32px); max-width:384px; height:auto; margin:14px 16px 0; image-rendering:pixelated; touch-action:auto; cursor:default; }
-.experiment-input p { font-size:12px; padding:0 16px; }
+.input-row { display:flex; flex-wrap:wrap; gap:14px; justify-content:center; margin-top:16px; }
+.experiment-input, .experiment-prediction { width:418px; max-width:100%; padding-bottom:16px; }
+.experiment-input canvas, .experiment-prediction canvas { width:calc(100% - 32px); max-width:384px; height:auto; margin:14px 16px 0; image-rendering:pixelated; touch-action:auto; cursor:default; }
+.experiment-input p, .experiment-prediction p { font-size:12px; padding:0 16px; }
 .legend, .energy { font-size:12px; line-height:1.6; color:#98a8ba; }
 .positive { color:#ffae91; } .negative { color:#76d3e9; }
 .energy { font-variant-numeric:tabular-nums; }

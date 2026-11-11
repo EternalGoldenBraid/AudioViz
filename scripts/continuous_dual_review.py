@@ -11,6 +11,7 @@ from PIL import Image
 
 from audioviz.engine import RippleEngine
 from audioviz.physics.wave_propagator import ForceDrivenCanvasCPU
+from audioviz.readouts.foveal_routing import WorldAnchoredFovea
 
 from continuous_inference_review import advance_canvas_force, camera_frame, plain_graph
 
@@ -86,8 +87,9 @@ def sample_boundary(graph, canvas, image, groups):
     wc, wh, ws = (getattr(graph, name) for name in graph._PARAMETERS)
     eh = h - wc @ root - wh @ a
     ez = z - ws @ a
-    y = image.ravel()
-    ey = np.where(graph.clamped[:graph.visual_nodes], y-graph._decode_sensory(z), 0.)
+    observed = graph.clamped[:graph.visual_nodes]
+    y = np.where(observed, image.ravel(), 0.)
+    ey = np.where(observed, y-graph._decode_sensory(z), 0.)
     messages = []
 
     def pair(prediction, feedback):
@@ -137,7 +139,7 @@ def sample_boundary(graph, canvas, image, groups):
         fields[f"message-sensory-prediction-hidden-{index}"] = ws[:, index]*a[index]
     return {
         "states": states, "messages": messages, "gradients": gradients,
-        "energy": [terms[0], terms[1], terms[2]], "fields": fields,
+        "energy": [terms[0], terms[1], terms[2]], "fields": fields, "fovea": None,
     }
 
 
@@ -159,7 +161,19 @@ def record_boundary(current, previous, time):
         ],
         "gradients": [rms(value) for value in current["gradients"]],
         "energy": current["energy"],
+        "fovea": current["fovea"],
     }
+
+
+def raster_gaze(frame, shape, radius, fixation_frames=6):
+    axes = [
+        np.linspace(0, size-1, int(np.ceil((size-1)/radius))+1)
+        for size in shape
+    ]
+    rows, columns = axes
+    fixation = (frame//fixation_frames) % (len(rows)*len(columns))
+    row, column = divmod(fixation, len(columns))
+    return float(columns[column]/max(1, shape[1]-1)), float(rows[row]/max(1, shape[0]-1))
 
 
 def trajectory(shape, steps):
@@ -173,14 +187,21 @@ def trajectory(shape, steps):
         damping_rate=-np.log(reference.damping)/reference.dt, boundary_condition="neumann",
     )
     groups = spatial_groups(shape)
+    fovea = WorldAnchoredFovea(shape, radius=8)
     previous = sample_boundary(graph, canvas.position, np.zeros_like(canvas.position), groups)
     yield 0, previous, previous, np.zeros_like(canvas.position)
     for frame in range(steps):
         image = camera_frame(frame)
+        fovea.set_gaze(raster_gaze(frame, shape, fovea.radius))
+        observed = fovea.observation_mask
         graph.forecast(canvas.position, 1/30)
-        graph.condition(image)
+        graph.condition(image, visual_mask=observed)
         advance_canvas_force(graph, canvas, 1/30, 1., reference.dt)
         current = sample_boundary(graph, canvas.position, image, groups)
+        current["fovea"] = {
+            "center": fovea.center.tolist(), "radius": fovea.radius,
+            "pixels": int(observed.sum()),
+        }
         yield frame+1, current, previous, image
         previous = current
 
@@ -211,11 +232,17 @@ def capture(output, steps):
     columns = 20
     size = (columns*shape[1], ((steps+columns)//columns)*shape[0])
     atlas = Image.new("RGB", size)
+    prediction_atlas = Image.new("RGB", size)
     maxima = {}
     for frame, current, previous, image in trajectory(shape, steps):
         records.append(record_boundary(current, previous, frame/30))
         atlas.paste(
             Image.fromarray(np.rint(image*255).astype(np.uint8)),
+            ((frame%columns)*shape[1], (frame//columns)*shape[0]),
+        )
+        prediction = current["fields"]["message-evidence-prediction"].reshape(*shape, 3)
+        prediction_atlas.paste(
+            Image.fromarray(np.rint(np.clip(prediction, 0, 1)*255).astype(np.uint8)),
             ((frame%columns)*shape[1], (frame//columns)*shape[0]),
         )
         for key, value in current["fields"].items():
@@ -238,6 +265,7 @@ def capture(output, steps):
         Path(__file__), Path(__file__).with_name("continuous_inference_review.py"),
         Path(__file__).resolve().parents[1]/"src/audioviz/readouts/continuous_scene_predictive_coding.py",
         Path(__file__).resolve().parents[1]/"src/audioviz/physics/wave_propagator.py",
+        Path(__file__).resolve().parents[1]/"src/audioviz/readouts/foveal_routing.py",
     ]
     result = {
         "schema": "continuous-dual-v1",
@@ -246,6 +274,8 @@ def capture(output, steps):
             "duration": steps/30, "inference_rate": .3, "learning_rate": .001,
             "inference_force_strength": 1.,
             "input_atlas": {"columns": columns, "frames": steps+1},
+            "prediction_atlas": {"columns": columns, "frames": steps+1},
+            "fovea": {"radius": 8, "fixation_frames": 6, "policy": "raster"},
             "native_fields": maxima,
             "boundary": "After neural inference, learning and mechanical advance; current weights.",
         },
@@ -256,6 +286,9 @@ def capture(output, steps):
     temporary_atlas = output/"dual-input.pending.png"
     atlas.save(temporary_atlas)
     temporary_atlas.replace(output/"dual-input.png")
+    temporary_prediction = output/"dual-prediction.pending.png"
+    prediction_atlas.save(temporary_prediction)
+    temporary_prediction.replace(output/"dual-prediction.png")
     field_directory = output/"native-fields"
     field_directory.mkdir(exist_ok=True)
     for key, image in field_atlases.items():
