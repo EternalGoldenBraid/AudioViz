@@ -86,3 +86,68 @@ def test_evaluate_hidden_trace_has_one_recorded_vector_per_frame_and_matches_the
     )
     for name in completion.PATTERNS:
         np.testing.assert_array_equal(replayed[name]["hidden_trace"][-1], results[name]["hidden_trace"][-1])
+
+
+def test_evaluate_prediction_trace_last_frame_matches_the_scalar_prediction():
+    shape = (4, 4)
+    graph = completion.plain_graph(shape, hidden=2, inference_rate=.3, learning_rate=.05, tau=1 / 3)
+    fovea = completion.WorldAnchoredFovea(shape, radius=1)
+    rng = np.random.default_rng(0)
+    results, _ = completion.evaluate(
+        graph, fovea, shape, patch_gaze=(.5, .5), dt=1 / 30, settle_frames=4,
+        rng=rng, sigma=0., clamp_strength=.6,
+    )
+    for name, case in results.items():
+        assert len(case["prediction_trace"]) == 4
+        np.testing.assert_array_equal(case["prediction_trace"][-1], case["prediction"])
+
+
+def test_playback_atlas_tiles_every_frame_for_every_pattern(tmp_path):
+    shape = (4, 4)
+    completion.run(
+        tmp_path, shape=shape, radius=1, hidden=2, epochs=1, hold_frames=1,
+        settle_frames=3, learning_rate=.05, sigma=0., tau=1 / 3, clamp_strength=.5, label="t",
+    )
+    import json
+    from PIL import Image
+
+    summary = json.loads((tmp_path / "t-summary.json").read_text())
+    atlas_info = summary["playback_atlas"]
+    assert atlas_info["columns"] == 3
+    assert atlas_info["rows"] == len(completion.PATTERNS)
+    with Image.open(tmp_path / "t-playback.png") as atlas:
+        assert atlas.size == (3 * shape[1], len(completion.PATTERNS) * shape[0])
+    for name in completion.PATTERNS:
+        assert (tmp_path / f"pattern-{name}.png").exists()
+
+
+def test_run_grid_covers_every_curated_clamp_and_tau_combination(tmp_path):
+    index = completion.run_grid(
+        tmp_path, shape=(4, 4), radius=1, hidden=2, epochs=1, hold_frames=1,
+        settle_frames=2, learning_rate=.05, sigma=0.,
+    )
+    labels = {config["label"] for config in index["configs"]}
+    assert labels == {
+        f"completion-{clamp}-{tau}"
+        for clamp in completion.GRID for tau in completion.GRID_TAU
+    }
+    for config in index["configs"]:
+        assert (tmp_path / f"{config['label']}-summary.json").exists()
+        assert (tmp_path / f"{config['label']}-playback.png").exists()
+
+
+def test_summary_json_matches_the_frontend_contract(tmp_path):
+    """The explorer component reads these exact keys; a rename here breaks it silently."""
+    import json
+
+    completion.run(
+        tmp_path, shape=(4, 4), radius=1, hidden=2, epochs=1, hold_frames=1,
+        settle_frames=3, learning_rate=.05, sigma=0., tau=1 / 3, clamp_strength=.5, label="t",
+    )
+    summary = json.loads((tmp_path / "t-summary.json").read_text())
+    assert summary["settings"]["hidden_nodes"] == 2
+    assert summary["settings"]["shape"] == [4, 4]
+    assert set(summary["playback_atlas"]["patterns"]) == set(completion.PATTERNS)
+    for name in completion.PATTERNS:
+        assert len(summary["hidden_traces"][name]) == 3
+        assert all(len(vector) == 2 for vector in summary["hidden_traces"][name])
