@@ -1,8 +1,11 @@
 """Test whether foveal scanning learns two static scenes well enough to complete
 
-them from one small disambiguating patch, with the fovea strictly smaller than
-either scene. The eye stays open throughout: whatever the fovea currently
-looks at is the only clamp. There is no separate unclamping step.
+them while a fovea strictly smaller than either scene keeps moving. The eye
+stays open throughout: whatever it looks at right now is the only clamp.
+Learning never turns off, including during the recorded scan: this models a
+continuously running system, not a frozen-weight benchmark. The recorded scan
+re-visits the same raster path twice, so every region is clamped, then left
+unclamped as the fovea moves on, then clamped again on the second pass.
 """
 from __future__ import annotations
 
@@ -91,6 +94,7 @@ def scan_scene(graph, fovea, canvas_shape, image, fixations, *, dt, hold_frames,
 
 
 def train(graph, fovea, shape, *, epochs, dt, hold_frames, rng, sigma, clamp_strength):
+    """Unrecorded warmup scanning, alternating patterns, learning on throughout."""
     fixations = raster_fixations(shape, fovea.radius)
     graph.set_learning(enabled=True)
     for _ in range(epochs):
@@ -102,42 +106,66 @@ def train(graph, fovea, shape, *, epochs, dt, hold_frames, rng, sigma, clamp_str
             )
 
 
-def evaluate(graph, fovea, shape, *, patch_gaze, dt, settle_frames, rng, sigma, clamp_strength):
-    """Fixate only the distinguishing patch, then report the completed full scene."""
-    graph.set_learning(enabled=False)
-    fovea.set_gaze(patch_gaze)
-    observed = fovea.observation_mask
+def evaluate_scan(graph, fovea, shape, *, dt, hold_frames, rng, sigma, clamp_strength, passes=2):
+    """Record a continued scan over the same raster path, learning still on.
+
+    Every region is clamped once per pass, then left unclamped (its only
+    support coming from recurrent/top-down prediction) until the fovea
+    returns to it on the next pass. This is the recorded evaluation movie: it
+    answers "does the currently foveated disk reach its target" and "does
+    everywhere else hold up while unobserved", at every instant, not just at
+    one frozen moment. Learning stays enabled, so this also shows how the
+    live system keeps adapting during normal operation, not a benchmark with
+    weights frozen beforehand.
+    """
+    graph.set_learning(enabled=True)
+    fixations = raster_fixations(shape, fovea.radius)
+    schedule = [gaze for _ in range(passes) for gaze in fixations]
     results = {}
+    fovea_trace = None
     for name in PATTERNS:
         graph.reset()
         image = pattern_image(name, shape)
-        hidden_trace = []
-        prediction_trace = []
-        for _ in range(settle_frames):
-            canvas = rng.normal(scale=sigma, size=(*shape, 3))
-            graph.forecast(canvas, dt)
-            evidence = noisy(image, rng, sigma)
-            graph.condition(evidence, visual_mask=observed)
-            apply_clamp_strength(graph, observed, evidence, clamp_strength)
-            hidden_trace.append(graph.mean[graph.hidden_slice].copy())
-            prediction_trace.append(graph.visual_prediction.copy())
+        hidden_trace, prediction_trace, error_trace = [], [], []
+        trace_this_pattern = []
+        inside_errors, outside_errors = [], []
+        for gaze in schedule:
+            fovea.set_gaze(gaze)
+            observed = fovea.observation_mask
+            mask3 = np.repeat(observed[..., None], 3, axis=2)
+            for _ in range(hold_frames):
+                canvas = rng.normal(scale=sigma, size=(*shape, 3))
+                graph.forecast(canvas, dt)
+                evidence = noisy(image, rng, sigma)
+                graph.condition(evidence, visual_mask=observed)
+                apply_clamp_strength(graph, observed, evidence, clamp_strength)
+                hidden_trace.append(graph.mean[graph.hidden_slice].copy())
+                prediction = graph.visual_prediction.copy()
+                prediction_trace.append(prediction)
+                error_trace.append(np.abs(prediction - image))
+                trace_this_pattern.append({"center": fovea.center.tolist(), "radius": fovea.radius})
+                inside_errors.append(float(np.sqrt(np.mean((prediction[mask3] - image[mask3]) ** 2))))
+                outside_errors.append(float(np.sqrt(np.mean((prediction[~mask3] - image[~mask3]) ** 2))))
+        if fovea_trace is None:
+            fovea_trace = trace_this_pattern
         prediction = prediction_trace[-1]
         blank = np.full_like(image, .5)
-        mask3 = np.repeat(observed[..., None], 3, axis=2)
         results[name] = {
-            "patch_pixels": int(observed.sum()),
             "prediction": prediction,
             "hidden_trace": hidden_trace,
             "prediction_trace": prediction_trace,
-            "rmse_correct": float(np.sqrt(np.mean((prediction - image) ** 2))),
-            "rmse_other": float(np.sqrt(np.mean(
+            "error_trace": error_trace,
+            "inside_errors": inside_errors,
+            "outside_errors": outside_errors,
+            "rmse_whole_scene_final": float(np.sqrt(np.mean((prediction - image) ** 2))),
+            "rmse_other_pattern_final": float(np.sqrt(np.mean(
                 (prediction - pattern_image(PATTERNS[1 - PATTERNS.index(name)], shape)) ** 2,
             ))),
-            "rmse_blank_baseline": float(np.sqrt(np.mean((prediction - blank) ** 2))),
-            "rmse_inside_patch": float(np.sqrt(np.mean((prediction[mask3] - image[mask3]) ** 2))),
-            "rmse_outside_patch": float(np.sqrt(np.mean((prediction[~mask3] - image[~mask3]) ** 2))),
+            "rmse_blank_baseline_final": float(np.sqrt(np.mean((prediction - blank) ** 2))),
+            "rmse_inside_mean": float(np.mean(inside_errors)),
+            "rmse_outside_mean": float(np.mean(outside_errors)),
         }
-    return results, observed
+    return results, fovea_trace
 
 
 def playback_atlas(results, shape):
@@ -153,6 +181,33 @@ def playback_atlas(results, shape):
     return atlas, frames
 
 
+def error_atlas(results, shape):
+    """Tile every recorded |prediction-target| error map into one RGBA PNG.
+
+    Brightness uses a fixed whole-recording maximum, so frames stay directly
+    comparable to each other; it is not re-normalized per frame. Error is a
+    magnitude (non-negative by construction), so there is no sign to encode,
+    unlike the signed message fields on the paired-dynamics page.
+    """
+    frames = len(results[PATTERNS[0]]["error_trace"])
+    scale = max(
+        float(np.max(np.sqrt(np.mean(error ** 2, axis=2))))
+        for case in results.values() for error in case["error_trace"]
+    )
+    atlas = Image.new("RGBA", (frames * shape[1], len(PATTERNS) * shape[0]))
+    for row, name in enumerate(PATTERNS):
+        for frame, error in enumerate(results[name]["error_trace"]):
+            magnitude = np.sqrt(np.mean(error ** 2, axis=2))
+            alpha = np.zeros_like(magnitude) if scale == 0 else np.rint(255 * np.sqrt(magnitude / scale))
+            colors = np.zeros((*shape, 4), dtype=np.uint8)
+            colors[..., 0] = 255
+            colors[..., 1] = 110
+            colors[..., 2] = 70
+            colors[..., 3] = np.clip(alpha, 0, 255).astype(np.uint8)
+            atlas.paste(Image.fromarray(colors), (frame * shape[1], row * shape[0]))
+    return atlas, scale
+
+
 def save_pattern_references(output, shape):
     """Write the two static scene targets once; they do not depend on tau/clamp."""
     for name in PATTERNS:
@@ -162,54 +217,9 @@ def save_pattern_references(output, shape):
         temporary.replace(output / f"pattern-{name}.png")
 
 
-def _last_frame(output, label, pattern_index, shape, frames):
-    atlas = Image.open(output / f"{label}-playback.png")
-    x, y = (frames - 1) * shape[1], pattern_index * shape[0]
-    return atlas.crop((x, y, x + shape[1], y + shape[0]))
-
-
-def _patch_box(settings, pad=2):
-    shape, gaze, radius = settings["shape"], settings["patch_gaze"], settings["foveal_radius"]
-    center_row = round(gaze[1] * (shape[0] - 1))
-    center_col = round(gaze[0] * (shape[1] - 1))
-    half = radius + pad
-    return (
-        max(0, center_col - half), max(0, center_row - half),
-        min(shape[1], center_col + half + 1), min(shape[0], center_row + half + 1),
-    )
-
-
-def save_section_highlights(output, configs):
-    """Non-interactive comparison crops for a hand-picked pair of configurations.
-
-    Reads already-generated playback atlases and summaries back from disk;
-    this makes no new inference calls. Every section on the diary page should
-    make its own point without requiring a reader to operate a selector.
-    """
-    import json
-
-    summaries = {label: json.loads((output / f"{label}-summary.json").read_text()) for label in configs}
-    shape = next(iter(summaries.values()))["settings"]["shape"]
-    frames = next(iter(summaries.values()))["playback_atlas"]["columns"]
-    box = _patch_box(next(iter(summaries.values()))["settings"])
-
-    def save(image, name):
-        temporary = output / f"{name}.pending.png"
-        image.save(temporary)
-        temporary.replace(output / f"{name}.png")
-
-    for name in PATTERNS:
-        target = Image.open(output / f"pattern-{name}.png")
-        save(target.crop(box), f"highlight-patch-target-{name}")
-        for label in configs:
-            prediction = _last_frame(output, label, PATTERNS.index(name), shape, frames)
-            save(prediction.crop(box), f"highlight-patch-{label}-{name}")
-            save(prediction, f"highlight-scene-{label}-{name}")
-
-
 def run(
     output, *, shape=(32, 32), radius=5, hidden=4, epochs=60, hold_frames=3,
-    settle_frames=30, dt=1 / 30, learning_rate=.05, sigma=.03, seed=0,
+    eval_passes=2, dt=1 / 30, learning_rate=.05, sigma=.03, seed=0,
     tau=1 / 3, clamp_strength=0., label="completion",
 ):
     rng = np.random.default_rng(seed)
@@ -222,12 +232,12 @@ def run(
         graph, fovea, shape, epochs=epochs, dt=dt, hold_frames=hold_frames,
         rng=rng, sigma=sigma, clamp_strength=clamp_strength,
     )
-    center = ((shape[0] - 1) / 2 / max(1, shape[0] - 1), (shape[1] - 1) / 2 / max(1, shape[1] - 1))
-    results, observed = evaluate(
-        graph, fovea, shape, patch_gaze=center, dt=dt, settle_frames=settle_frames,
+    results, fovea_trace = evaluate_scan(
+        graph, fovea, shape, dt=dt, hold_frames=hold_frames, passes=eval_passes,
         rng=rng, sigma=sigma, clamp_strength=clamp_strength,
     )
     atlas, frames = playback_atlas(results, shape)
+    errors, error_scale = error_atlas(results, shape)
 
     sources = [
         Path(__file__),
@@ -235,33 +245,44 @@ def run(
         Path(__file__).resolve().parents[1] / "src/audioviz/readouts/foveal_routing.py",
     ]
     summary = {
-        "schema": "continuous-completion-v2",
+        "schema": "continuous-completion-v3",
         "settings": {
             "shape": list(shape), "foveal_radius": radius, "hidden_nodes": hidden,
-            "epochs": epochs, "hold_frames": hold_frames, "settle_frames": settle_frames,
-            "dt": dt, "patch_pixels": int(observed.sum()), "patch_gaze": list(center),
-            "learning_rate": learning_rate, "sigma": sigma, "tau": tau,
+            "epochs": epochs, "hold_frames": hold_frames, "eval_passes": eval_passes,
+            "dt": dt, "learning_rate": learning_rate, "sigma": sigma, "tau": tau,
             "clamp_strength": clamp_strength, "seed": seed,
         },
         "source_hashes": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sources},
         "cases": {
             name: {
                 key: value for key, value in case.items()
-                if key not in ("prediction", "hidden_trace", "prediction_trace")
+                if key not in (
+                    "prediction", "hidden_trace", "prediction_trace",
+                    "error_trace", "inside_errors", "outside_errors",
+                )
             }
             for name, case in results.items()
         },
         "playback_atlas": {"columns": frames, "rows": len(PATTERNS), "patterns": list(PATTERNS)},
+        "error_atlas": {"columns": frames, "rows": len(PATTERNS), "scale": error_scale},
         "hidden_traces": {
             name: [vector.tolist() for vector in case["hidden_trace"]]
             for name, case in results.items()
         },
+        "error_traces": {
+            name: {"inside": case["inside_errors"], "outside": case["outside_errors"]}
+            for name, case in results.items()
+        },
+        "fovea_trace": fovea_trace,
     }
     output.mkdir(parents=True, exist_ok=True)
     save_pattern_references(output, shape)
     temporary_atlas = output / f"{label}-playback.pending.png"
     atlas.save(temporary_atlas)
     temporary_atlas.replace(output / f"{label}-playback.png")
+    temporary_errors = output / f"{label}-errors.pending.png"
+    errors.save(temporary_errors)
+    temporary_errors.replace(output / f"{label}-errors.png")
     temporary = output / f"{label}-summary.pending.json"
     temporary.write_text(json.dumps(summary, allow_nan=False, indent=2), encoding="utf-8")
     temporary.replace(output / f"{label}-summary.json")
@@ -287,7 +308,7 @@ def run_grid(output, **kwargs):
     for clamp_name, clamp_strength in GRID.items():
         for tau_name, tau in GRID_TAU.items():
             label = f"completion-{clamp_name}-{tau_name}"
-            summary = run(output, tau=tau, clamp_strength=clamp_strength, label=label, **kwargs)
+            run(output, tau=tau, clamp_strength=clamp_strength, label=label, **kwargs)
             configs.append({
                 "label": label, "clamp_name": clamp_name, "tau_name": tau_name,
                 "clamp_strength": clamp_strength, "tau": tau,
@@ -296,7 +317,6 @@ def run_grid(output, **kwargs):
     temporary = output / "completion-grid.pending.json"
     temporary.write_text(json.dumps(index, allow_nan=False, indent=2), encoding="utf-8")
     temporary.replace(output / "completion-grid.json")
-    save_section_highlights(output, ["completion-soft-small", "completion-hard-small"])
     return index
 
 
@@ -325,4 +345,3 @@ if __name__ == "__main__":
             epochs=args.epochs, learning_rate=args.learning_rate, sigma=args.sigma,
             tau=args.tau, clamp_strength=args.clamp_strength, label=args.label,
         )
-
