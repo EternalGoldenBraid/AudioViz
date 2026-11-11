@@ -162,6 +162,51 @@ def save_pattern_references(output, shape):
         temporary.replace(output / f"pattern-{name}.png")
 
 
+def _last_frame(output, label, pattern_index, shape, frames):
+    atlas = Image.open(output / f"{label}-playback.png")
+    x, y = (frames - 1) * shape[1], pattern_index * shape[0]
+    return atlas.crop((x, y, x + shape[1], y + shape[0]))
+
+
+def _patch_box(settings, pad=2):
+    shape, gaze, radius = settings["shape"], settings["patch_gaze"], settings["foveal_radius"]
+    center_row = round(gaze[1] * (shape[0] - 1))
+    center_col = round(gaze[0] * (shape[1] - 1))
+    half = radius + pad
+    return (
+        max(0, center_col - half), max(0, center_row - half),
+        min(shape[1], center_col + half + 1), min(shape[0], center_row + half + 1),
+    )
+
+
+def save_section_highlights(output, configs):
+    """Non-interactive comparison crops for a hand-picked pair of configurations.
+
+    Reads already-generated playback atlases and summaries back from disk;
+    this makes no new inference calls. Every section on the diary page should
+    make its own point without requiring a reader to operate a selector.
+    """
+    import json
+
+    summaries = {label: json.loads((output / f"{label}-summary.json").read_text()) for label in configs}
+    shape = next(iter(summaries.values()))["settings"]["shape"]
+    frames = next(iter(summaries.values()))["playback_atlas"]["columns"]
+    box = _patch_box(next(iter(summaries.values()))["settings"])
+
+    def save(image, name):
+        temporary = output / f"{name}.pending.png"
+        image.save(temporary)
+        temporary.replace(output / f"{name}.png")
+
+    for name in PATTERNS:
+        target = Image.open(output / f"pattern-{name}.png")
+        save(target.crop(box), f"highlight-patch-target-{name}")
+        for label in configs:
+            prediction = _last_frame(output, label, PATTERNS.index(name), shape, frames)
+            save(prediction.crop(box), f"highlight-patch-{label}-{name}")
+            save(prediction, f"highlight-scene-{label}-{name}")
+
+
 def run(
     output, *, shape=(32, 32), radius=5, hidden=4, epochs=60, hold_frames=3,
     settle_frames=30, dt=1 / 30, learning_rate=.05, sigma=.03, seed=0,
@@ -251,6 +296,7 @@ def run_grid(output, **kwargs):
     temporary = output / "completion-grid.pending.json"
     temporary.write_text(json.dumps(index, allow_nan=False, indent=2), encoding="utf-8")
     temporary.replace(output / "completion-grid.json")
+    save_section_highlights(output, ["completion-soft-small", "completion-hard-small"])
     return index
 
 

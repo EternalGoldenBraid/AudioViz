@@ -14,3 +14,5 @@
 /completion-*.pending.json
 /pattern-*.png
 /pattern-*.pending.png
+/highlight-*.png
+/highlight-*.pending.png

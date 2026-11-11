@@ -134,6 +134,12 @@ def test_run_grid_covers_every_curated_clamp_and_tau_combination(tmp_path):
     for config in index["configs"]:
         assert (tmp_path / f"{config['label']}-summary.json").exists()
         assert (tmp_path / f"{config['label']}-playback.png").exists()
+    # Section highlights read back the just-written playback/summary files, without rerunning inference.
+    for name in completion.PATTERNS:
+        assert (tmp_path / f"highlight-patch-target-{name}.png").exists()
+        for label in ("completion-soft-small", "completion-hard-small"):
+            assert (tmp_path / f"highlight-patch-{label}-{name}.png").exists()
+            assert (tmp_path / f"highlight-scene-{label}-{name}.png").exists()
 
 
 def test_summary_json_matches_the_frontend_contract(tmp_path):
@@ -151,3 +157,12 @@ def test_summary_json_matches_the_frontend_contract(tmp_path):
     for name in completion.PATTERNS:
         assert len(summary["hidden_traces"][name]) == 3
         assert all(len(vector) == 2 for vector in summary["hidden_traces"][name])
+
+
+def test_patch_box_stays_centered_and_clips_at_world_borders():
+    settings = {"shape": [16, 16], "patch_gaze": [.5, .5], "foveal_radius": 3}
+    left, top, right, bottom = completion._patch_box(settings, pad=2)
+    assert (right - left) == (bottom - top) == 2 * (3 + 2) + 1
+    assert left >= 0 and top >= 0 and right <= 16 and bottom <= 16
+    clipped = completion._patch_box({"shape": [16, 16], "patch_gaze": [0., 0.], "foveal_radius": 3}, pad=2)
+    assert clipped[0] == 0 and clipped[1] == 0
